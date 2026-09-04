@@ -1,0 +1,70 @@
+import type { Config } from 'tailwindcss'
+
+const config: Config = {
+  content: [
+    './src/pages/**/*.{js,ts,jsx,tsx,mdx}',
+    './src/components/**/*.{js,ts,jsx,tsx,mdx}',
+    './src/app/**/*.{js,ts,jsx,tsx,mdx}',
+  ],
+  theme: {
+    extend: {
+      colors: {
+        white:  'var(--white)',
+        bg:     'var(--bg)',
+        surface:'var(--surface)',
+        g100:   'var(--g100)',
+        g200:   'var(--g200)',
+        g300:   'var(--g300)',
+        g400:   'var(--g400)',
+        g500:   'var(--g500)',
+        g700:   'var(--g700)',
+        g900:   'var(--g900)',
+        b50:    'var(--b50)',
+        b100:   'var(--b100)',
+        b200:   'var(--b200)',
+        b300:   'var(--b300)',
+        b400:   'var(--b400)',
+        b500:   'var(--b500)',
+        b600:   'var(--b600)',
+        b700:   'var(--b700)',
+        b800:   'var(--b800)',
+        b900:   'var(--b900)',
+        'clr-green':     'var(--green)',
+        'clr-green-bg':  'var(--green-bg)',
+        'clr-green-bd':  'var(--green-bd)',
+        'clr-amber':     'var(--amber)',
+        'clr-amber-bg':  'var(--amber-bg)',
+        'clr-amber-bd':  'var(--amber-bd)',
+        'clr-red':       'var(--red)',
+        'clr-red-bg':    'var(--red-bg)',
+        'clr-red-bd':    'var(--red-bd)',
+        'clr-cyan':      'var(--cyan)',
+        'clr-cyan-bg':   'var(--cyan-bg)',
+        'clr-gold':      'var(--gold)',
+        'clr-gold-bg':   'var(--gold-bg)',
+        'clr-purple':    'var(--purple)',
+        'clr-purple-bg': 'var(--purple-bg)',
+        'clr-purple-bd': 'var(--purple-bd)',
+      },
+      borderRadius: {
+        DEFAULT: 'var(--rxs)',
+        md:      'var(--rsm)',
+        xl:      'var(--radius)',
+      },
+      fontFamily: {
+        sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'],
+        mono: ['monospace'],
+      },
+      screens: {
+        xs: '480px',
+        sm: '640px',
+        md: '768px',
+        lg: '1024px',
+        xl: '1280px',
+      },
+    },
+  },
+  plugins: [],
+}
+
+export default config
