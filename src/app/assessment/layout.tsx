@@ -102,7 +102,7 @@ export default function AssessmentLayout({ children }: { children: React.ReactNo
         profileOpen={profileOpen}
         setProfileOpen={setProfileOpen}
         profileRef={profileRef}
-        onSignOut={() => router.push('/login/staff')}
+        onSignOut={() => router.push('/')}
         displayName={displayName ?? undefined}
       />
       <div className="layout">

@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Fragment } from 'react'
 import { useRouter } from 'next/navigation'
 import { ScrollTable } from '@/components/ScrollTable'
 import { ActionMenu } from '@/components/ActionMenu'
@@ -13,10 +13,12 @@ import { EmptyState } from '@/components/EmptyState'
 import { SearchSelect } from '@/components/SearchSelect'
 import { Pagination } from '@/components/Pagination'
 import { usePagination } from '@/hooks/usePagination'
+import { usePagePermissions } from '@/hooks/users/usePagePermissions'
 
 const PAGE_SIZE = 10
 
 export default function Page() {
+  const permissions = usePagePermissions()
   const router = useRouter()
   const [openModals, setOpenModals] = useState<Set<string>>(new Set())
   const [toast, setToast] = useState<{ msg: string; type: string } | null>(null)
@@ -46,6 +48,10 @@ export default function Page() {
     { day: 'Thursday',  time: '14:00–16:00', courseUnit: 'IT105 – Systems & Lab',          type: 'Practical', room: 'Lab-B',  capacity: 40, faculty: 'Dr. Ssekibuule Ronald', combined: 'BSC-IT-S26-DB' },
     { day: 'Friday',    time: '08:00–10:00', courseUnit: 'MBA101 – Managerial Economics',  type: 'Theory',    room: 'LR-02',  capacity: 60, faculty: 'Prof. Mukasa Charles',  combined: '—' },
   ]
+
+  const TT_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+  const TT_TIMES = ['08:00–10:00', '10:00–12:00', '12:00–14:00', '14:00–16:00', '16:00–18:00']
+  const TT_TYPE_COLOR: Record<string, string> = { Theory: 'c1', Practical: 'c2', Tutorial: 'c3', 'CBT/Lab': 'c4' }
   const searchMatches = search.trim()
     ? rows.filter(r => `${r.courseUnit} ${r.faculty}`.toLowerCase().includes(search.trim().toLowerCase())).slice(0, 8)
     : []
@@ -105,7 +111,13 @@ export default function Page() {
 
         <div className="card mb-[14px] p-4">
           <div className="g4">
-            <div className="fg"><div className="lbl">Batch <span className="req">*</span></div>
+            <div className="fg"><div className="lbl">Academic Session <span className="req">*</span></div>
+              <SearchSelect options={['Spring 2026 (20261)', 'Fall 2025 (20253)']} />
+            </div>
+            <div className="fg"><div className="lbl">Term <span className="req">*</span></div>
+              <SearchSelect options={['Term1', 'Term2', 'Term3']} />
+            </div>
+            <div className="fg"><div className="lbl">Batch/Time <span className="req">*</span></div>
               <SearchSelect
                 options={[
                   { value: 'BSC-IT-S1-D', label: 'BSC-IT-S26-DA · BSc. IT Sem 1 Day A' },
@@ -116,26 +128,25 @@ export default function Page() {
                 onChange={() => showToast('Rendering timetable...', 'info')}
               />
             </div>
-            <div className="fg"><div className="lbl">Intake</div>
-              <SearchSelect options={['Spring 2026 (20261)']} />
-            </div>
-            <div className="fg"><div className="lbl">Room Filter</div>
+            <div className="fg"><div className="lbl">Lecturer</div>
               <SearchSelect
-                placeholder="All Rooms"
-                options={[
-                  { value: 'LR-01', label: 'LR-01 (cap. 60)' },
-                  { value: 'LR-02', label: 'LR-02 (cap. 60)' },
-                  { value: 'Lab-A', label: 'Lab-A Linux (cap. 40)' },
-                  { value: 'Lab-B', label: 'Lab-B General (cap. 40)' },
-                ]}
-                onChange={() => showToast('Filtering rooms...', 'info')}
+                placeholder="All Lecturers"
+                options={['Dr. Ssekibuule Ronald', 'Ms. Namutebi Joyce', 'Prof. Mukasa Charles']}
               />
             </div>
-            <div className="fg"><div className="lbl">View</div>
-              <div className="tgl-group">
-                <button className="tgl-btn tgl-active" onClick={() => showToast('Week view', 'info')}><i className="lni lni-calendar"></i> Week</button>
-                <button className="tgl-btn" onClick={() => showToast('List view', 'info')}><i className="lni lni-clipboard"></i> List</button>
-              </div>
+            <div className="fg"><div className="lbl">Course Unit</div>
+              <SearchSelect
+                placeholder="All Course Units"
+                options={['IT101 – Intro to Programming', 'IT102 – Computer Org.', 'IT103 – Engineering Maths', 'IT104 – Programming Lab', 'IT105 – Systems & Lab', 'MBA101 – Managerial Economics']}
+                onChange={() => showToast('Filtering by course unit...', 'info')}
+              />
+            </div>
+            <div className="fg"><div className="lbl">Total Load</div>
+              <input className="ctrl" value="12 Hrs / week" disabled />
+            </div>
+            <div className="fg">
+              <div className="lbl">&nbsp;</div>
+              <button className="btn btn-primary w-full" onClick={() => showToast('Rendering timetable...', 'info')}><i className="lni lni-search-alt"></i> View</button>
             </div>
           </div>
         </div>
@@ -147,16 +158,58 @@ export default function Page() {
         <div className="card" id="tt-week-view">
           <div className="card-hdr">
             <div className="card-title"><span className="ctitle-icon"><i className="lni lni-calendar"></i></span> Weekly Schedule — <span id="tt-batch-label">BSC-IT-S26-DA</span></div>
-            <div className="flex gap-2">
+            <div className="flex gap-2 items-center">
+              <div className="tgl-group">
+                <button className="tgl-btn tgl-active" onClick={() => showToast('Week view', 'info')}><i className="lni lni-calendar"></i> Week</button>
+                <button className="tgl-btn" onClick={() => showToast('List view', 'info')}><i className="lni lni-clipboard"></i> List</button>
+              </div>
               <span className="badge badge-green" id="tt-status-badge"><i className="lni lni-checkmark"></i> No Conflicts</span>
-              <button className="btn btn-neu btn-sm" onClick={() => openModal('add-slot-modal')}><i className="lni lni-plus"></i> Add Slot</button>
+              {permissions.add && <button className="btn btn-neu btn-sm" onClick={() => openModal('add-slot-modal')}><i className="lni lni-plus"></i> Add Slot</button>}
             </div>
           </div>
           <div className="info-box mb-[10px] p-[8px_12px]">
             <i className="lni lni-pointer"></i> <span className="text-[var(--fs-sm)]"><strong>Drag-and-drop:</strong> Drag any slot to a new day/time cell. The system will immediately check for faculty and room clashes before confirming the move. Click any empty cell to add a new slot.</span>
           </div>
           <div className="overflow-x-auto">
-            <div className="tt-grid" id="tt-grid-container"></div>
+            <div className="tt-grid" id="tt-grid-container">
+              <div></div>
+              {TT_DAYS.map(day => <div key={day} className="tt-hdr">{day}</div>)}
+              {TT_TIMES.map(time => (
+                <Fragment key={time}>
+                  <div className="tt-time">{time}</div>
+                  {TT_DAYS.map(day => {
+                    const slot = rows.find(r => r.day === day && r.time === time)
+                    if (!slot) {
+                      return (
+                        <div
+                          key={day}
+                          className="tt-slot"
+                          title={`Add slot — ${day} ${time}`}
+                          onClick={() => openModal('add-slot-modal')}
+                          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--g300)' }}
+                        >
+                          <i className="lni lni-plus"></i>
+                        </div>
+                      )
+                    }
+                    return (
+                      <div
+                        key={day}
+                        className={`tt-slot filled ${TT_TYPE_COLOR[slot.type] ?? 'c1'}`}
+                        title="Click to edit slot"
+                        onClick={() => openModal('add-slot-modal')}
+                      >
+                        <div className="tt-entry">{slot.courseUnit}</div>
+                        <div className="tt-entry-sub">{slot.room} · {slot.faculty}</div>
+                        {slot.combined !== '—' && (
+                          <div className="tt-entry-sub"><i className="lni lni-reload"></i> {slot.combined}</div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </Fragment>
+              ))}
+            </div>
           </div>
           <div className="mt-[14px] flex gap-2 flex-wrap items-center">
             <span className="text-[var(--fs-xs)] text-g500 font-semibold">Legend:</span>
@@ -189,7 +242,7 @@ export default function Page() {
                   : null}
                 {pageItems.map((r, i) => (
                   <tr key={i}>
-                    <td><ActionMenu><button className="btn btn-neu btn-sm" onClick={() => openModal('add-slot-modal')}><i className="lni lni-pencil"></i> Edit</button></ActionMenu></td>
+                    <td><ActionMenu>{permissions.edit && <button className="btn btn-neu btn-sm" onClick={() => openModal('add-slot-modal')}><i className="lni lni-pencil"></i> Edit</button>}</ActionMenu></td>
                     <td>{r.day}</td>
                     <td>{r.time}</td>
                     <td>{r.courseUnit}</td>

@@ -7,6 +7,7 @@ import { Pagination } from '@/components/Pagination'
 import { Toast } from '@/components/Toast'
 import { SuccessPopup } from '@/components/modals/shared/SuccessPopup'
 import { usePendingEmployees, useApproveEmployee } from '@/hooks/employee/useEmployees'
+import { usePagePermissions } from '@/hooks/users/usePagePermissions'
 
 const PAGE_SIZE = 10
 
@@ -30,6 +31,7 @@ interface SuccessInfo { title: string; subtitle: string }
 // as bulk-intake-edit / the academic module's Edit/New modals) instead of
 // just closing outright.
 export default function Page() {
+  const permissions = usePagePermissions()
   const [page, setPage] = useState(1)
   const { data, isLoading } = usePendingEmployees(page, PAGE_SIZE)
   const approveEmployee = useApproveEmployee()
@@ -83,9 +85,11 @@ export default function Page() {
                         <td>{r.sex === 1 ? 'Male' : 'Female'}</td>
                         <td><span className="badge badge-amber"><span className="bdot"></span>Pending</span></td>
                         <td>
-                          <button className="btn btn-primary btn-sm" onClick={() => setConfirmTarget({ employeeGuid: r.employeeGuid, name: `${r.firstName} ${r.surname}` })}>
-                            <i className="lni lni-checkmark"></i> Approve
-                          </button>
+                          {permissions.edit && (
+                            <button className="btn btn-primary btn-sm" onClick={() => setConfirmTarget({ employeeGuid: r.employeeGuid, name: `${r.firstName} ${r.surname}` })}>
+                              <i className="lni lni-checkmark"></i> Approve
+                            </button>
+                          )}
                         </td>
                       </tr>
                     ))}

@@ -65,7 +65,7 @@ export default function AdmissionLayout({ children }: { children: React.ReactNod
         profileOpen={profileOpen}
         setProfileOpen={setProfileOpen}
         profileRef={profileRef}
-        onSignOut={() => router.push('/login/staff')}
+        onSignOut={() => router.push('/')}
         displayName={displayName ?? undefined}
       />
       <div className="layout">

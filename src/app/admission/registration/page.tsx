@@ -13,6 +13,7 @@ import { CompleteRegistrationModal } from '@/components/modals/admission/Complet
 import { Pagination } from '@/components/Pagination'
 import { useRegistrarDeskApplications, useRegistrarDeskCounts, RegisterStudentResponse } from '@/hooks/admission/useRegistrarDesk'
 import { useIntakes } from '@/hooks/academic/useIntakes'
+import { usePagePermissions } from '@/hooks/users/usePagePermissions'
 
 const PAGE_SIZE = 10
 
@@ -30,6 +31,7 @@ const REG_PIPELINE = [
 ]
 
 export default function RegistrationPage() {
+  const permissions = usePagePermissions()
   const router = useRouter()
   const [toast, setToast] = useState<{ msg: string; type: string } | null>(null)
   const [openModals, setOpenModals] = useState<Set<string>>(new Set())
@@ -144,7 +146,7 @@ export default function RegistrationPage() {
                   <td>
                     <ActionMenu>
                       {r.regPaid
-                        ? <button className="btn btn-neu btn-sm" onClick={() => handleRegister(r.applicationGuid)}><i className="lni lni-graduation" /> Register</button>
+                        ? (permissions.edit && <button className="btn btn-neu btn-sm" onClick={() => handleRegister(r.applicationGuid)}><i className="lni lni-graduation" /> Register</button>)
                         : <button className="btn btn-neu btn-sm" disabled>Awaiting Payment</button>}
                     </ActionMenu>
                   </td>

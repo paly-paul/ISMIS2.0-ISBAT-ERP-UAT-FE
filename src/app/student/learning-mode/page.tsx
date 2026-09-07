@@ -133,9 +133,9 @@ function LearningModeContent() {
               label="Current Enrollment (Read-Only)"
               items={[
                 { label: 'Student', value: detail?.studentName ?? student.studentName },
-                { label: 'Programme', value: detail?.programName ?? '—' },
-                { label: 'Semester', value: detail?.semesterName ?? '—' },
-                { label: 'Current Mode', value: detail?.learningModeLabel ?? 'Not set' },
+                { label: 'Programme', value: detail?.programName ?? (detail as any)?.programme ?? student.programName ?? (student as any).programme ?? '—' },
+                { label: 'Semester', value: detail?.semesterName ?? (detail as any)?.semester ?? student.semesterName ?? (student as any).semester ?? '—' },
+                { label: 'Current Mode', value: detail?.learningModeLabel ?? (detail as any)?.learningMode ?? (student as any).learningMode ?? 'Not set' },
               ]}
             />
             <div className="card">

@@ -3,8 +3,12 @@ import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Toast } from '@/components/Toast'
 import { ScrollTable } from '@/components/ScrollTable'
+import { ActionMenu } from '@/components/ActionMenu'
 import { Pagination } from '@/components/Pagination'
 import { PaymentSuccessModal } from '@/components/modals/finance/PaymentSuccessModal'
+import { ViewRegulatoryPaymentModal } from '@/components/modals/finance/ViewRegulatoryPaymentModal'
+import { EditRegulatoryPaymentModal } from '@/components/modals/finance/EditRegulatoryPaymentModal'
+import { usePagePermissions } from '@/hooks/users/usePagePermissions'
 import { SuccessPopup } from '@/components/modals/shared/SuccessPopup'
 import DatePicker from '@/components/DatePicker'
 import {
@@ -13,14 +17,12 @@ import {
 } from '@/hooks/finance/usePaymentConsole'
 import {
   useCreateRegulatoryPayment,
-  useUpdateRegulatoryPayment,
   useDeleteRegulatoryPayment,
   useRegulatoryPaymentHistory,
   useRegulatorySemesterStatus,
   useNcheStudentSearchInfinite,
   PaymentCategory,
   RegulatoryPaymentHistoryEntry,
-  RegulatoryPaymentUpdateInput,
   RegulatorySemesterStatus,
 } from '@/hooks/finance/useNcheGuildPayment'
 
@@ -70,25 +72,18 @@ interface SearchHit {
   subtitle: string
 }
 
-// Edit/Delete on a Payment History row now go through the same confirm-then-
-// success flow used elsewhere in the app (employee-approve/bulk-intake-edit:
+// Delete on a Payment History row goes through the same confirm-then-success
+// flow used elsewhere in the app (employee-approve/bulk-intake-edit:
 // confirm-modal-overlay/confirm-modal-pop + modal-hdr-blue, swapping the same
 // modal's body over to the shared SuccessPopup on success) instead of a bare
-// window.confirm + toast — per request (2026-09-01). Create (a brand-new,
-// not-editing payment) is unchanged and still goes straight to
-// PaymentSuccessModal; only Update and Delete route through this.
-interface ConfirmUpdate {
-  kind: 'update'
-  paymentGuid: string
-  input: RegulatoryPaymentUpdateInput
-  applicationGuid: string
-  studentGuid: string | null
-}
+// window.confirm + toast — per request (2026-09-01). Edit now opens its own
+// modal (EditRegulatoryPaymentModal) instead of routing through this same
+// confirm step — correcting a payment isn't the irreversible operation
+// Delete is, so a plain Save is enough there. Create (a brand-new payment)
+// is unchanged and still goes straight to PaymentSuccessModal.
 interface ConfirmDelete {
-  kind: 'delete'
   entry: RegulatoryPaymentHistoryEntry
 }
-type ConfirmAction = ConfirmUpdate | ConfirmDelete
 function initialsFor(name: string) {
   const parts = name.trim().split(/\s+/)
   return ((parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? '')).toUpperCase() || '—'
@@ -115,6 +110,11 @@ function statusBadgeClass(status: string | null | undefined) {
 // get-all-outstanding-ledgers, since that's what the card-header badge
 // above already fetches. One row per semester in the program; the status
 // badge stands in for a currency amount, since this response carries none.
+// Same .pc-ledger-item/.pc-total-due treatment as Payment Console's own
+// Outstanding Balance (Tuition tab) — icon-per-row plus a summary footer —
+// in place of this page's previous plain .receipt-row + manually-styled
+// summary box, per request to bring this page's look in line with the rest
+// of Finance.
 function RegulatoryOutstandingTable({ items, isLoading, isError, category }: { items: RegulatorySemesterStatus[] | null | undefined; isLoading: boolean; isError: boolean; category: PaymentCategory }) {
   if (isLoading) return <div className="text-g400 text-center" style={{ padding: 16, fontSize: 12.5 }}>Loading outstanding balance…</div>
   if (isError) return <div className="text-clr-red text-center" style={{ padding: 16, fontSize: 12.5 }}><i className="lni lni-warning"></i> Couldn&apos;t load the outstanding balance.</div>
@@ -124,33 +124,47 @@ function RegulatoryOutstandingTable({ items, isLoading, isError, category }: { i
   const paidCount = semesters.filter(s => s.status === 'Paid').length
   return (
     <>
-      {semesters.map(s => (
-        <div className="receipt-row" key={s.semesterGuid}>
-          <span className="text-muted">{s.semName}</span>
-          <span className={`badge ${statusBadgeClass(s.status)}`}>{s.status || 'Not Yet Due'}</span>
-        </div>
-      ))}
-      <div className="mt-[10px] p-3 rounded-[var(--rsm)] bg-b50 border border-[1.5px] border-b100 flex justify-between items-center">
+      {semesters.map(s => {
+        const isPaid = s.status === 'Paid'
+        const isDue = s.status === 'Due'
+        return (
+          <div className={`pc-ledger-item${isPaid ? ' paid' : ''}`} key={s.semesterGuid}>
+            <span className="pc-ledger-icon"><i className={isPaid ? 'lni lni-checkmark-circle' : isDue ? 'lni lni-invoice' : 'lni lni-timer'}></i></span>
+            <div className="flex-1 min-w-0">
+              <div className="pc-ledger-name truncate">{s.semName}</div>
+              {isPaid && <div className="pc-ledger-sub">Paid</div>}
+            </div>
+            <span className={`badge ${statusBadgeClass(s.status)}`}>{s.status || 'Not Yet Due'}</span>
+          </div>
+        )
+      })}
+      <div className="pc-total-due">
         <span className="text-muted" style={{ fontSize: 12 }}>Semesters Due</span>
-        <span className="font-bold text-blue">{dueCount} of {semesters.length}{paidCount > 0 ? ` · ${paidCount} Paid` : ''}</span>
+        <span className="font-bold text-blue" style={{ fontSize: 15 }}>{dueCount} of {semesters.length}{paidCount > 0 ? ` · ${paidCount} Paid` : ''}</span>
       </div>
     </>
   )
 }
 
 export default function NcheGuildPaymentPage() {
+  const permissions = usePagePermissions()
   const router = useRouter()
   const [toast, setToast] = useState<{ msg: string; type: string } | null>(null)
   function showToast(msg: string, type = '') { setToast({ msg, type }); setTimeout(() => setToast(null), 3500) }
   const [successModal, setSuccessModal] = useState<{ title: string; rows: [string, string][] } | null>(null)
 
-  // Edit/Delete confirm step — see ConfirmAction's own comment above.
-  // successInfo set once confirmAction's mutation actually succeeds swaps
-  // the same modal from the confirm view over to SuccessPopup, same
-  // "stay open, swap to success" convention as employee-approve/
-  // bulk-intake-edit.
-  const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null)
+  // Delete confirm step — see ConfirmDelete's own comment above.
+  // successInfo set once the delete mutation actually succeeds swaps the
+  // same modal from the confirm view over to SuccessPopup, same "stay
+  // open, swap to success" convention as employee-approve/bulk-intake-edit.
+  const [confirmAction, setConfirmAction] = useState<ConfirmDelete | null>(null)
   const [successInfo, setSuccessInfo] = useState<{ title: string; subtitle: string } | null>(null)
+
+  // View/Edit modals (get-payment-nches.md's category-agnostic pair,
+  // put-payment-nche.md/put-payment-guild.md) — same convention as Payment
+  // Console's own View/Edit actions on its Tuition history table.
+  const [viewEntry, setViewEntry] = useState<RegulatoryPaymentHistoryEntry | null>(null)
+  const [editTarget, setEditTarget] = useState<RegulatoryPaymentHistoryEntry | null>(null)
 
   const [category, setCategory] = useState<PaymentCategory>('nche')
 
@@ -253,13 +267,8 @@ export default function NcheGuildPaymentPage() {
   const [pnrNumber, setPnrNumber] = useState('')
   const [remarks, setRemarks] = useState('')
   const [bankDeposit, setBankDeposit] = useState('')
-  // Set while editing an existing history row — Save switches to Update
-  // (PUT) against this guid instead of Create (POST); cleared on
-  // save/cancel/student change/tab switch.
-  const [editingGuid, setEditingGuid] = useState<string | null>(null)
 
   const createPayment = useCreateRegulatoryPayment(category)
-  const updatePayment = useUpdateRegulatoryPayment(category)
   const deletePayment = useDeleteRegulatoryPayment(category)
 
   function resetForm() {
@@ -268,7 +277,6 @@ export default function NcheGuildPaymentPage() {
     setPnrNumber('')
     setRemarks('')
     setBankDeposit('')
-    setEditingGuid(null)
   }
 
   function switchCategory(next: PaymentCategory) {
@@ -297,32 +305,22 @@ export default function NcheGuildPaymentPage() {
     showToast('Form cleared.', 'warn')
   }
 
-  function startEdit(entry: RegulatoryPaymentHistoryEntry) {
-    setEditingGuid(entry.paymentGuid)
-    setAmount(String(entry.amount))
-    setPayDate(entry.payDate.slice(0, 10))
-    setPnrNumber(entry.pnrNumber ?? '')
-    setRemarks(entry.remarks ?? '')
-    setBankDeposit(entry.bankDeposit ?? '')
-  }
-
   // Opens the shared confirm modal instead of deleting straight away —
   // confirmDeletePayment below does the actual mutate once the cashier
   // confirms.
   function handleDelete(entry: RegulatoryPaymentHistoryEntry) {
     if (!selectedApplicationGuid) return
-    setConfirmAction({ kind: 'delete', entry })
+    setConfirmAction({ entry })
   }
 
   function confirmDeletePayment() {
-    if (!confirmAction || confirmAction.kind !== 'delete' || !selectedApplicationGuid) return
+    if (!confirmAction || !selectedApplicationGuid) return
     const { entry } = confirmAction
     deletePayment.mutate(
       { paymentGuid: entry.paymentGuid, applicationGuid: selectedApplicationGuid, studentGuid },
       {
         onSuccess: () => {
           setSuccessInfo({ title: `${CATEGORY_LABEL[category]} Payment Deleted!`, subtitle: `The ${entry.amount.toLocaleString()} payment dated ${entry.payDate.slice(0, 10)} has been removed.` })
-          if (editingGuid === entry.paymentGuid) resetForm()
         },
         // Left on the confirm view (not closed) so the error is visible
         // right next to the retry button, same as bulk-intake-edit's own
@@ -346,14 +344,6 @@ export default function NcheGuildPaymentPage() {
     const categoryFields = category === 'nche'
       ? { pnrNumber: pnrNumber.trim() || null, remarks: remarks.trim() || null }
       : { bankDeposit: bankDeposit.trim() || null }
-
-    // Editing an existing history row now opens the same confirm modal
-    // Delete uses, instead of saving straight away — confirmUpdatePayment
-    // below does the actual mutate once the cashier confirms.
-    if (editingGuid) {
-      setConfirmAction({ kind: 'update', paymentGuid: editingGuid, input: { amount: amt, payDate, ...categoryFields }, applicationGuid: selectedApplicationGuid, studentGuid })
-      return
-    }
 
     createPayment.mutate(
       { applicationGuid: selectedApplicationGuid, studentGuid, amount: amt, payDate, ...categoryFields },
@@ -379,25 +369,7 @@ export default function NcheGuildPaymentPage() {
     )
   }
 
-  function confirmUpdatePayment() {
-    if (!confirmAction || confirmAction.kind !== 'update') return
-    const { paymentGuid, input, applicationGuid, studentGuid: sg } = confirmAction
-    updatePayment.mutate(
-      { paymentGuid, input, applicationGuid, studentGuid: sg },
-      {
-        onSuccess: result => {
-          setSuccessInfo({ title: `${CATEGORY_LABEL[category]} Payment Updated!`, subtitle: `Amount ${input.amount.toLocaleString()} on ${input.payDate} — remaining balance ${result.remainingBalance.toLocaleString()}.` })
-          resetForm()
-        },
-        // Left on the confirm view (not closed) so the error is visible
-        // right next to the retry button, same as bulk-intake-edit's own
-        // confirm popup does on a failed PATCH.
-        onError: (error: Error) => showToast(error.message || `Failed to update ${CATEGORY_LABEL[category]} payment. Please try again.`, 'error'),
-      },
-    )
-  }
-
-  const isSaving = createPayment.isPending || updatePayment.isPending
+  const isSaving = createPayment.isPending
 
   return (
     <>
@@ -517,40 +489,43 @@ export default function NcheGuildPaymentPage() {
                 uses (see its own "merged into this same card as a second
                 section" comment). */}
             <div className="flex flex-col gap-5 min-w-0">
-              <div className="card">
-                <div className="card-hdr">
-                  <div className="card-title"><span className="ctitle-icon"><i className="lni lni-user"></i></span> Profile Details</div>
-                </div>
-                <div className="flex items-center gap-3 mb-1">
-                  <div className="w-14 h-14 rounded-full flex-shrink-0 grid place-items-center text-white font-extrabold" style={{ background: 'linear-gradient(135deg,var(--b700),var(--b500))', fontSize: 17 }}>
-                    {initialsFor(applicantName(profile))}
+              {/* Same pc-hero banner + pc-hero-facts grid as Payment
+                  Console's/Payment Refund's own Profile Details, in place
+                  of this page's previous plain avatar-circle + pc-fact-grid
+                  layout — per request, to bring this page's look in line
+                  with the rest of Finance. Campus still has no client-side
+                  name resolver on this page (Payment Console falls back to
+                  useCampuses() for it; not pulled in here), so it stays
+                  '—' rather than a guessed value. Every other field is
+                  already pre-resolved on StudentProfile itself, same as
+                  there. */}
+              <div className="card p-0 overflow-hidden">
+                <div className="pc-hero">
+                  <div className="pc-hero-top">
+                    <div className="pc-hero-avatar">{initialsFor(applicantName(profile))}</div>
+                    <div className="flex-1 min-w-0">
+                      <div className="pc-hero-name truncate">{applicantName(profile)}</div>
+                      <div className="pc-hero-sub truncate">{profile.programName ?? '—'}</div>
+                      <span className="pc-hero-badge"><i className="lni lni-bookmark"></i> {profile.appRefNo}</span>
+                    </div>
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="font-extrabold text-g900" style={{ fontSize: 15.5 }}>{applicantName(profile)}</div>
-                    <div className="text-g500 text-xs truncate">{profile.programName ?? '—'}</div>
+                  <div className="pc-hero-facts">
+                    <div className="pc-hero-fact"><span className="pc-hero-fact-lbl">Campus</span><span className="pc-hero-fact-val">—</span></div>
+                    <div className="pc-hero-fact"><span className="pc-hero-fact-lbl">Semester</span><span className="pc-hero-fact-val" title={profile.semesterName ?? '—'}>{profile.semesterName ?? '—'}</span></div>
+                    {/* Guards against the literal string "null" — same live
+                        quirk Payment Console's own Intake tile guards against. */}
+                    <div className="pc-hero-fact"><span className="pc-hero-fact-lbl">Intake</span><span className="pc-hero-fact-val" title={profile.intakeCode && profile.intakeCode !== 'null' ? profile.intakeCode : '—'}>{profile.intakeCode && profile.intakeCode !== 'null' ? profile.intakeCode : '—'}</span></div>
+                    <div className="pc-hero-fact"><span className="pc-hero-fact-lbl">Batch</span><span className="pc-hero-fact-val" title={profile.batchCode ?? '—'}>{profile.batchCode ?? '—'}</span></div>
+                    <div className="pc-hero-fact"><span className="pc-hero-fact-lbl">Year</span><span className="pc-hero-fact-val" title={profile.yearCode ?? '—'}>{profile.yearCode ?? '—'}</span></div>
+                    <div className="pc-hero-fact"><span className="pc-hero-fact-lbl">Phone</span><span className="pc-hero-fact-val" title={profile.phone ?? '—'}>{profile.phone ?? '—'}</span></div>
+                    <div className="pc-hero-fact pc-hero-fact-span2">
+                      <span className="pc-hero-fact-lbl">Email</span>
+                      <span className="pc-hero-fact-val truncate" title={profile.emailId ?? profile.universityEmail ?? '—'}>{profile.emailId ?? profile.universityEmail ?? '—'}</span>
+                    </div>
                   </div>
-                </div>
-                <div className="mb-3">
-                  <span className="badge badge-blue font-mono"><i className="lni lni-bookmark"></i> {profile.appRefNo}</span>
-                </div>
-                {/* Same pc-fact-grid tiles as Payment Console's own Profile
-                    Details — Campus has no client-side name resolver on
-                    this page (Payment Console falls back to useCampuses()
-                    for it; not pulled in here), so it stays '—' rather than
-                    a guessed value. Every other field is already
-                    pre-resolved on StudentProfile itself, same as there. */}
-                <div className="pc-fact-grid">
-                  <div className="pc-fact"><i className="lni lni-map-marker"></i><div><span className="pc-fact-lbl">Campus</span><span className="pc-fact-val">—</span></div></div>
-                  <div className="pc-fact"><i className="lni lni-calendar"></i><div><span className="pc-fact-lbl">Semester</span><span className="pc-fact-val">{profile.semesterName ?? '—'}</span></div></div>
-                  {/* Guards against the literal string "null" — same live
-                      quirk Payment Console's own Intake tile guards against. */}
-                  <div className="pc-fact"><i className="lni lni-calendar"></i><div><span className="pc-fact-lbl">Intake</span><span className="pc-fact-val">{profile.intakeCode && profile.intakeCode !== 'null' ? profile.intakeCode : '—'}</span></div></div>
-                  <div className="pc-fact"><i className="lni lni-graduation"></i><div><span className="pc-fact-lbl">Batch</span><span className="pc-fact-val">{profile.batchCode ?? '—'}</span></div></div>
-                  <div className="pc-fact"><i className="lni lni-calendar"></i><div><span className="pc-fact-lbl">Year</span><span className="pc-fact-val">{profile.yearCode ?? '—'}</span></div></div>
-                  <div className="pc-fact"><i className="lni lni-phone"></i><div><span className="pc-fact-lbl">Phone</span><span className="pc-fact-val">{profile.phone ?? '—'}</span></div></div>
-                  <div className="pc-fact pc-fact-span2"><i className="lni lni-envelope"></i><div><span className="pc-fact-lbl">Email</span><span className="pc-fact-val truncate">{profile.emailId ?? profile.universityEmail ?? '—'}</span></div></div>
                 </div>
 
+                <div className="px-5 pb-5">
                 <div className="sec-divider"><i className="lni lni-files"></i> Payment History</div>
                 {isHistoryLoading ? (
                   <div className="text-g400 text-center" style={{ padding: 16, fontSize: 12.5 }}>Loading payment history…</div>
@@ -562,16 +537,33 @@ export default function NcheGuildPaymentPage() {
                     <table>
                       <thead>
                         <tr>
+                          <th style={{ width: 40 }}></th>
                           <th>Payment Date</th>
                           {category === 'nche' ? <th>PNR Number</th> : <th>Bank Deposit</th>}
                           <th>Amount</th>
                           {category === 'nche' && <th>Remarks</th>}
-                          <th style={{ width: 90 }}></th>
                         </tr>
                       </thead>
                       <tbody>
                         {pagedHistory.map(h => (
                           <tr key={h.paymentGuid}>
+                            <td>
+                              <ActionMenu>
+                                <button className="btn btn-neu btn-sm" onClick={() => setViewEntry(h)}>
+                                  <i className="lni lni-eye"></i> View
+                                </button>
+                                {permissions.edit && (
+                                  <button className="btn btn-neu btn-sm" onClick={() => setEditTarget(h)}>
+                                    <i className="lni lni-pencil-alt"></i> Edit
+                                  </button>
+                                )}
+                                {permissions.delete && (
+                                  <button className="btn btn-neu btn-sm" onClick={() => handleDelete(h)}>
+                                    <i className="lni lni-trash-can"></i> Delete
+                                  </button>
+                                )}
+                              </ActionMenu>
+                            </td>
                             <td>{h.payDate.slice(0, 10)}</td>
                             {category === 'nche' ? (
                               <td className="font-mono text-blue">{h.pnrNumber ?? '—'}</td>
@@ -580,12 +572,6 @@ export default function NcheGuildPaymentPage() {
                             )}
                             <td className="text-green font-bold">{h.amount.toLocaleString()}</td>
                             {category === 'nche' && <td className="text-muted">{h.remarks ?? '—'}</td>}
-                            <td>
-                              <div className="flex gap-2">
-                                <button className="btn-icon" title="Edit" onClick={() => startEdit(h)}><i className="lni lni-pencil-alt"></i></button>
-                                <button className="btn-icon" title="Delete" style={{ color: 'var(--red)' }} onClick={() => handleDelete(h)}><i className="lni lni-trash-can"></i></button>
-                              </div>
-                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -594,6 +580,7 @@ export default function NcheGuildPaymentPage() {
                   <Pagination page={historyPage} totalPages={historyTotalPages} totalCount={history.length} itemLabel="payments" onPageChange={setHistoryPage} />
                   </>
                 )}
+                </div>
               </div>
             </div>
 
@@ -613,9 +600,8 @@ export default function NcheGuildPaymentPage() {
                 </div>
                 <RegulatoryOutstandingTable items={semesterStatusList} isLoading={isOutstandingLoading} isError={isOutstandingError} category={category} />
 
-                <div className="sec-divider flex items-center justify-between">
-                  <span><i className="lni lni-wallet"></i> Payment Detail</span>
-                  {editingGuid && <span className="badge badge-amber">Editing existing payment</span>}
+                <div className="sec-divider">
+                  <i className="lni lni-wallet"></i> Payment Detail
                 </div>
                 <div className="g2 mb-[14px]">
                   <div className="fg">
@@ -648,10 +634,11 @@ export default function NcheGuildPaymentPage() {
                   </div>
                 )}
                 <div className="flex gap-[10px] justify-end items-center">
-                  {editingGuid && <button className="btn btn-neu" onClick={resetForm}><i className="lni lni-close"></i> Cancel Edit</button>}
-                  <button className="btn btn-primary btn-lg" disabled={isSaving} onClick={handleSave}>
-                    <i className="lni lni-save"></i> {isSaving ? 'Saving…' : editingGuid ? `Update ${CATEGORY_LABEL[category]} Payment` : `Save ${CATEGORY_LABEL[category]} Payment`}
-                  </button>
+                  {permissions.add && (
+                    <button className="btn btn-primary btn-lg" disabled={isSaving} onClick={handleSave}>
+                      <i className="lni lni-save"></i> {isSaving ? 'Saving…' : `Save ${CATEGORY_LABEL[category]} Payment`}
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -669,7 +656,18 @@ export default function NcheGuildPaymentPage() {
         />
       )}
 
-      {/* Edit/Delete confirm step — same confirm-modal-overlay/confirm-
+      <ViewRegulatoryPaymentModal isOpen={!!viewEntry} onClose={() => setViewEntry(null)} showToast={showToast} entry={viewEntry} category={category} />
+      <EditRegulatoryPaymentModal
+        isOpen={!!editTarget}
+        onClose={() => setEditTarget(null)}
+        showToast={showToast}
+        target={editTarget}
+        category={category}
+        applicationGuid={selectedApplicationGuid}
+        studentGuid={studentGuid}
+      />
+
+      {/* Delete confirm step — same confirm-modal-overlay/confirm-
           modal-pop + modal-hdr-blue markup as employee-approve/
           bulk-intake-edit, swapping this same modal's body over to the
           shared SuccessPopup once the mutation actually succeeds instead
@@ -679,7 +677,7 @@ export default function NcheGuildPaymentPage() {
           <div className="modal modal-sm confirm-modal-pop" onClick={e => e.stopPropagation()}>
             {successInfo ? (
               <SuccessPopup title={successInfo.title} subtitle={successInfo.subtitle} onClose={closeConfirm} />
-            ) : confirmAction.kind === 'delete' ? (
+            ) : (
               <>
                 <div className="modal-hdr modal-hdr-blue">
                   <div className="modal-title">Confirm Delete</div>
@@ -692,22 +690,6 @@ export default function NcheGuildPaymentPage() {
                   <button className="btn btn-neu" onClick={closeConfirm}>Cancel</button>
                   <button className="btn btn-danger" disabled={deletePayment.isPending} onClick={confirmDeletePayment}>
                     <i className="lni lni-trash-can"></i> {deletePayment.isPending ? 'Deleting…' : 'Confirm & Delete'}
-                  </button>
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="modal-hdr modal-hdr-blue">
-                  <div className="modal-title">Confirm Update</div>
-                  <button className="modal-close" onClick={closeConfirm}><i className="lni lni-close"></i></button>
-                </div>
-                <div style={{ padding: '18px 20px', fontSize: 13.5, color: 'var(--g700)', lineHeight: 1.6 }}>
-                  Update this {CATEGORY_LABEL[category]} payment to <strong>{confirmAction.input.amount.toLocaleString()}</strong> on <strong>{confirmAction.input.payDate}</strong>?
-                </div>
-                <div className="modal-footer">
-                  <button className="btn btn-neu" onClick={closeConfirm}>Cancel</button>
-                  <button className="btn btn-primary" disabled={updatePayment.isPending} onClick={confirmUpdatePayment}>
-                    <i className="lni lni-checkmark"></i> {updatePayment.isPending ? 'Updating…' : 'Confirm & Update'}
                   </button>
                 </div>
               </>

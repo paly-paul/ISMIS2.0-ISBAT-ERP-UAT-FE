@@ -5,6 +5,7 @@ import { ActionMenu } from '@/components/ActionMenu'
 import { Toast } from '@/components/Toast'
 import { useSponsorCategories, useCreateSponsorCategory, useUpdateSponsorCategory, useDeleteSponsorCategory, isMandatoryFeeCheck } from '@/hooks/student/useSponsor'
 import { SponsorCategoryDto } from '@/lib/api/student/sponsor'
+import { usePagePermissions } from '@/hooks/users/usePagePermissions'
 
 // Split out of the old combined "Category Masters" page (student/masters/)
 // per request — this half owns Student Category Master only. Wired to the
@@ -18,6 +19,7 @@ import { SponsorCategoryDto } from '@/lib/api/student/sponsor'
 // 0/1 byte the docs describe — `!!"No"` is true in JS, which silently showed
 // every row as "Yes" before that helper.
 export default function Page() {
+  const permissions = usePagePermissions()
   const [toast, setToast] = useState<{ msg: string; type: string } | null>(null)
 
   const { data: sponsorCategoriesPage, isLoading: sponsorCatsLoading } = useSponsorCategories()
@@ -60,7 +62,7 @@ export default function Page() {
       <div className="page active">
         <div className="pg-hdr"><div><div className="pg-title">Student Category Master</div><div className="pg-sub">Sponsor/student category configuration</div></div></div>
         <div className="card">
-          <div className="card-hdr"><div className="card-title"><i className="lni lni-users"></i> Student Category Master</div><button className="btn btn-primary btn-sm" onClick={openAddStudentCat}><i className="lni lni-plus"></i> Add</button></div>
+          <div className="card-hdr"><div className="card-title"><i className="lni lni-users"></i> Student Category Master</div>{permissions.add && <button className="btn btn-primary btn-sm" onClick={openAddStudentCat}><i className="lni lni-plus"></i> Add</button>}</div>
           <ScrollTable>
             <table>
               {/* "Fee Impact" was a free-text note with no backing field — the real
@@ -77,8 +79,8 @@ export default function Page() {
                     <td className="text-muted">{isMandatoryFeeCheck(c.mandatoryFeeCheck) ? 'Yes' : 'No'}</td>
                     <td>
                       <ActionMenu>
-                        <button className="btn btn-neu btn-sm" onClick={() => openEditStudentCat(c)}><i className="lni lni-pencil-alt"></i> Edit</button>
-                        <button className="btn btn-neu btn-sm" style={{ color: 'var(--red)' }} onClick={() => removeStudentCategory(c.sponsorCategoryGuid)}><i className="lni lni-trash-can"></i> Delete</button>
+                        {permissions.edit && <button className="btn btn-neu btn-sm" onClick={() => openEditStudentCat(c)}><i className="lni lni-pencil-alt"></i> Edit</button>}
+                        {permissions.delete && <button className="btn btn-neu btn-sm" style={{ color: 'var(--red)' }} onClick={() => removeStudentCategory(c.sponsorCategoryGuid)}><i className="lni lni-trash-can"></i> Delete</button>}
                       </ActionMenu>
                     </td>
                   </tr>

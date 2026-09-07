@@ -5,6 +5,7 @@ import { ScrollTable } from '@/components/ScrollTable'
 import { ActionMenu } from '@/components/ActionMenu'
 import { TableSearch } from '@/components/TableSearch'
 import { AdjustLedgerModal, AdjustLedgerTarget } from '@/components/modals/finance/AdjustLedgerModal'
+import { usePagePermissions } from '@/hooks/users/usePagePermissions'
 
 interface DemoStudent { name: string; sno: string }
 
@@ -22,6 +23,7 @@ const HISTORICAL_LEDGER: (AdjustLedgerTarget & { paid: string })[] = [
 ]
 
 export default function Page() {
+  const permissions = usePagePermissions()
   const [toast, setToast] = useState<{ msg: string; type: string } | null>(null)
   function showToast(msg: string, type = '') { setToast({ msg, type }); setTimeout(() => setToast(null), 3500) }
 
@@ -131,9 +133,11 @@ export default function Page() {
                       <td className="text-muted">—</td>
                       <td>
                         <ActionMenu>
-                          <button className="btn btn-amber btn-sm" onClick={() => setAdjustTarget(l)}>
-                            <i className="lni lni-pencil"></i> Adjust
-                          </button>
+                          {permissions.edit && (
+                            <button className="btn btn-amber btn-sm" onClick={() => setAdjustTarget(l)}>
+                              <i className="lni lni-pencil"></i> Adjust
+                            </button>
+                          )}
                         </ActionMenu>
                       </td>
                     </tr>

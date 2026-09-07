@@ -11,12 +11,14 @@ import { usePagination } from '@/hooks/usePagination'
 import { ExamRuleFormModal } from './_components/ExamRuleFormModal'
 import { ExamRuleViewModal } from './_components/ExamRuleViewModal'
 import { useExamRules, useDeleteExamRule } from '@/hooks/assessment/useExamRules'
+import { usePagePermissions } from '@/hooks/users/usePagePermissions'
 import { ExamRuleDto } from '@/lib/api/assessment/examRule'
 
 const FETCH_SIZE = 12000
 const DISPLAY_PAGE_SIZE = 10
 
 export default function ExamRulesPage() {
+  const permissions = usePagePermissions()
   const router = useRouter()
   const [toast, setToast] = useState<{ msg: string; type: string } | null>(null)
   const [isModalOpen, setIsModalOpen] = useState(false)
@@ -94,7 +96,7 @@ export default function ExamRulesPage() {
         </div>
         <div className="flex flex-wrap gap-2 w-full sm:w-auto">
           <button className="btn btn-ghost flex-1 sm:flex-none justify-center" onClick={() => router.push('/assessment/dashboard')}><i className="lni lni-arrow-left" /> Back</button>
-          <button className="btn btn-primary flex-1 sm:flex-none justify-center whitespace-nowrap" onClick={handleAddNew}><i className="lni lni-plus" /> Add Exam Rule</button>
+          {permissions.add && <button className="btn btn-primary flex-1 sm:flex-none justify-center whitespace-nowrap" onClick={handleAddNew}><i className="lni lni-plus" /> Add Exam Rule</button>}
         </div>
       </div>
 
@@ -152,12 +154,16 @@ export default function ExamRulesPage() {
                         <button className="btn btn-neu btn-sm" onClick={() => handleView(r.examRuleGuid)}>
                           <i className="lni lni-eye" /> View
                         </button>
-                        <button className="btn btn-neu btn-sm" onClick={() => handleEdit(r.examRuleGuid)}>
-                          <i className="lni lni-pencil" /> Edit
-                        </button>
-                        <button className="btn btn-neu btn-sm text-clr-red" onClick={() => setDeleteTarget({ guid: r.examRuleGuid, name: r.ruleName || '' })}>
-                          <i className="lni lni-trash-can" /> Delete
-                        </button>
+                        {permissions.edit && (
+                          <button className="btn btn-neu btn-sm" onClick={() => handleEdit(r.examRuleGuid)}>
+                            <i className="lni lni-pencil" /> Edit
+                          </button>
+                        )}
+                        {permissions.delete && (
+                          <button className="btn btn-neu btn-sm text-clr-red" onClick={() => setDeleteTarget({ guid: r.examRuleGuid, name: r.ruleName || '' })}>
+                            <i className="lni lni-trash-can" /> Delete
+                          </button>
+                        )}
                       </ActionMenu>
                     </td>
                     <td className="font-mono text-sm">{r.ruleCode}</td>

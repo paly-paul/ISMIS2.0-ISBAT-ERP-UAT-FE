@@ -107,6 +107,21 @@ export function getEmployees(page = 1, pageSize = 10, search = ''): Promise<Empl
   return apiGet<EmployeeListResponse | null>(`/api/v1/users/employees?${params}`).then(data => data?.items ?? [])
 }
 
+export interface EmployeeDropdownItemDto {
+  employeeGuid: string
+  displayName: string
+}
+
+export function getEmployeeDropdown(): Promise<EmployeeDropdownItemDto[]> {
+  if (MOCK_AUTH) {
+    return Promise.resolve(mockEmployees.filter(e => e.isApproved).map(e => ({
+      employeeGuid: e.employeeGuid,
+      displayName: `${e.empName} (${e.shortCode})`
+    })))
+  }
+  return apiGet<EmployeeDropdownItemDto[]>('/api/v1/users/employees/dropdown')
+}
+
 // Fetch the employee list scoped to pending approvals, for Employee
 // Approvals' own list (see employee-approve/page.tsx) — hits the same list
 // endpoint as getEmployees but with the server's own ?isApproved=false

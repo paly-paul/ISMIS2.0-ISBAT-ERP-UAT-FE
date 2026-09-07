@@ -8,6 +8,7 @@ import { Toast } from '@/components/Toast'
 import { SearchSelect } from '@/components/SearchSelect'
 import { Pagination } from '@/components/Pagination'
 import { usePagination } from '@/hooks/usePagination'
+import { usePagePermissions } from '@/hooks/users/usePagePermissions'
 
 const PAGE_SIZE = 10
 
@@ -20,6 +21,7 @@ const STUDENT_ROWS = [
 ]
 
 export default function Page() {
+  const permissions = usePagePermissions()
   const router = useRouter()
   const [openModals, setOpenModals] = useState<Set<string>>(new Set())
   const [toast, setToast] = useState<{ msg: string; type: string } | null>(null)
@@ -104,7 +106,7 @@ export default function Page() {
                     <td><span className={`badge ${r.ayBadge}`}>{r.ayText}</span></td>
                     <td><span className={`badge ${r.feeBadge}`}>{r.feeText}</span></td>
                     <td><span className={`badge ${r.statusBadge}`}><span className="bdot"></span>{r.statusText}</span></td>
-                    <td><ActionMenu><button className="btn btn-neu btn-sm"><i className="lni lni-eye"></i> View</button><button className="btn btn-primary btn-sm"><i className="lni lni-pencil"></i> Edit</button></ActionMenu></td>
+                    <td><ActionMenu><button className="btn btn-neu btn-sm"><i className="lni lni-eye"></i> View</button>{permissions.edit && <button className="btn btn-primary btn-sm"><i className="lni lni-pencil"></i> Edit</button>}</ActionMenu></td>
                   </tr>
                 ))}
               </tbody>

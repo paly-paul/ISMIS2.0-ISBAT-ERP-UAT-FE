@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import { ModalProps } from '../types'
 import DatePicker from '@/components/DatePicker'
 import { SearchSelect } from '@/components/SearchSelect'
-import { useFinanceCurrencies } from '@/hooks/finance/useFinanceCurrencies'
+import { useFinanceCurrencies, getDefaultFinanceCurrencyGuid } from '@/hooks/finance/useFinanceCurrencies'
 import { useReceiptBooks } from '@/hooks/finance/useReceiptBooks'
 import { useProcBanks } from '@/hooks/finance/useProcBanks'
 import {
@@ -62,6 +62,13 @@ export function NewAdvanceDepositModal({ isOpen, onClose, showToast }: ModalProp
   const receiptBooks = activeReceiptBooks.filter(r => r.category === PAY_TYPE_TO_RECEIPT_CATEGORY[Number(payType)])
   const showBankFields = Number(payType) > 1
 
+  // Defaults the currency picker to Finance's own default (UGX) once the
+  // list loads, rather than leaving it blank — the currency list resolves
+  // async, so this can't just be the useState initializer above.
+  useEffect(() => {
+    if (isOpen && !currencyGuid && currencies.length > 0) setCurrencyGuid(getDefaultFinanceCurrencyGuid(currencies))
+  }, [isOpen, currencyGuid, currencies])
+
   // Debounced live search, same convention as payment-console's own Step 1.
   useEffect(() => {
     const t = setTimeout(() => setCommittedSearch(search.trim()), 400)
@@ -82,7 +89,7 @@ export function NewAdvanceDepositModal({ isOpen, onClose, showToast }: ModalProp
     setSelectedApplicationGuid(null)
     setSelectedStudentName('')
     setAmount('')
-    setCurrencyGuid('')
+    setCurrencyGuid(getDefaultFinanceCurrencyGuid(currencies))
     setPayDate(todayYmd())
     setPayType('1')
     setReceiptBookGuid('')

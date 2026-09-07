@@ -26,9 +26,19 @@ const mockGenSets: GenSet[] = [
   { genSetGuid: '224ee48b-4a6a-426c-880b-a1b7f316853d', type: 'TF', condition: '1' },
 ]
 
+// pageSize was previously hardcoded to 10 — the page's own pagination
+// (usePagination) is client-side over this fetched array, so capping the
+// actual server fetch at 10 silently hid every row past the first page
+// (the table, and the total-count/page-count Pagination showed, both only
+// ever reflected those first 10 records) — same bug already found and
+// fixed on receipt-books.ts's getReceiptBooks. Same "load it all in one
+// request, filter/paginate client-side" convention as that and several
+// other Finance master lists.
+const GEN_SETS_LOAD_SIZE = 1000
+
 export function getGenSets(): Promise<GenSet[]> {
   if (MOCK_AUTH) return Promise.resolve(mockGenSets)
-  return apiGet<GenSetListResponse | null>('/api/v1/finance/gen-sets?page=1&pageSize=10').then(data => data?.items ?? [])
+  return apiGet<GenSetListResponse | null>(`/api/v1/finance/gen-sets?page=1&pageSize=${GEN_SETS_LOAD_SIZE}`).then(data => data?.items ?? [])
 }
 
 export function createGenSet(input: GenSetInput): Promise<GenSet> {

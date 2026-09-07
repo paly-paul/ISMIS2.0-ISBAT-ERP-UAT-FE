@@ -12,6 +12,8 @@ import { usePaymentHistoryList } from '@/hooks/finance/usePaymentConsole'
 import type { PaymentHistoryListEntry } from '@/hooks/finance/usePaymentConsole'
 import { formatDate } from '@/lib/date'
 import { ViewPaymentReceiptModal } from '@/components/modals/finance/ViewPaymentReceiptModal'
+import { EditPaymentModal, EditablePaymentTarget } from '@/components/modals/finance/EditPaymentModal'
+import { usePagePermissions } from '@/hooks/users/usePagePermissions'
 
 const PAGE_SIZE = 10
 // Don't narrow the table (or open the search dropdown) until the user's
@@ -54,6 +56,7 @@ function fmtAmount(n: number) {
 }
 
 export default function Page() {
+  const permissions = usePagePermissions()
   const [toast, setToast] = useState<{ msg: string; type: string } | null>(null)
   const [search, setSearch] = useState('')
   const [feeType, setFeeType] = useState('')
@@ -74,6 +77,11 @@ export default function Page() {
     setReceiptEntry(null)
     setAutoPrint(false)
   }
+
+  // Edit (put-payment.md) — Tuition rows only (category 1); NCHE/Guild/
+  // Other have no matching update endpoint, so the action is hidden rather
+  // than offered and rejected.
+  const [editEntry, setEditEntry] = useState<EditablePaymentTarget | null>(null)
 
   const { data, isLoading } = usePaymentHistoryList(page, PAGE_SIZE)
   const rows = data?.items ?? []
@@ -211,6 +219,14 @@ export default function Page() {
                         <button className="btn btn-neu btn-sm" onClick={() => openReceipt(r, false)}>
                           <i className="lni lni-eye"></i> View
                         </button>
+                        {r.category === 1 && permissions.edit && (
+                          <button
+                            className="btn btn-neu btn-sm"
+                            onClick={() => setEditEntry({ paymentGuid: r.paymentGuid, amount: r.amount, payDate: r.payDate, payType: r.payType, label: r.receiptNo })}
+                          >
+                            <i className="lni lni-pencil-alt"></i> Edit
+                          </button>
+                        )}
                       </ActionMenu>
                     </td>
                     <td className="text-blue font-bold font-mono">{r.receiptNo}</td>
@@ -238,6 +254,12 @@ export default function Page() {
         showToast={showToast}
         entry={receiptEntry}
         autoPrint={autoPrint}
+      />
+      <EditPaymentModal
+        isOpen={!!editEntry}
+        onClose={() => setEditEntry(null)}
+        showToast={showToast}
+        target={editEntry}
       />
       <Toast toast={toast} />
     </>

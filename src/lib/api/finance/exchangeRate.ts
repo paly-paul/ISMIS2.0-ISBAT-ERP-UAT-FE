@@ -97,11 +97,10 @@ export function getExchangeRateHistory(params: ExchangeRateHistoryParams): Promi
 
 // Confirmed via exchange-rates/get-exchange-rate-exists.md — the pre-check
 // the rate-entry form is meant to run before POST, which otherwise rejects
-// a duplicate (currency, date) outright. Not currently called by the page
-// (GetExchangeRatesByDate already returns every currency's existing rate
-// for the selected date in one call, which is enough to decide POST vs
-// PUT without a second round-trip per currency) — kept for parity with the
-// documented surface and for anywhere that only cares about one currency.
+// a duplicate (currency, date) outright. Used by the payment console's
+// Exchange Rates bar (per request, 2026-09-05) to lock a currency's input
+// once today's rate already exists, independent of the by-date board
+// (GetExchangeRatesByDate) that decides POST vs PUT for the actual save.
 export function getExchangeRateExists(currencyGuid: string, date: string): Promise<ExchangeRateExists> {
   if (MOCK_AUTH) {
     const existing = mockExchangeRates.find(r => r.currencyGuid === currencyGuid && r.exDate.slice(0, 10) === date)

@@ -10,11 +10,13 @@ import { usePagination } from '@/hooks/usePagination'
 import { QuestionFaqFormModal } from './_components/QuestionFaqFormModal'
 import { QuestionFaqViewModal } from './_components/QuestionFaqViewModal'
 import { useQuestionFaqs, useDeleteQuestionFaq } from '@/hooks/assessment/useQuestionFaqs'
+import { usePagePermissions } from '@/hooks/users/usePagePermissions'
 
 const FETCH_SIZE = 12000
 const DISPLAY_PAGE_SIZE = 10
 
 export default function QuestionFaqsPage() {
+  const permissions = usePagePermissions()
   const router = useRouter()
   const [toast, setToast] = useState<{ msg: string; type: string } | null>(null)
   
@@ -81,9 +83,11 @@ export default function QuestionFaqsPage() {
           <button className="btn btn-ghost flex-1 sm:flex-none justify-center" onClick={() => router.push('/assessment/dashboard')}>
             <i className="lni lni-arrow-left" /> Back
           </button>
-          <button className="btn btn-primary flex-1 sm:flex-none justify-center whitespace-nowrap" onClick={handleAddNew}>
-            <i className="lni lni-plus" /> Add FAQ
-          </button>
+          {permissions.add && (
+            <button className="btn btn-primary flex-1 sm:flex-none justify-center whitespace-nowrap" onClick={handleAddNew}>
+              <i className="lni lni-plus" /> Add FAQ
+            </button>
+          )}
         </div>
       </div>
 
@@ -118,12 +122,16 @@ export default function QuestionFaqsPage() {
                       <button className="btn btn-neu btn-sm" onClick={() => handleView(r.questionFaqGuid)}>
                         <i className="lni lni-eye" /> View
                       </button>
-                      <button className="btn btn-neu btn-sm" onClick={() => handleEdit(r.questionFaqGuid)}>
-                        <i className="lni lni-pencil" /> Edit
-                      </button>
-                      <button className="btn btn-neu btn-sm text-clr-red" onClick={() => setDeleteTarget(r.questionFaqGuid)}>
-                        <i className="lni lni-trash-can" /> Delete
-                      </button>
+                      {permissions.edit && (
+                        <button className="btn btn-neu btn-sm" onClick={() => handleEdit(r.questionFaqGuid)}>
+                          <i className="lni lni-pencil" /> Edit
+                        </button>
+                      )}
+                      {permissions.delete && (
+                        <button className="btn btn-neu btn-sm text-clr-red" onClick={() => setDeleteTarget(r.questionFaqGuid)}>
+                          <i className="lni lni-trash-can" /> Delete
+                        </button>
+                      )}
                     </ActionMenu>
                   </td>
                   <td style={{ maxWidth: 350 }}>

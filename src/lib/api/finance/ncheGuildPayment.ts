@@ -1,4 +1,4 @@
-import { apiDelete, apiGet, apiPost, apiPut } from '../client'
+import { apiGet, apiPost, apiPut, del } from '../client'
 
 const MOCK_AUTH = process.env.NEXT_PUBLIC_AUTH_MOCK === 'true'
 
@@ -146,11 +146,14 @@ export function updateRegulatoryPayment(category: PaymentCategory, paymentGuid: 
 }
 
 // Response 200 is the bare boolean `true` (confirmed via
-// nche/delete-payment-nche.md and guild/delete-payment-guild.md), not a
-// `{ success }` envelope.
+// nche/delete-payment-nche.md and guild/delete-payment-guild.md), not the
+// app's standard `{ success, data, ... }` envelope apiDelete assumes — that
+// mismatch made apiDelete throw on every successful delete here (see del()'s
+// own comment in client.ts), so this goes through the plain, non-enveloped
+// variant instead.
 export function deleteRegulatoryPayment(category: PaymentCategory, paymentGuid: string): Promise<boolean> {
   if (MOCK_AUTH) return Promise.resolve(true)
-  return apiDelete<boolean>(`${basePath(category)}/payment-${category}/${paymentGuid}`)
+  return del<boolean>(`${basePath(category)}/payment-${category}/${paymentGuid}`)
 }
 
 export function getRegulatoryPaymentHistory(category: PaymentCategory, studentGuid: string): Promise<RegulatoryPaymentHistoryEntry[]> {

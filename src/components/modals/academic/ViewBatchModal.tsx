@@ -104,6 +104,12 @@ export function ViewBatchModal({ isOpen, onClose, showToast, batchGuid, onEdit, 
 
         <div className="modal-scroll" style={{ padding: '20px clamp(14px, 4vw, 22px)' }}>
           <div className="view-detail-grid">
+            <Field label="Batch Code" value={batch.batchCode} mono />
+            <Field label="Status" value={<span className={`badge ${batch.active ? 'badge-green' : 'badge-grey'}`}>{batch.active ? 'Active' : 'Inactive'}</span>} />
+            <Field label="Intake" value={batch.intakeDescription || intakes.find(i => i.intakeGuid === batch.intakeGuid)?.description || '—'} />
+            
+            <div style={{ gridColumn: '1 / -1', height: '1px', background: 'var(--g200)', margin: '8px 0' }} />
+
             <Field label="Programme" value={programs.find(p => p.programGuid === programGuid)?.programName || '—'} />
             <Field label="Semester" value={semesters.find(s => s.semesterGuid === semesterGuid)?.semName || '—'} />
             <Field label="Specialization" value={streams.find(s => s.streamGuid === streamGuid)?.streamName || '—'} />
@@ -113,6 +119,11 @@ export function ViewBatchModal({ isOpen, onClose, showToast, batchGuid, onEdit, 
             <Field label="Batch Time" value={batchTimes.find(b => b.batchTimeGuid === batchTimeGuid)?.batchTime || '—'} />
             <Field label="Start Date" value={startDate || '—'} />
             <Field label="End Date" value={endDate || '—'} />
+
+            <div style={{ gridColumn: '1 / -1', height: '1px', background: 'var(--g200)', margin: '8px 0' }} />
+
+            <Field label="Batch In-Charge" value={employees.find(e => e.employeeGuid === batch.bInCharge)?.empName || '—'} />
+            <Field label="Programme Head" value={employees.find(e => e.employeeGuid === batch.pHead)?.empName || '—'} />
           </div>
         </div>
 

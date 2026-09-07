@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
-import { approveEmployee, assignEmployeePermissionGroups, createEmployee, CreateEmployeeInput, Employee, EmployeeListItem, EmployeeListResponse, getEmployee, getEmployeePermissionGroups, getEmployees, getPendingEmployees, updateEmployee } from '@/lib/api/employee/employee'
+import { approveEmployee, assignEmployeePermissionGroups, createEmployee, CreateEmployeeInput, Employee, EmployeeListItem, EmployeeListResponse, getEmployee, getEmployeePermissionGroups, getEmployees, getPendingEmployees, updateEmployee, getEmployeeDropdown, EmployeeDropdownItemDto } from '@/lib/api/employee/employee'
 import { MENU_KEY } from '@/hooks/users/useMenu'
 
 const EMPLOYEES_KEY = ['employees']
@@ -29,6 +29,15 @@ export function useEmployees(enabled = true) {
     staleTime: Infinity,
     gcTime: Infinity,
     enabled,
+  })
+}
+
+export function useEmployeeDropdown() {
+  return useQuery({
+    queryKey: [...EMPLOYEES_KEY, 'dropdown'],
+    queryFn: () => getEmployeeDropdown(),
+    staleTime: Infinity,
+    gcTime: Infinity,
   })
 }
 

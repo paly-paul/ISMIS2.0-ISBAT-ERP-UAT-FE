@@ -11,6 +11,7 @@ import { StudentDto, normalizeStudentDetail } from '@/lib/api/student/student'
 import { useStudent } from '@/hooks/student/useStudents'
 import { useBatchTransferDetail, useEligibleBatches, useBatchTransferHistory, useExecuteBatchTransfer } from '@/hooks/student/useBatchTransfer'
 import { formatDateTime } from '@/lib/date'
+import { usePagePermissions } from '@/hooks/users/usePagePermissions'
 
 // Ported from isbat_student_module.html's Batch Transfer page. Confirmed
 // via students/batch-transfer/*.md (2026-08-19) — a real, dedicated batch-
@@ -31,6 +32,7 @@ const REASONS = ['Dropout Rejoin', 'Deferment', 'Job / Relocation', 'Medical', '
 // Router) — see the wrapping default export at the bottom of this file,
 // same split Student Profile uses for the same reason.
 function BatchTransferContent() {
+  const permissions = usePagePermissions()
   const router = useRouter()
   const searchParams = useSearchParams()
   // Student Profile's action menu links here as
@@ -218,7 +220,7 @@ function BatchTransferContent() {
                   */}
                   <div className="flex gap-2" style={{ justifyContent: 'flex-end' }}>
                     <button className="btn btn-neu" onClick={handleClear}>Cancel</button>
-                    <button className="btn btn-primary" disabled={!canExecute} onClick={() => setConfirmOpen(true)}><i className="lni lni-checkmark"></i> Execute Transfer</button>
+                    {permissions.edit && <button className="btn btn-primary" disabled={!canExecute} onClick={() => setConfirmOpen(true)}><i className="lni lni-checkmark"></i> Execute Transfer</button>}
                   </div>
                 </div>
               </div>

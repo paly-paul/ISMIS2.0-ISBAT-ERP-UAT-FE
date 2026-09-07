@@ -40,6 +40,7 @@ import {
 import { usePaymentOthersList } from '@/hooks/finance/usePaymentOthers'
 import { formatDateTime } from '@/lib/date'
 import { AuthError } from '@/lib/api/client'
+import { usePagePermissions } from '@/hooks/users/usePagePermissions'
 
 // Real "what's owed" table for the Other Payment tab, sourced from GET
 // .../outstanding-all (get-all-outstanding-ledgers.md) filtered to
@@ -213,6 +214,7 @@ const SHOW_OTHER_PAID_FEE_DETAILS: boolean = false
 const HISTORY_PAGE_SIZE = 10
 
 export default function PaymentConsolePage() {
+  const permissions = usePagePermissions()
   const router = useRouter()
   const [toast, setToast] = useState<{ msg: string; type: string } | null>(null)
   function showToast(msg: string, type = '') { setToast({ msg, type }); setTimeout(() => setToast(null), 3500) }
@@ -1240,14 +1242,16 @@ export default function PaymentConsolePage() {
                                     <button className="btn btn-neu btn-sm" onClick={() => setViewEntry(h)}>
                                       <i className="lni lni-eye"></i> View
                                     </button>
-                                    <button
-                                      className="btn btn-neu btn-sm"
-                                      disabled={isAdvanceFunded}
-                                      title={isAdvanceFunded ? 'Linked to an advance deposit — adjust the deposit instead.' : undefined}
-                                      onClick={() => setEditTarget({ paymentGuid: h.paymentGuid, amount: h.amount, payDate: h.payDate, payType: h.payType, label: h.paymentCode })}
-                                    >
-                                      <i className="lni lni-pencil-alt"></i> Edit
-                                    </button>
+                                    {permissions.edit && (
+                                      <button
+                                        className="btn btn-neu btn-sm"
+                                        disabled={isAdvanceFunded}
+                                        title={isAdvanceFunded ? 'Linked to an advance deposit — adjust the deposit instead.' : undefined}
+                                        onClick={() => setEditTarget({ paymentGuid: h.paymentGuid, amount: h.amount, payDate: h.payDate, payType: h.payType, label: h.paymentCode })}
+                                      >
+                                        <i className="lni lni-pencil-alt"></i> Edit
+                                      </button>
+                                    )}
                                   </ActionMenu>
                                 </td>
                                 <td>{h.payDate.slice(0, 10)}</td>
@@ -1778,9 +1782,11 @@ export default function PaymentConsolePage() {
                     </div>
 
                     <div className="flex gap-[10px] justify-end items-center">
-                      <button className="btn btn-primary btn-lg" disabled={createPayment.isPending} onClick={() => handleSave()}>
-                        <i className="lni lni-save"></i> {createPayment.isPending ? 'Saving…' : 'Save Payment & Generate Receipt →'}
-                      </button>
+                      {permissions.add && (
+                        <button className="btn btn-primary btn-lg" disabled={createPayment.isPending} onClick={() => handleSave()}>
+                          <i className="lni lni-save"></i> {createPayment.isPending ? 'Saving…' : 'Save Payment & Generate Receipt →'}
+                        </button>
+                      )}
                     </div>
                   </>
                 )}
