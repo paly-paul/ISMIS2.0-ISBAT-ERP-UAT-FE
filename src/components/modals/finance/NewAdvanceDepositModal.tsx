@@ -42,6 +42,7 @@ export function NewAdvanceDepositModal({ isOpen, onClose, showToast }: ModalProp
   const [search, setSearch] = useState('')
   const [committedSearch, setCommittedSearch] = useState('')
   const [selectedApplicationGuid, setSelectedApplicationGuid] = useState<string | null>(null)
+  const [selectedStudentGuid, setSelectedStudentGuid] = useState<string | null>(null)
   const [selectedStudentName, setSelectedStudentName] = useState('')
 
   const [amount, setAmount] = useState('')
@@ -87,6 +88,7 @@ export function NewAdvanceDepositModal({ isOpen, onClose, showToast }: ModalProp
     setSearch('')
     setCommittedSearch('')
     setSelectedApplicationGuid(null)
+    setSelectedStudentGuid(null)
     setSelectedStudentName('')
     setAmount('')
     setCurrencyGuid(getDefaultFinanceCurrencyGuid(currencies))
@@ -103,8 +105,9 @@ export function NewAdvanceDepositModal({ isOpen, onClose, showToast }: ModalProp
     onClose()
   }
 
-  function selectStudent(applicationGuid: string, name: string) {
+  function selectStudent(applicationGuid: string, studentGuid: string | null, name: string) {
     setSelectedApplicationGuid(applicationGuid)
+    setSelectedStudentGuid(studentGuid)
     setSelectedStudentName(name)
     setSearch(name)
     setCommittedSearch('')
@@ -123,7 +126,7 @@ export function NewAdvanceDepositModal({ isOpen, onClose, showToast }: ModalProp
     createAdvanceDeposit.mutate(
       {
         applicationGuid: selectedApplicationGuid,
-        studentGuid: null,
+        studentGuid: selectedStudentGuid,
         amount: amt,
         currencyGuid: selectedCurrency.currencyGuid,
         receiptBookGuid,
@@ -190,7 +193,7 @@ export function NewAdvanceDepositModal({ isOpen, onClose, showToast }: ModalProp
                       <div
                         key={a.applicationGuid}
                         className="cursor-pointer px-3 py-2 hover:bg-b50 border-b border-g100 last:border-b-0"
-                        onClick={() => selectStudent(a.applicationGuid, applicantName(a))}
+                        onClick={() => selectStudent(a.applicationGuid, a.studentGuid, applicantName(a))}
                       >
                         <div className="font-bold">{applicantName(a)}</div>
                         <div className="text-g500" style={{ fontSize: 11 }}>{a.appRefNo} · {a.phone ?? '—'} · {a.emailId ?? '—'}</div>
