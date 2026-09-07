@@ -52,7 +52,7 @@ export default function Page() {
   // append-only (create has no reordering operation) and the backend sends
   // them back in ascending insertion order, so the last entry is the most
   // recently created.
-  const baseRows = [...(debouncedSearch ? (searchResults ?? []) : rows)].reverse()
+  const baseRows = [...rows].reverse()
   const searchTrimmed = search.trim()
   const searchPending = searchTrimmed.length >= MIN_SEARCH_CHARS && (debouncedSearch !== searchTrimmed || isSearching)
 
@@ -64,17 +64,18 @@ export default function Page() {
     return `${r.roomCode} ${r.location ?? ''}`.toLowerCase().includes(term)
   }
 
-  // Live preview shown in the search dropdown as the user types — reads the
-  // same server-scoped baseRows, capped to a handful of rows. Empty below
-  // MIN_SEARCH_CHARS, matching TableSearch's own minChars gate on when the
-  // dropdown is even allowed to open.
+  // Live preview shown in the search dropdown as the user types.
+  // Reads from searchResults if server search completed, otherwise falls back
+  // to filtering the full list client-side.
   const searchMatches = searchTrimmed.length >= MIN_SEARCH_CHARS
-    ? baseRows.filter(r => matchesSearch(r, searchTrimmed.toLowerCase())).slice(0, 8)
+    ? (debouncedSearch ? (searchResults ?? []) : rows)
+        .filter(r => matchesSearch(r, searchTrimmed.toLowerCase()))
+        .slice(0, 8)
     : []
 
-  // Re-filter client-side on top of whatever the server sent back, as a
-  // safety net in case `search` isn't recognized server-side.
-  const filteredRows = baseRows.filter(r => searchTrimmed.length < MIN_SEARCH_CHARS || matchesSearch(r, searchTrimmed.toLowerCase()))
+  // Re-filter client-side is removed per ACA-020 — search box now operates
+  // completely independently of the table content below it.
+  const filteredRows = baseRows
 
   const { page, setPage, totalPages, totalCount, pageItems } = usePagination(filteredRows, PAGE_SIZE)
 

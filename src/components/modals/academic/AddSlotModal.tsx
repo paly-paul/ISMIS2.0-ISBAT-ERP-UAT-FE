@@ -1,134 +1,305 @@
 'use client'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ModalProps } from '../types'
 import { SearchSelect } from '@/components/SearchSelect'
 import { ScrollTable } from '@/components/ScrollTable'
+import { useEmployees } from '@/hooks/employee/useEmployees'
+import { useBatchTimes } from '@/hooks/config/useBatchTimes'
+import { useTimeSlotDropdown } from '@/hooks/academic/useTimeSlots'
+import { useWeekdays } from '@/hooks/config/useWeekdays'
+import { useRooms } from '@/hooks/academic/useRooms'
+import {
+  useTimetableCourseUnits,
+  useTimetableEligibleBatches,
+  useTimetableDetail,
+  useCreateTimetable,
+  useUpdateTimetable,
+  TimetableBatchLink,
+} from '@/hooks/academic/useTimetable'
+import { AuthError } from '@/lib/api/client'
 
-const COURSE_UNITS = [
-  { code: 'BFX3232', name: 'Dissertation / Portfolio Development', credit: 10, batch: 'BSCVEXF23DA', count: 16 },
-  { code: 'BIT2201', name: 'Database Systems',                     credit: 4,  batch: 'BSC-IT-S26-DA', count: 42 },
-  { code: 'BIT2202', name: 'Data Structures & Algorithms',         credit: 4,  batch: 'BSC-IT-S26-DA', count: 42 },
-  { code: 'BBA3110', name: 'Strategic Management',                 credit: 3,  batch: 'BBA-S26-DA',   count: 55 },
-]
+interface AddSlotModalProps extends ModalProps {
+  mode: 'add' | 'edit'
+  // Locked to whatever the page's own View filter currently has selected —
+  // there's no picker for either in this modal, matching how the page is
+  // the one place that decides which intake/term is being scheduled.
+  intakeGuid: string | null
+  term: number
+  // Edit mode only.
+  timetableGuid?: string | null
+}
 
-const ROOMS = [
-  { value: '402',   capacity: 45 },
-  { value: 'LR-01', capacity: 60 },
-  { value: 'LR-02', capacity: 60 },
-  { value: 'Lab-A', capacity: 40 },
-  { value: 'Lab-B', capacity: 40 },
-  { value: 'Lab-C', capacity: 30 },
-]
+// Create/Edit a timetable entry (post-timetable.md / put-timetable.md). One
+// entry = one lecturer, in one room, at one time slot on one weekday,
+// teaching one or more batches of ONE course unit — this modal deliberately
+// scopes to a single Course Unit pick (unlike the doc's own `batches[]`,
+// which technically allows different course units in the same entry) since
+// GET /timetables/eligible-batches is itself scoped to one courseUnitGuid at
+// a time; combining several different units into one entry would need a
+// separate "add another course unit" picker this form doesn't have. Editing
+// an existing entry whose batches already span more than one course unit
+// only shows/keeps the ones matching whichever course unit this form has
+// selected — a real, flagged limitation, not a silent data-loss risk (the
+// PUT is a full replacement of `batches`, so submitting drops the others).
+export function AddSlotModal({ isOpen, onClose, showToast, mode, intakeGuid, term, timetableGuid }: AddSlotModalProps) {
+  const [lecturerGuid, setLecturerGuid] = useState('')
+  const [batchTimeGuid, setBatchTimeGuid] = useState('')
+  const [timeSlotGuid, setTimeSlotGuid] = useState('')
+  const [weekDayGuid, setWeekDayGuid] = useState('')
+  const [roomGuid, setRoomGuid] = useState('')
+  const [load, setLoad] = useState('')
+  const [url, setUrl] = useState('')
+  const [courseUnitGuid, setCourseUnitGuid] = useState('')
+  const [selectedBatchGuids, setSelectedBatchGuids] = useState<Set<string>>(new Set())
+  const [failure, setFailure] = useState<string | null>(null)
 
-export function AddSlotModal({ isOpen, onClose, showToast }: ModalProps) {
-  const [selected, setSelected] = useState<Set<string>>(new Set(['BFX3232']))
-  const [room, setRoom] = useState('')
+  const isEdit = mode === 'edit'
 
-  function toggle(code: string) {
-    setSelected(prev => {
-      const s = new Set(prev)
-      if (s.has(code)) s.delete(code); else s.add(code)
-      return s
+  const { data: employees = [] } = useEmployees(isOpen)
+  const lecturerOptions = employees.map(e => ({ value: e.employeeGuid, label: `${e.empName} (${e.shortCode})` }))
+
+  const { data: batchTimes = [] } = useBatchTimes()
+  const batchTimeOptions = batchTimes.map(b => ({ value: b.batchTimeGuid, label: b.batchTime }))
+
+  const { data: timeSlots = [] } = useTimeSlotDropdown(batchTimeGuid || null)
+  const timeSlotOptions = timeSlots.map(t => ({ value: t.timeSlotGuid, label: `${t.timeSlot} (${t.startTime.slice(0, 5)}–${t.endTime.slice(0, 5)})` }))
+
+  const { data: weekdays = [] } = useWeekdays()
+  const weekdayOptions = weekdays.map(w => ({ value: w.weekDayGuid, label: w.dayName }))
+
+  const { data: rooms = [] } = useRooms()
+  const roomOptions = rooms.map(r => ({ value: r.roomGuid, label: r.location ? `${r.roomCode} — ${r.location}` : r.roomCode }))
+  const selectedRoom = rooms.find(r => r.roomGuid === roomGuid)
+
+  const { data: courseUnits = [] } = useTimetableCourseUnits(intakeGuid, term, isOpen)
+  // courseUnitCode/courseUnitName are both nullable per get-courseunit-
+  // dropdown.md — guarded rather than interpolating a literal "null" into
+  // the label.
+  const courseUnitOptions = courseUnits.map(c => ({ value: c.courseUnitGuid, label: `${c.courseUnitCode ?? '—'} — ${c.courseUnitName ?? 'Unnamed course unit'}` }))
+
+  const { data: eligibleBatches = [], isLoading: isBatchesLoading } = useTimetableEligibleBatches(intakeGuid, term, courseUnitGuid || null, isOpen)
+
+  const { data: detail } = useTimetableDetail(isEdit ? timetableGuid ?? null : null, isOpen && isEdit)
+
+  const createTimetableMutation = useCreateTimetable()
+  const updateTimetableMutation = useUpdateTimetable()
+
+  function resetForm() {
+    setLecturerGuid('')
+    setBatchTimeGuid('')
+    setTimeSlotGuid('')
+    setWeekDayGuid('')
+    setRoomGuid('')
+    setLoad('')
+    setUrl('')
+    setCourseUnitGuid('')
+    setSelectedBatchGuids(new Set())
+    setFailure(null)
+  }
+
+  // Reset on open for Add mode; prefill from the fetched detail for Edit —
+  // same "guard on isOpen, re-run once detail resolves" convention as this
+  // app's other real Edit modals.
+  useEffect(() => {
+    if (!isOpen) return
+    if (!isEdit) { resetForm(); return }
+    if (!detail) return
+    setLecturerGuid(detail.lecturerGuid)
+    setBatchTimeGuid(detail.batchTimeGuid)
+    setTimeSlotGuid(detail.timeSlotGuid)
+    setWeekDayGuid(detail.weekDayGuid)
+    setRoomGuid(detail.roomGuid)
+    setLoad(String(detail.load))
+    setUrl(detail.url ?? '')
+    // See this component's own header comment — only the first course unit
+    // present on the existing entry's batches is offered for editing here.
+    const firstCourseUnitGuid = detail.batches[0]?.courseUnitGuid ?? ''
+    setCourseUnitGuid(firstCourseUnitGuid)
+    setSelectedBatchGuids(new Set(detail.batches.filter(b => b.courseUnitGuid === firstCourseUnitGuid).map(b => b.batchGuid)))
+    setFailure(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, isEdit, detail])
+
+  // Changing the course unit invalidates whatever batches were checked for
+  // the previous one — eligible-batches is scoped per course unit, so a
+  // stale batchGuid from a different unit would silently 400 as
+  // "Batch not found" on submit otherwise.
+  function changeCourseUnit(v: string) {
+    setCourseUnitGuid(v)
+    setSelectedBatchGuids(new Set())
+  }
+
+  function toggleBatch(batchGuid: string) {
+    setSelectedBatchGuids(prev => {
+      const next = new Set(prev)
+      if (next.has(batchGuid)) next.delete(batchGuid)
+      else next.add(batchGuid)
+      return next
     })
   }
 
   if (!isOpen) return null
 
-  const load = COURSE_UNITS.filter(u => selected.has(u.code)).reduce((sum, u) => sum + u.credit, 0)
-  const roomCapacity = ROOMS.find(r => r.value === room)?.capacity ?? ''
+  function handleClose() {
+    resetForm()
+    onClose()
+  }
+
+  function handleSubmit() {
+    if (!intakeGuid) { showToast('No academic session selected.', 'warn'); return }
+    if (!lecturerGuid) { showToast('Please select a Lecturer.', 'warn'); return }
+    if (!batchTimeGuid) { showToast('Please select a Batch Time.', 'warn'); return }
+    if (!timeSlotGuid) { showToast('Please select a Time Slot.', 'warn'); return }
+    if (!weekDayGuid) { showToast('Please select a Day.', 'warn'); return }
+    if (!roomGuid) { showToast('Please select a Room.', 'warn'); return }
+    if (!courseUnitGuid) { showToast('Please select a Course Unit.', 'warn'); return }
+    if (selectedBatchGuids.size === 0) { showToast('Please select at least one batch to schedule.', 'warn'); return }
+    const loadNum = +load
+    if (!load.trim() || isNaN(loadNum) || loadNum <= 0) { showToast('Load must be greater than 0.', 'warn'); return }
+
+    const batches: TimetableBatchLink[] = eligibleBatches
+      .filter(b => selectedBatchGuids.has(b.batchGuid))
+      .map(b => ({ courseUnitGuid, batchGuid: b.batchGuid, semesterGuid: b.semesterGuid }))
+
+    const input = {
+      batchTimeGuid,
+      lecturerGuid,
+      timeSlotGuid,
+      weekDayGuid,
+      roomGuid,
+      intakeGuid,
+      term,
+      load: loadNum,
+      url: url.trim() || null,
+      batches,
+    }
+
+    setFailure(null)
+    if (isEdit) {
+      if (!timetableGuid) return
+      updateTimetableMutation.mutate(
+        { guid: timetableGuid, input },
+        {
+          onSuccess: () => { showToast('Timetable entry updated', 'success'); handleClose() },
+          onError: (error: Error) => {
+            // Clash rejections (lecturer/batch already scheduled at this
+            // slot+day) and every "not found" case come back as a plain
+            // message on the generic-failure branch — surface as-is.
+            const code = error instanceof AuthError ? error.code : undefined
+            setFailure(error.message || `Failed to update timetable entry${code ? ` (${code})` : ''}. Please try again.`)
+          },
+        },
+      )
+    } else {
+      createTimetableMutation.mutate(input, {
+        onSuccess: () => { showToast('Timetable entry created', 'success'); handleClose() },
+        onError: (error: Error) => {
+          const code = error instanceof AuthError ? error.code : undefined
+          setFailure(error.message || `Failed to create timetable entry${code ? ` (${code})` : ''}. Please try again.`)
+        },
+      })
+    }
+  }
+
+  const isSubmitting = createTimetableMutation.isPending || updateTimetableMutation.isPending
 
   return (
-    <div className="modal-overlay open" id="add-slot-modal">
+    <div className="modal-overlay open" id="add-slot-modal" onClick={handleClose}>
       <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
         <div className="modal-hdr modal-hdr-blue">
-          <div className="modal-title"><i className="lni lni-calendar"></i> Create New Schedule</div>
-          <button className="modal-close" onClick={onClose}><i className="lni lni-close"></i></button>
+          <div className="modal-title"><i className="lni lni-calendar"></i> {isEdit ? 'Edit Schedule' : 'Create New Schedule'}</div>
+          <button className="modal-close" onClick={handleClose}><i className="lni lni-close"></i></button>
         </div>
 
         <div className="g3">
-          <div className="fg"><div className="lbl">Academic Session <span className="req">*</span></div><SearchSelect options={['Spring 2026 (20261)', 'Fall 2025 (20253)']} /></div>
-          <div className="fg"><div className="lbl">Term <span className="req">*</span></div><SearchSelect options={['Term1', 'Term2', 'Term3']} /></div>
-          <div className="fg"><div className="lbl">Total Load</div><input className="ctrl" value="50 Hrs" disabled /></div>
-          <div className="fg"><div className="lbl">Batch/Time <span className="req">*</span></div><SearchSelect options={['Day', 'Evening', 'Weekend']} /></div>
           <div className="fg span2">
             <div className="lbl">Lecturer <span className="req">*</span></div>
-            <SearchSelect
-              placeholder="-- Select Lecturer --"
-              options={['Kumar Thilak D.', 'Dr. Ssekibuule Ronald', 'Ms. Namutebi Joyce', 'Prof. Mukasa Charles']}
-            />
+            <SearchSelect placeholder="— Select Lecturer —" options={lecturerOptions} value={lecturerGuid} onChange={setLecturerGuid} />
           </div>
-        </div>
-
-        <div className="sec-divider">Course Units — Select to Schedule</div>
-        <ScrollTable className="mb-[14px]">
-          <table>
-            <thead>
-              <tr>
-                <th style={{ width: 40 }}></th>
-                <th>Course Unit Code</th>
-                <th>Course Unit Name</th>
-                <th>Credit</th>
-                <th>Batch</th>
-                <th>Student Count</th>
-              </tr>
-            </thead>
-            <tbody>
-              {COURSE_UNITS.map(u => (
-                <tr key={u.code}>
-                  <td><input type="checkbox" checked={selected.has(u.code)} onChange={() => toggle(u.code)} /></td>
-                  <td className="font-mono">{u.code}</td>
-                  <td>{u.name}</td>
-                  <td>{u.credit}</td>
-                  <td>{u.batch}</td>
-                  <td>{u.count}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </ScrollTable>
-
-        <div className="sec-divider">Combined Batch (Repetition Tag)</div>
-        <div className="g2">
           <div className="fg">
-            <div className="lbl">Has Repetition Tag?</div>
-            <div className="tgl-group">
-              <button className="tgl-btn tgl-active" id="slot-rep-no">No — Single Batch</button>
-              <button className="tgl-btn" id="slot-rep-yes">Yes — Combine Batches</button>
-            </div>
-          </div>
-          <div className="fg hidden" id="slot-rep-batches">
-            <div className="lbl">Include Batches</div>
-            <div className="flex flex-col gap-1">
-              <label className="flex items-center gap-[6px] text-[var(--fs-sm)]"><input type="checkbox" /> BSC-IT-S26-DA</label>
-              <label className="flex items-center gap-[6px] text-[var(--fs-sm)]"><input type="checkbox" /> BSC-IT-S26-DB</label>
-              <label className="flex items-center gap-[6px] text-[var(--fs-sm)]"><input type="checkbox" /> BBA-S26-DA</label>
-            </div>
+            <div className="lbl">Load (Hrs) <span className="req">*</span></div>
+            <input className="ctrl no-spinner" type="number" min={1} placeholder="e.g. 3" value={load} onChange={e => setLoad(e.target.value)} />
           </div>
         </div>
+
+        <div className="sec-divider">Course Unit &amp; Batches</div>
+        <div className="fg mb-[14px]">
+          <div className="lbl">Course Unit <span className="req">*</span></div>
+          <SearchSelect placeholder="— Select Course Unit —" options={courseUnitOptions} value={courseUnitGuid} onChange={changeCourseUnit} />
+        </div>
+        {courseUnitGuid && (
+          <ScrollTable className="mb-[14px]">
+            <table>
+              <thead>
+                <tr>
+                  <th style={{ width: 40 }}></th>
+                  <th>Batch Code</th>
+                  <th>Semester</th>
+                  <th>Student Count</th>
+                </tr>
+              </thead>
+              <tbody>
+                {isBatchesLoading ? (
+                  <tr><td colSpan={4} className="text-center text-g400" style={{ padding: 16 }}>Loading eligible batches…</td></tr>
+                ) : eligibleBatches.length === 0 ? (
+                  <tr><td colSpan={4} className="text-center text-g400" style={{ padding: 16 }}>No batches are eligible for this course unit in the current session/term.</td></tr>
+                ) : eligibleBatches.map(b => (
+                  <tr key={b.batchGuid}>
+                    <td><input type="checkbox" checked={selectedBatchGuids.has(b.batchGuid)} onChange={() => toggleBatch(b.batchGuid)} /></td>
+                    <td className="font-mono">{b.batchCode}</td>
+                    <td>{b.semesterName}</td>
+                    <td>{b.studentCount}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </ScrollTable>
+        )}
 
         <div className="sec-divider">Time Slot &amp; Venue</div>
         <div className="g3">
-          <div className="fg"><div className="lbl">Load</div><input className="ctrl" value={`${load} Hrs`} disabled /></div>
-          <div className="fg"><div className="lbl">Day <span className="req">*</span></div><SearchSelect options={['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']} /></div>
           <div className="fg">
-            <div className="lbl">Room / Venue <span className="req">*</span></div>
+            <div className="lbl">Batch Time <span className="req">*</span></div>
             <SearchSelect
-              placeholder="-- Select Room --"
-              options={ROOMS.map(r => ({ value: r.value, label: `${r.value} (cap. ${r.capacity})` }))}
-              onChange={setRoom}
+              placeholder="— Select Batch Time —"
+              options={batchTimeOptions}
+              value={batchTimeGuid}
+              onChange={v => { setBatchTimeGuid(v); setTimeSlotGuid('') }}
             />
           </div>
-          <div className="fg"><div className="lbl">Start Time <span className="req">*</span></div><input className="ctrl" type="time" defaultValue="14:00" id="slot-start" /></div>
-          <div className="fg"><div className="lbl">End Time <span className="req">*</span></div><input className="ctrl" type="time" defaultValue="15:55" id="slot-end" /></div>
-          <div className="fg"><div className="lbl">Capacity</div><input className="ctrl" value={roomCapacity} disabled /></div>
-          <div className="fg span3"><div className="lbl">Online URL</div><input className="ctrl" placeholder="https://meet.isbat.ac.ug/… (optional, for online/hybrid sessions)" /></div>
+          <div className="fg">
+            <div className="lbl">Time Slot <span className="req">*</span></div>
+            <SearchSelect
+              placeholder={batchTimeGuid ? '— Select Time Slot —' : '— Select Batch Time First —'}
+              options={timeSlotOptions}
+              value={timeSlotGuid}
+              onChange={setTimeSlotGuid}
+              disabled={!batchTimeGuid}
+            />
+          </div>
+          <div className="fg">
+            <div className="lbl">Day <span className="req">*</span></div>
+            <SearchSelect placeholder="— Select Day —" options={weekdayOptions} value={weekDayGuid} onChange={setWeekDayGuid} />
+          </div>
+          <div className="fg">
+            <div className="lbl">Room / Venue <span className="req">*</span></div>
+            <SearchSelect placeholder="— Select Room —" options={roomOptions} value={roomGuid} onChange={setRoomGuid} />
+          </div>
+          <div className="fg"><div className="lbl">Capacity</div><input className="ctrl" value={selectedRoom?.capacity ?? ''} disabled /></div>
+          <div className="fg span3"><div className="lbl">Online URL <span className="text-g400" style={{ fontWeight: 500 }}>(optional)</span></div><input className="ctrl" placeholder="https://meet.isbat.ac.ug/… (for online/hybrid sessions)" value={url} onChange={e => setUrl(e.target.value)} /></div>
         </div>
 
-        <div id="slot-clash-result" className="hidden my-[10px]"></div>
+        {failure && (
+          <div className="danger-box mt-[10px]">
+            <i className="lni lni-warning"></i> {failure}
+          </div>
+        )}
 
         <div className="modal-footer">
-          <button className="btn btn-neu" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" onClick={() => { showToast('Schedule created — checking clashes...', 'success'); onClose() }}><i className="lni lni-checkmark"></i> Schedule</button>
+          <button className="btn btn-neu" onClick={handleClose}>Cancel</button>
+          <button className="btn btn-primary" disabled={isSubmitting} onClick={handleSubmit}>
+            <i className="lni lni-checkmark"></i> {isSubmitting ? 'Saving…' : isEdit ? 'Save Changes' : 'Schedule'}
+          </button>
         </div>
       </div>
     </div>

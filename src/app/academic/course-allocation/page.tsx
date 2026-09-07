@@ -22,10 +22,12 @@ import { AuthError } from '@/lib/api/client'
 // (ProgramPlanningDto.term is just a plain int|null), so the same static
 // 1/2/3 options the Timetable page's own Term dropdown already uses are
 // reused here rather than inventing a second convention for it.
+// value 3 relabeled "Both" per request, 2026-09-08 — represents Term 1 AND
+// Term 2 together, not a literal third term.
 const TERM_OPTIONS = [
   { value: '1', label: 'Term 1' },
   { value: '2', label: 'Term 2' },
-  { value: '3', label: 'Term 3' },
+  { value: '3', label: 'Both' },
 ]
 
 const PAGE_SIZE = 10
@@ -291,7 +293,7 @@ export default function CourseAllocationPage() {
                   </td>
                   <td className="text-g600">{r.facultyCode ?? '—'}</td>
                   <td className="text-g600">{r.description ? `${r.description} (${r.intakeCode})` : '—'}</td>
-                  <td>{r.term != null ? <span className="badge badge-blue">Term {r.term}</span> : '—'}</td>
+                  <td>{r.term != null ? <span className="badge badge-blue">{r.term === 3 ? 'Both' : `Term ${r.term}`}</span> : '—'}</td>
                   <td>
                     {permissions.delete && (
                       <button className="btn btn-danger btn-sm" onClick={() => setDeleteTarget(r)} title="Remove allocation">

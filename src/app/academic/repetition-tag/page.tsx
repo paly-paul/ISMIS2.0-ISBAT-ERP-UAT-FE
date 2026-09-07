@@ -96,25 +96,26 @@ export default function Page() {
   // Re-filter client-side on top of whatever the server sent back, so
   // results stay correct even if the backend doesn't actually honor
   // ?search= (see the note on getRepetitionTags).
-  const baseRows = debouncedSearch
-    ? (searchResults ?? []).filter(r => `${r.tagCode} ${r.tagName}`.toLowerCase().includes(debouncedSearch.toLowerCase()))
-    : rows
+  const baseRows = rows
 
   const createRepetitionTag = useCreateRepetitionTag()
   const updateRepetitionTag = useUpdateRepetitionTag()
   const deleteRepetitionTag = useDeleteRepetitionTag()
 
-  // Text matching against code/name already happened above (baseRows is
-  // search-scoped) — this only applies the column filter on top.
+  // This only applies the column filter on top of the full base list.
+  // The global search box no longer filters this list per ACA-021.
   const filteredRows = baseRows.filter(r =>
     Object.entries(filters).every(([k, v]) => !v.length || v.includes(String((r as unknown as Record<string, unknown>)[k])))
   )
 
-  // Live preview shown in the search dropdown as the user types — reads the
-  // same server-scoped baseRows, ignoring the column filters and capped to a
-  // handful of rows. Empty below MIN_SEARCH_CHARS, matching TableSearch's own
-  // minChars gate on when the dropdown is even allowed to open.
-  const searchMatches = searchTrimmed.length >= MIN_SEARCH_CHARS ? baseRows.slice(0, 8) : []
+  // Live preview shown in the search dropdown as the user types.
+  // Reads from searchResults if server search completed, otherwise falls back
+  // to filtering the full list client-side.
+  const searchMatches = searchTrimmed.length >= MIN_SEARCH_CHARS
+    ? (debouncedSearch ? (searchResults ?? []) : rows)
+        .filter(r => `${r.tagCode} ${r.tagName}`.toLowerCase().includes(searchTrimmed.toLowerCase()))
+        .slice(0, 8)
+    : []
 
   const { page, setPage, totalPages, totalCount, pageItems } = usePagination(filteredRows, PAGE_SIZE)
 

@@ -367,6 +367,21 @@ export function getProgramMasters(search = ''): Promise<ProgramMaster[]> {
     })
 }
 
+// GET /api/v1/academic/program-master/{programGuid} — per get-program-by-guid.md.
+// Single-record counterpart to getProgramMasters() above: used right after
+// Step 1 of ProgrammeModal's Add-mode wizard creates a programme, to merge
+// just that one new row into the cached Programme Master list (see
+// useCreateProgramMasterStep1's onSuccess) instead of invalidating and
+// refetching the entire list just to reflect one addition.
+export function getProgramMasterByGuid(programGuid: string): Promise<ProgramMaster> {
+  if (MOCK_AUTH) {
+    const existing = mockProgramMasters.find(p => p.programGuid === programGuid)
+    if (!existing) return Promise.reject(new Error('Programme not found'))
+    return Promise.resolve(existing)
+  }
+  return apiGet<ProgramMaster>(`/api/v1/academic/program-master/${programGuid}`)
+}
+
 // GET /api/v1/academic/program-master/by-campus/:campusGuid — per
 // Application_Payment_Change_Requests_Final_Updated.md #7, backs the
 // Application Payment page's Interested Programme dropdown, scoped to the
@@ -418,7 +433,16 @@ export interface ProgramSemesterDetail {
 export interface FeeLineDetail {
   semCode: number
   ledgerGuid: string
+  // get-program-full-details.md's own feeLines[] fields table documents
+  // both of these ("Resolved from finance service; null if not found"), but
+  // neither was ever modeled here — same gap class as ProgramMasterFullDetails.
+  // currencyGuid/currencyName above. Left the Ledger/Currency pickers in
+  // ProgrammeModal's Step 3 (Semester-wise Fee Structure) showing their blank
+  // placeholders for real, already-known selections whenever the separate
+  // Ledger/Currency master lists didn't happen to include that guid.
+  ledgerName?: string | null
   currencyGuid: string
+  currencyName?: string | null
   ledgerNum: number
   amount: number
 }
@@ -457,6 +481,14 @@ export interface ProgramMasterFullDetails {
   accLetter: string | null
   appFee: number
   lateFee: number
+  // Confirmed on a real GET .../full-details response (2026-09-07) — not in
+  // get-program-full-details.md's own top-level fields table (that doc only
+  // shows currencyGuid/currencyName nested under feeStructures[].feeLines[]),
+  // but it's genuinely there at the top level too on the live response.
+  // ProgrammeModal's Edit-mode Currency picker was silently blank because of
+  // this exact gap — this field went unread even though it was on the wire.
+  currencyGuid?: string | null
+  currencyName?: string | null
   intakeGuid: string | null
   streamGuids: string[]
   semesters: ProgramSemesterDetail[]
@@ -657,3 +689,77 @@ export function deleteProgramMasterComplete(programGuid: string): Promise<boolea
   }
   return apiDelete<boolean>(`/api/v1/academic/program-master/${programGuid}/delete-complete`)
 }
+
+// Updates a program's header fields only (Step 1)
+// PUT /api/v1/academic/program-master/{programGuid} (multipart/form-data)
+export type ProgramMasterUpdateStep1Input = {
+  programCode: string
+  programName: string
+  programLevelGuid: string
+  pgmStatus: boolean
+  noIa: boolean
+  programGroupGuid?: string
+  unitCount?: number
+  appFee?: number
+  lateFee?: number
+  facultyGuid?: string
+  currencyGuid?: string
+  dateAcc?: string | null
+  streamGuids?: string[]
+  intakeGuid?: string
+  accLetterFile?: File | null
+}
+
+export function updateProgramMasterStep1(programGuid: string, input: ProgramMasterUpdateStep1Input): Promise<ProgramMaster> {
+  if (MOCK_AUTH) {
+    const existing = mockProgramMasters.find(p => p.programGuid === programGuid)
+    if (!existing) return Promise.reject(new Error('Programme not found'))
+    Object.assign(existing, {
+      programCode: input.programCode,
+      programName: input.programName,
+      pgmStatus: input.pgmStatus,
+      noIa: input.noIa,
+      programGroupGuid: input.programGroupGuid ?? existing.programGroupGuid,
+      unitCount: input.unitCount ?? existing.unitCount,
+      appFee: input.appFee ?? existing.appFee,
+      lateFee: input.lateFee ?? existing.lateFee,
+      programLevelGuid: input.programLevelGuid,
+      facultyGuid: input.facultyGuid ?? existing.facultyGuid,
+      currencyGuid: input.currencyGuid ?? existing.currencyGuid,
+      dateAcc: input.dateAcc ?? existing.dateAcc,
+      streamGuids: input.streamGuids ?? existing.streamGuids,
+      intakeGuid: input.intakeGuid ?? existing.intakeGuid,
+    })
+    return Promise.resolve(existing)
+  }
+
+  const formData = new FormData()
+  formData.append('programCode', input.programCode)
+  formData.append('programName', input.programName)
+  formData.append('pgmStatus', String(input.pgmStatus))
+  formData.append('noIa', String(input.noIa))
+  if (input.programGroupGuid) formData.append('programGroupGuid', input.programGroupGuid)
+  formData.append('programLevelGuid', input.programLevelGuid)
+  if (input.currencyGuid) formData.append('currencyGuid', input.currencyGuid)
+  if (input.unitCount !== undefined && input.unitCount !== null && input.unitCount > 0) {
+    formData.append('unitCount', String(input.unitCount))
+  }
+  if (input.appFee !== undefined && input.appFee !== null) {
+    formData.append('appFee', String(input.appFee))
+  }
+  if (input.lateFee !== undefined && input.lateFee !== null) {
+    formData.append('lateFee', String(input.lateFee))
+  }
+  if (input.intakeGuid) formData.append('intakeGuid', input.intakeGuid)
+  if (input.facultyGuid) formData.append('facultyGuid', input.facultyGuid)
+  if (input.dateAcc) formData.append('dateAcc', input.dateAcc)
+  if (input.streamGuids && input.streamGuids.length > 0) {
+    input.streamGuids.forEach((guid, idx) => {
+      formData.append(`streamGuids[${idx}]`, guid)
+    })
+  }
+  if (input.accLetterFile) formData.append('accLetterFile', input.accLetterFile)
+
+  return apiPutForm<ProgramMaster>(`/api/v1/academic/program-master/${programGuid}`, formData)
+}
+

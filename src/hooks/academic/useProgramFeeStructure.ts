@@ -11,6 +11,7 @@ import {
   ProgramFeeStructureSaveCompleteInput,
   ProgramFeeStructureUpdateInput,
 } from '@/lib/api/academic/programFeeStructure'
+import { PROGRAM_MASTERS_KEY } from './useProgramMaster'
 
 const PROGRAM_FEE_STRUCTURES_KEY = ['programFeeStructures']
 
@@ -63,7 +64,10 @@ export function useSaveProgramFeeStructureComplete() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (input: ProgramFeeStructureSaveCompleteInput) => saveProgramFeeStructureComplete(input),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: PROGRAM_FEE_STRUCTURES_KEY }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: PROGRAM_FEE_STRUCTURES_KEY })
+      queryClient.invalidateQueries({ queryKey: ['programMasters'] })
+    },
   })
 }
 
@@ -71,7 +75,10 @@ export function useUpdateProgramFeeStructureComplete() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: ({ feeHdGuid, input }: { feeHdGuid: string; input: ProgramFeeStructureUpdateInput }) => updateProgramFeeStructureComplete(feeHdGuid, input),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: PROGRAM_FEE_STRUCTURES_KEY }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: PROGRAM_FEE_STRUCTURES_KEY })
+      queryClient.invalidateQueries({ queryKey: ['programMasters'] })
+    },
   })
 }
 

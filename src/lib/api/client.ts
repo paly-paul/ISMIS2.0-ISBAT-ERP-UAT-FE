@@ -267,10 +267,10 @@ export async function apiPostForm<T>(path: string, formData: FormData, retried =
   })
 
   console.log(`📥 Response status: ${res.status}`)
-  
+
   const responseText = await res.text()
   console.log(`📄 Response body: ${responseText || '(empty)'}`)
-  
+
   const envelope = responseText ? (JSON.parse(responseText) as ApiEnvelope<T>) : null
   const unauthorized = res.status === 401 || (envelope != null && !envelope.success && envelope.code === 'unauthorized')
 
@@ -295,6 +295,11 @@ export async function apiPostForm<T>(path: string, formData: FormData, retried =
 // that accept an optional file on update too (e.g. course unit syllabus
 // replace).
 export async function apiPutForm<T>(path: string, formData: FormData, retried = false): Promise<T> {
+  console.log(` [apiPutForm] ${path}:`)
+  for (const [k, v] of formData.entries()) {
+    console.log(`   ${k}:`, v)
+  }
+
   const res = await fetch(buildUrl(path), {
     method: 'PUT',
     headers: NGROK_HEADERS,
@@ -302,7 +307,16 @@ export async function apiPutForm<T>(path: string, formData: FormData, retried = 
     body: formData,
   })
 
-  const envelope = (await res.json().catch(() => null)) as ApiEnvelope<T> | null
+  const responseText = await res.text()
+  console.log(`📄 Response body: ${responseText || '(empty)'}`)
+
+  let envelope: ApiEnvelope<T> | null = null
+  try {
+    envelope = responseText ? (JSON.parse(responseText) as ApiEnvelope<T>) : null
+  } catch {
+    envelope = null
+  }
+
   const unauthorized = res.status === 401 || (envelope != null && !envelope.success && envelope.code === 'unauthorized')
 
   if (unauthorized && !isAuthEndpoint(path) && !retried) {
@@ -319,10 +333,11 @@ export async function apiPutForm<T>(path: string, formData: FormData, retried = 
   }
 
   const { code, message } = extractErrorInfo(envelope)
-  throw new AuthError(code, message)
+  throw new AuthError(code, message || responseText || `HTTP ${res.status}`)
 }
 
 export async function apiPut<T>(path: string, body: unknown, retried = false): Promise<T> {
+  console.log(` [apiPut] ${path}:`, body)
   const res = await fetch(buildUrl(path), {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', ...NGROK_HEADERS },
@@ -330,7 +345,16 @@ export async function apiPut<T>(path: string, body: unknown, retried = false): P
     body: JSON.stringify(body),
   })
 
-  const envelope = (await res.json().catch(() => null)) as ApiEnvelope<T> | null
+  const responseText = await res.text()
+  console.log(` Response body: ${responseText || '(empty)'}`)
+
+  let envelope: ApiEnvelope<T> | null = null
+  try {
+    envelope = responseText ? (JSON.parse(responseText) as ApiEnvelope<T>) : null
+  } catch {
+    envelope = null
+  }
+
   const unauthorized = res.status === 401 || (envelope != null && !envelope.success && envelope.code === 'unauthorized')
 
   if (unauthorized && !isAuthEndpoint(path) && !retried) {
@@ -347,7 +371,7 @@ export async function apiPut<T>(path: string, body: unknown, retried = false): P
   }
 
   const { code, message } = extractErrorInfo(envelope)
-  throw new AuthError(code, message)
+  throw new AuthError(code, message || responseText || `HTTP ${res.status}`)
 }
 
 export async function apiPatch<T>(path: string, body: unknown, retried = false): Promise<T> {

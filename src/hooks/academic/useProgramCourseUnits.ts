@@ -2,10 +2,12 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   addProgramCourseUnitsBulk,
   getProgramCourseUnits,
+  updateProgramCourseUnits,
   ProgramCourseUnitBulkInput,
   ProgramCourseUnitBulkItem,
   ProgramCourseUnitBulkResult,
   ProgramCourseUnitDto,
+  ProgramCourseUnitsUpdateInput,
 } from '@/lib/api/academic/programCourseUnits'
 
 const PROGRAM_COURSE_UNITS_KEY = ['programCourseUnits']
@@ -33,4 +35,17 @@ export function useAddProgramCourseUnitsBulk() {
   })
 }
 
-export type { ProgramCourseUnitDto, ProgramCourseUnitBulkInput, ProgramCourseUnitBulkItem, ProgramCourseUnitBulkResult }
+// Step 2 of ProgrammeModal's Edit-mode — PUT /api/v1/academic/program-course-units/{programGuid}
+export function useUpdateProgramCourseUnits() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ programGuid, input }: { programGuid: string; input: ProgramCourseUnitsUpdateInput }) =>
+      updateProgramCourseUnits(programGuid, input),
+    onSuccess: (_data, { programGuid }) => {
+      queryClient.invalidateQueries({ queryKey: [...PROGRAM_COURSE_UNITS_KEY, programGuid] })
+      queryClient.invalidateQueries({ queryKey: ['programMasters'] })
+    },
+  })
+}
+
+export type { ProgramCourseUnitDto, ProgramCourseUnitBulkInput, ProgramCourseUnitBulkItem, ProgramCourseUnitBulkResult, ProgramCourseUnitsUpdateInput }

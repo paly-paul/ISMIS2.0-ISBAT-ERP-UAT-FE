@@ -16,7 +16,15 @@ const REGISTRATION_TYPES_KEY = ['registration-types']
 
 export function useRegistrarDeskApplications(page: number, pageSize: number, filters?: RegistrarDeskQueueFilters) {
   return useQuery({
-    queryKey: [...REGISTRAR_QUEUE_KEY, page, pageSize, filters?.studentName ?? '', filters?.intakeGuid ?? '', filters?.status ?? null],
+    queryKey: [
+      ...REGISTRAR_QUEUE_KEY,
+      page,
+      pageSize,
+      filters?.appRefNo ?? '',
+      filters?.studentName ?? '',
+      filters?.intakeGuid ?? '',
+      filters?.status ?? null,
+    ],
     queryFn: () => getRegistrarDeskApplications(page, pageSize, filters),
     staleTime: Infinity,
     gcTime: Infinity,

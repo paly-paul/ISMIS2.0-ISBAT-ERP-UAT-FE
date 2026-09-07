@@ -272,14 +272,24 @@ export function getFilingCountries(): Promise<CountryDropdownDto[]> {
 }
 
 // Backs /admission/applicants — confirmed via a real GET response (see
-// ApplicationListItem above). Plain page/pageSize, no search param on this
-// endpoint (unlike payment-search above), so callers fetch a large page and
-// filter/paginate client-side, same pattern as batch-management.
-export function getApplications(page = 1, pageSize = 10): Promise<ApplicationListResponse> {
+// ApplicationListItem above). page/pageSize are real server-side pagination
+// (confirmed) — this used to be called with a single large pageSize
+// (FETCH_ALL_PAGE_SIZE = 1000) and paginated/searched entirely client-side,
+// which silently dropped anything past row 1000 once the real table grew
+// past that (same "confirmed live" gap enquiry-list and course-units hit
+// with the identical pattern). Switched to real per-page fetches, same fix
+// as enquiry-list's getEnquiries. `search` is NOT confirmed against a real
+// backend sample the way page/pageSize are — appended as `&search=` on the
+// same "match the convention already used elsewhere, degrade to today's
+// unfiltered-page behavior if the backend ignores it" assumption enquiry-
+// list's own getEnquiries used.
+export function getApplications(page = 1, pageSize = 10, search = ''): Promise<ApplicationListResponse> {
   if (MOCK_AUTH) {
     return Promise.resolve({ items: mockApplications, totalCount: mockApplications.length, pageNumber: page, pageSize })
   }
-  return apiGet<ApplicationListResponse | null>(`/api/v1/admissions/application-filling/?page=${page}&pageSize=${pageSize}`)
+  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) })
+  if (search.trim()) params.set('search', search.trim())
+  return apiGet<ApplicationListResponse | null>(`/api/v1/admissions/application-filling/?${params.toString()}`)
     .then(data => data ?? { items: [], totalCount: 0, pageNumber: page, pageSize })
 }
 

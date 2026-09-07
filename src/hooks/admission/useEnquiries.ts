@@ -6,12 +6,12 @@ const ENQUIRY_COUNTS_KEY = ['enquiry-counts']
 
 // Real (paginated) — 11k+ rows in the sample data, so unlike the small
 // master-data lists elsewhere in this app, this can't just fetch everything
-// in one big page. page/pageSize are part of the query key so each page is
-// cached separately.
-export function useEnquiries(page: number, pageSize: number) {
+// in one big page. page/pageSize/search are part of the query key so each
+// combination is cached separately.
+export function useEnquiries(page: number, pageSize: number, search = '') {
   return useQuery({
-    queryKey: [...ENQUIRIES_KEY, page, pageSize],
-    queryFn: () => getEnquiries(page, pageSize),
+    queryKey: [...ENQUIRIES_KEY, page, pageSize, search],
+    queryFn: () => getEnquiries(page, pageSize, search),
     staleTime: Infinity,
     gcTime: Infinity,
   })

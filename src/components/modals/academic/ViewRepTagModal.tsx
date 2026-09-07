@@ -44,12 +44,12 @@ export function ViewRepTagModal({ isOpen, onClose, courseUnitRepetitionGuid, onE
   if (isLoading || !tag) {
     return (
       <div className="modal-overlay open">
-        <div className="modal modal-lg modal-flex" onClick={e => e.stopPropagation()}>
+        <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
           <div className="modal-hdr modal-hdr-blue">
             <div className="modal-title"><i className="lni lni-eye"></i> View Repetition Tag</div>
             <button className="modal-close" onClick={onClose}><i className="lni lni-close"></i></button>
           </div>
-          <div className="modal-scroll" style={{ flex: '1 1 auto', display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 180 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 180 }}>
             <span style={{ color: 'var(--g400)' }}>Loading repetition tag details…</span>
           </div>
         </div>
@@ -61,13 +61,13 @@ export function ViewRepTagModal({ isOpen, onClose, courseUnitRepetitionGuid, onE
 
   return (
     <div className="modal-overlay open">
-      <div className="modal modal-lg modal-flex" onClick={e => e.stopPropagation()}>
+      <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
         <div className="modal-hdr modal-hdr-blue">
           <div className="modal-title"><i className="lni lni-eye"></i> View Repetition Tag — <span className="font-mono">{tag.tagCode}</span></div>
           <button className="modal-close" onClick={onClose}><i className="lni lni-close"></i></button>
         </div>
 
-        <div className="modal-scroll" style={{ padding: '20px clamp(14px, 4vw, 22px)' }}>
+        <div style={{ padding: '20px clamp(14px, 4vw, 22px)' }}>
           <div className="view-detail-grid">
             <Field label="Repetition Tag Code" value={tag.tagCode} mono />
             <Field label="Programme Level" value={levelName} />

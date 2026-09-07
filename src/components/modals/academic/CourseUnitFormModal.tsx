@@ -73,11 +73,11 @@ export function CourseUnitFormModal({ isOpen, onClose, showToast, mode, courseUn
   const [syllabusLinkLoading, setSyllabusLinkLoading] = useState(false)
   const [errors, setErrors]               = useState<Record<string, string>>({})
   const [chapterErrors, setChapterErrors] = useState<string[]>([])
-  // Keyed by "chapterIdx-topicIdx" — Taught By is required by the backend
-  // (now a plain 1-15 number, not an employeeGuid); omitting it on any topic
-  // 400s the whole outline save, not just that one topic, so this has to be
-  // caught client-side before submit rather than left to surface as an
-  // opaque failure popup.
+  // Keyed by "chapterIdx-topicIdx" — the backend's taughtBy field (labeled
+  // "No of Classes" in this UI — a plain 1-15 number, not an employeeGuid)
+  // is required; omitting it on any topic 400s the whole outline save, not
+  // just that one topic, so this has to be caught client-side before submit
+  // rather than left to surface as an opaque failure popup.
   const [topicTaughtByErrors, setTopicTaughtByErrors] = useState<Set<string>>(new Set())
   const [includeCW, setIncludeCW]       = useState(true)
   const [includeCBT, setIncludeCBT]     = useState(true)
@@ -91,11 +91,6 @@ export function CourseUnitFormModal({ isOpen, onClose, showToast, mode, courseUn
 
   const { data: repetitionTags = [] } = useRepetitionTags()
   const repetitionTagOptions = repetitionTags.map(t => ({ value: t.courseUnitRepetitionGuid, label: `${t.tagCode} — ${t.tagName}` }))
-
-  // Taught By used to be a real employeeGuid picker (via useEmployees) —
-  // backend confirmed the field is now a plain 1-15 number instead, so this
-  // no longer needs the employee list/lookup at all.
-  const taughtByOptions = Array.from({ length: 15 }, (_, i) => ({ value: String(i + 1), label: String(i + 1) }))
 
   const finalTotal = (includeCW ? (+cwFinal || 0) : 0) + (includeCBT ? (+cbtFinal || 0) : 0) + (+ueFinal || 0)
   const totalOk    = finalTotal === 100
@@ -160,6 +155,17 @@ export function CourseUnitFormModal({ isOpen, onClose, showToast, mode, courseUn
   // Same fix as ProgrammeModal/FeeStructureModal's own prefilledForRef.
   const prefilledForRef = useRef<string | null>(null)
 
+  // Snapshot of Step 1's own fields as loaded, used by goToStep2() below to
+  // skip the PUT entirely when nothing on Step 1 actually changed — per
+  // request, re-clicking Save & Continue with no edits shouldn't re-save.
+  // Populated alongside the prefill above (Edit mode only; Create mode has
+  // nothing to diff against, so it's left null there).
+  const step1SnapshotRef = useRef<{
+    unitCode: string; unitName: string; numChapters: string; credits: string
+    repetitionTagGuid: string; includeMid: boolean; includeCW: boolean; includeCBT: boolean
+    cwFinal: string; cbtFinal: string; ueFinal: string
+  } | null>(null)
+
   // Prefill the form when the selected course unit loads (Edit only), or
   // reset to blanks when opening fresh for Create.
   useEffect(() => {
@@ -174,7 +180,29 @@ export function CourseUnitFormModal({ isOpen, onClose, showToast, mode, courseUn
       setIncludeMid(!!courseUnit.mid)
       setIncludeCW(!!courseUnit.cw)
       setIncludeCBT(!!courseUnit.ca)
+      // Was never prefilled at all — these three silently stayed on their
+      // hardcoded '15'/'15'/'70' useState defaults regardless of what the
+      // record actually had, so every Edit-mode save was overwriting the
+      // real stored weightages with those defaults unless they happened to
+      // already match. courseUnit.cbtWeightage/cwWeightage/ueWeightage are
+      // real fields on the GET .../details response (CourseUnitDetailFields).
+      setCwFinal(String(courseUnit.cwWeightage))
+      setCbtFinal(String(courseUnit.cbtWeightage))
+      setUeFinal(String(courseUnit.ueWeightage))
       setRepetitionTagGuid(courseUnit.courseUnitRepetitionGuid ?? '')
+      step1SnapshotRef.current = {
+        unitCode: courseUnit.courseUnitCode,
+        unitName: courseUnit.courseUnitName,
+        numChapters: String(courseUnit.chapterCount),
+        credits: String(courseUnit.maxCredits),
+        repetitionTagGuid: courseUnit.courseUnitRepetitionGuid ?? '',
+        includeMid: !!courseUnit.mid,
+        includeCW: !!courseUnit.cw,
+        includeCBT: !!courseUnit.ca,
+        cwFinal: String(courseUnit.cwWeightage),
+        cbtFinal: String(courseUnit.cbtWeightage),
+        ueFinal: String(courseUnit.ueWeightage),
+      }
       setChapters(
         courseUnit.outlines?.length
           ? courseUnit.outlines.map(o => ({
@@ -206,6 +234,7 @@ export function CourseUnitFormModal({ isOpen, onClose, showToast, mode, courseUn
       setCwAssessed('25'); setCbtAssessed('50'); setUeAssessed('100')
       setCwFinal('15'); setCbtFinal('15'); setUeFinal('70')
       setCreatedCourseUnitGuid(null)
+      step1SnapshotRef.current = null
     }
   }, [isOpen, isEdit, courseUnit])
 
@@ -231,14 +260,14 @@ export function CourseUnitFormModal({ isOpen, onClose, showToast, mode, courseUn
     setTopicTaughtByErrors(missingTaughtBy)
 
     if (missingTaughtBy.size > 0) {
-      // Jump to the first chapter with a missing Taught By so the error is
-      // actually visible — it could otherwise be sitting in a chapter the
-      // user isn't currently looking at.
+      // Jump to the first chapter with a missing No of Classes value so the
+      // error is actually visible — it could otherwise be sitting in a
+      // chapter the user isn't currently looking at.
       const firstBadChapter = chapters.findIndex((_, ci) =>
         Array.from(missingTaughtBy).some(key => key.startsWith(`${ci}-`))
       )
       if (firstBadChapter !== -1) setActiveChapterIdx(firstBadChapter)
-      showToast('Select Taught By for every topic before saving', 'error')
+      showToast('Enter No of Classes for every topic before saving', 'error')
     }
 
     return chapErrs.every(err => !err) && missingTaughtBy.size === 0
@@ -328,18 +357,50 @@ export function CourseUnitFormModal({ isOpen, onClose, showToast, mode, courseUn
   const chapterCap = +numChapters || 0
   const atChapterCap = chapterCap > 0 && chapters.length >= chapterCap
 
+  // If the user lowered No. of Chapters after already building some out,
+  // trim the excess from the end, then advance — shared by both the "PUT
+  // succeeded" path and the "nothing changed, skip the PUT" path below.
+  function advanceToStep2() {
+    if (chapterCap > 0 && chapters.length > chapterCap) {
+      setChapters(p => p.slice(0, chapterCap))
+      setChapterErrors(p => p.slice(0, chapterCap))
+      setActiveChapterIdx(i => Math.min(i, chapterCap - 1))
+    }
+    setStep(2)
+  }
+
   // Step 1's Save & Continue. On Create, POSTs /courseunits right away (Unit
   // Details only, no outlines) so Step 2 has a real courseUnitGuid to write
   // chapters/topics against — already-created guard: see
   // createdCourseUnitGuid above. On Edit, PUTs /courseunits/{guid} instead —
-  // no "already created" guard needed there since the guid already exists
-  // before this modal ever opens, so re-clicking Save & Continue just
-  // re-PUTs the same fields, which is safe to repeat.
+  // but ONLY if something on Step 1 actually changed since it loaded (see
+  // step1SnapshotRef above); re-clicking Save & Continue with no edits just
+  // advances to Step 2 without re-saving, per request. A newly picked
+  // syllabusFile always counts as a change — there's no "original file" on
+  // this snapshot to compare a File object against, so its mere presence is
+  // the signal.
   function goToStep2() {
     if (!validateStep1()) return
 
     if (isEdit) {
       if (!courseUnitGuid || !courseUnit) return
+
+      const snap = step1SnapshotRef.current
+      const hasChanges = !snap || syllabusFile !== null
+        || unitCode !== snap.unitCode
+        || unitName !== snap.unitName
+        || numChapters !== snap.numChapters
+        || credits !== snap.credits
+        || repetitionTagGuid !== snap.repetitionTagGuid
+        || includeMid !== snap.includeMid
+        || includeCW !== snap.includeCW
+        || includeCBT !== snap.includeCBT
+        || cwFinal !== snap.cwFinal
+        || cbtFinal !== snap.cbtFinal
+        || ueFinal !== snap.ueFinal
+
+      if (!hasChanges) { advanceToStep2(); return }
+
       updateCourseUnit.mutate(
         {
           guid: courseUnitGuid,
@@ -363,16 +424,7 @@ export function CourseUnitFormModal({ isOpen, onClose, showToast, mode, courseUn
           },
         },
         {
-          onSuccess: () => {
-            // If the user lowered No. of Chapters after already building
-            // some out, trim the excess from the end.
-            if (chapterCap > 0 && chapters.length > chapterCap) {
-              setChapters(p => p.slice(0, chapterCap))
-              setChapterErrors(p => p.slice(0, chapterCap))
-              setActiveChapterIdx(i => Math.min(i, chapterCap - 1))
-            }
-            setStep(2)
-          },
+          onSuccess: advanceToStep2,
           onError: (error: Error) => {
             const code = error instanceof AuthError ? error.code : undefined
             setFailure(error.message || `Failed to save unit details${code ? ` (${code})` : ''}. Please try again.`)
@@ -931,7 +983,7 @@ export function CourseUnitFormModal({ isOpen, onClose, showToast, mode, courseUn
                       <span></span>
                       <span>Topic</span>
                       <span>Study Sequence</span>
-                      <span>Taught By</span>
+                      <span>No of Classes</span>
                       <span></span>
                     </div>
 
@@ -944,19 +996,28 @@ export function CourseUnitFormModal({ isOpen, onClose, showToast, mode, courseUn
                           <input className="ctrl" value={t.name} onChange={e => setTopic(activeChapterIdx, ti, 'name', e.target.value)} placeholder="e.g. Introduction to Arrays" />
                           {/* Auto-fills to the topic's 1-based position when added, but editable — the user can reorder/renumber without dragging. */}
                           <input
-                            className="ctrl"
+                            className="ctrl no-spinner"
                             type="number"
                             min={1}
                             style={{ textAlign: 'center' }}
                             value={t.studySequence}
                             onChange={e => setTopic(activeChapterIdx, ti, 'studySequence', e.target.value)}
                           />
-                          <SearchSelect
-                            placeholder="— Select —"
+                          {/* Was a 1-15 SearchSelect dropdown — changed to a plain number
+                              input per request. min/max keep the same 1-15 range the
+                              dropdown offered; the backend field itself is still just a
+                              plain number (see the note on topicTaughtByErrors above).
+                              Spinner arrows were asked for initially, then asked to be
+                              removed again (.no-spinner) — matching Study Sequence and
+                              the rest of this app's number-input convention. */}
+                          <input
+                            className="ctrl no-spinner"
+                            type="number"
+                            min={1}
+                            max={15}
+                            style={{ textAlign: 'center', borderColor: taughtByMissing ? 'var(--red)' : undefined }}
                             value={t.taughtBy}
-                            onChange={v => setTopic(activeChapterIdx, ti, 'taughtBy', v)}
-                            options={taughtByOptions}
-                            style={taughtByMissing ? { boxShadow: '0 0 0 1.5px var(--red)', borderRadius: 'var(--rsm)' } : undefined}
+                            onChange={e => setTopic(activeChapterIdx, ti, 'taughtBy', e.target.value)}
                           />
                           <button
                             className="btn btn-danger btn-sm"
@@ -970,7 +1031,7 @@ export function CourseUnitFormModal({ isOpen, onClose, showToast, mode, courseUn
                         )
                       })}
                       {activeChapter.topics.some((_, ti) => topicTaughtByErrors.has(`${activeChapterIdx}-${ti}`)) && (
-                        <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 2 }}>Taught By is required for every topic</p>
+                        <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 2 }}>No of Classes is required for every topic</p>
                       )}
                       <button className="btn btn-neu btn-sm mt-1" style={{ alignSelf: 'flex-start', fontSize: 11 }} onClick={() => addTopic(activeChapterIdx)}>
                         <i className="lni lni-plus"></i> Add Topic

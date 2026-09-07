@@ -15,6 +15,7 @@ import { useBatches, useBatchSearch, useCreateBatch, useUpdateBatch, useDeleteBa
 import { useProgramMasters } from '@/hooks/academic/useProgramMaster'
 import { useStreams } from '@/hooks/config/useStreams'
 import { useBatchTimes } from '@/hooks/config/useBatchTimes'
+import { useEmployees } from '@/hooks/employee/useEmployees'
 import { usePagePermissions } from '@/hooks/users/usePagePermissions'
 import { getSemestersForProgram } from '@/lib/api/academic/semester'
 
@@ -83,6 +84,7 @@ export default function Page() {
   const { data: programs = [] } = useProgramMasters()
   const { data: streams = [] } = useStreams()
   const { data: batchTimes = [] } = useBatchTimes()
+  const { data: employees = [] } = useEmployees()
 
   function programName(programGuid: string) {
     return programs.find(p => p.programGuid === programGuid)?.programName ?? '—'
@@ -92,6 +94,10 @@ export default function Page() {
   }
   function batchTimeName(batchTimeGuid: string) {
     return batchTimes.find(b => b.batchTimeGuid === batchTimeGuid)?.batchTime ?? '—'
+  }
+  function employeeName(guid?: string | null) {
+    if (!guid || guid === '00000000-0000-0000-0000-000000000000') return '—'
+    return employees.find(e => e.employeeGuid === guid)?.empName || '—'
   }
 
   const searchMatches = useMemo(
@@ -198,6 +204,8 @@ export default function Page() {
                   <th>Semester</th>
                   <th>Specialization</th>
                   <th>Batch Time</th>
+                  <th>Batch In-Charge</th>
+                  <th>Programme Head</th>
                   <th>Start Date</th>
                   <th>End Date</th>
                   <th>Status</th>
@@ -225,6 +233,8 @@ export default function Page() {
                     <td>{semesterName(r.programGuid, r.semesterGuid)}</td>
                     <td>{streamName(r.streamGuid)}</td>
                     <td>{batchTimeName(r.batchTimeGuid)}</td>
+                    <td>{employeeName(r.bInCharge)}</td>
+                    <td>{employeeName(r.pHead)}</td>
                     <td className="text-sm text-g600">{formatDisplayDate(r.bStartDate)}</td>
                     <td className="text-sm text-g600">{formatDisplayDate(r.bEndDate)}</td>
                     <td><span className={`badge ${r.active ? 'badge-green' : 'badge-grey'}`}>{r.active ? 'Active' : 'Inactive'}</span></td>

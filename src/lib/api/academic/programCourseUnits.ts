@@ -1,4 +1,4 @@
-import { apiGet, apiPost } from '../client'
+import { apiGet, apiPost, apiPut } from '../client'
 
 const MOCK_AUTH = process.env.NEXT_PUBLIC_AUTH_MOCK === 'true'
 
@@ -83,4 +83,25 @@ export function addProgramCourseUnitsBulk(input: ProgramCourseUnitBulkInput): Pr
     })))
   }
   return apiPost<ProgramCourseUnitBulkResult[]>('/api/v1/academic/program-course-units', input)
+}
+
+// PUT /api/v1/academic/program-course-units/{programGuid} (application/json)
+export interface ProgramCourseUnitsUpdateInput {
+  programGuid: string
+  programName: string
+  units: {
+    semesterGuid: string
+    courseUnitGuid: string
+    streamGuid?: string | null
+    unitTypeGuid?: string | null
+    unitCatGuid?: string | null
+    flag: number
+  }[]
+}
+
+export function updateProgramCourseUnits(programGuid: string, input: ProgramCourseUnitsUpdateInput): Promise<any> {
+  if (MOCK_AUTH) {
+    return Promise.resolve({ success: true, message: 'Course units updated successfully' })
+  }
+  return apiPut<any>(`/api/v1/academic/program-course-units/${programGuid}`, input)
 }

@@ -20,10 +20,21 @@ export interface IdCardHistoryEntry {
   isRenewal: boolean
 }
 
+// Confirmed via a real GET /api/v1/students/id-cards/{guid} response
+// (2026-09-07) — batchTime lives here, not on StudentDto/StudentDetailDto or
+// anywhere else on the wire (see the "Batch Time has no field anywhere yet"
+// gap this was closing on the profile page's ID Card preview).
+export interface IdCardBatchTimeInfo {
+  batchTimeGuid: string | null
+  batchTime: string | null
+  batchTimeCode: string | null
+}
+
 export interface IdCardDetailsDto {
   studentGuid: string
   studentRegNo: string | null
   studentName: string | null
+  batchTimeInfo: IdCardBatchTimeInfo | null
   cardHistory: IdCardHistoryEntry[]
 }
 
@@ -83,6 +94,7 @@ export function issueOrRenewIdCard(payload: IssueOrRenewIdCardRequest): Promise<
       studentGuid: payload.studentGuid,
       studentRegNo: existing?.studentRegNo ?? null,
       studentName: existing?.studentName ?? null,
+      batchTimeInfo: existing?.batchTimeInfo ?? null,
       cardHistory: existing ? [...existing.cardHistory, record] : [record],
     }
     return Promise.resolve(record)

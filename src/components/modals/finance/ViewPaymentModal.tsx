@@ -53,18 +53,30 @@ export function ViewPaymentModal({ isOpen, onClose, entry }: ViewPaymentModalPro
           ) : paidLedgers.length === 0 ? (
             <div className="text-g400 text-center" style={{ padding: 16, fontSize: 12.5 }}>No ledger breakdown found for this payment.</div>
           ) : (
-            // Same .receipt-row treatment as the payment details above,
-            // rather than a table — this is a receipt's line items, not a
-            // data grid. Semester rides along under the ledger name (same
-            // "sub-label" convention Payment Console's own pc-ledger-sub
-            // uses) since there's no separate column to put it in here.
+            // Same typography AND positioning as the Outstanding Balance
+            // table's own Discount/Total Payable footer rows (.recgrid-foot
+            // >span:first-child is right-aligned, not left — the label sits
+            // right next to the value at the row's right end, with nothing
+            // on the left, rather than a conventional label-left/value-right
+            // split). Those classes are grid-subgrid rows scoped to a
+            // .recgrid table this modal doesn't have, so the same look is
+            // reproduced here with plain flex + inline styles instead of
+            // reusing the classes directly.
             paidLedgers.map((l, i) => (
-              <div className="receipt-row" key={`${l.ledgerGuid}-${i}`}>
-                <span className="text-muted">
+              <div
+                className="flex justify-end items-center gap-3"
+                style={{ padding: '10px 0', borderTop: i === 0 ? 'none' : '1px solid var(--g100)' }}
+                key={`${l.ledgerGuid}-${i}`}
+              >
+                <span style={{ color: 'var(--g500)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', fontSize: 'var(--fs-2xs)', textAlign: 'right' }}>
                   {l.discountGuid ? `${l.ledgerName} (Discount${l.discountName ? `: ${l.discountName}` : ''})` : l.ledgerName}
-                  {l.semName && <><br /><span style={{ fontSize: 11 }}>{l.semName}</span></>}
+                  {l.semName && (
+                    <span style={{ display: 'block', textTransform: 'none', letterSpacing: 0, fontWeight: 500, fontSize: 11 }}>{l.semName}</span>
+                  )}
                 </span>
-                <span className={l.discountGuid ? 'font-bold text-red' : 'font-bold'}>{l.currencyName} {fmtAmount(l.amount)}</span>
+                <span style={{ color: l.discountGuid ? 'var(--red)' : 'var(--g900)', fontWeight: 800, fontSize: 'var(--fs-md)' }}>
+                  {l.currencyName} {fmtAmount(l.amount)}
+                </span>
               </div>
             ))
           )}

@@ -1,5 +1,5 @@
 'use client'
-import { useRef, useState, useEffect, useLayoutEffect } from 'react'
+import React, { useRef, useState, useEffect, useLayoutEffect } from 'react'
 import { createPortal } from 'react-dom'
 
 interface ActionMenuProps {
@@ -23,7 +23,11 @@ export function ActionMenu({ children, tooltip = 'Actions' }: ActionMenuProps) {
   const triggerRef = useRef<HTMLButtonElement>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
 
+  const validChildren = React.Children.toArray(children).filter(Boolean)
+  const hasItems = validChildren.length > 0
+
   function openMenu() {
+    if (!hasItems) return
     if (triggerRef.current) {
       const r = triggerRef.current.getBoundingClientRect()
       setPos({ top: r.bottom + 6, left: r.left + r.width / 2, ready: false })
@@ -99,11 +103,12 @@ export function ActionMenu({ children, tooltip = 'Actions' }: ActionMenuProps) {
         onClick={() => (open ? setOpen(false) : openMenu())}
         onMouseEnter={onMouseEnter}
         onMouseLeave={() => setShowTip(false)}
+        disabled={!hasItems}
       >
         <i className="lni lni-more-alt" style={{ fontSize: 15 }} />
       </button>
 
-      {showTip && !open && createPortal(
+      {showTip && !open && hasItems && createPortal(
         <div style={{
           position: 'fixed',
           top: tipPos.top,
@@ -125,7 +130,7 @@ export function ActionMenu({ children, tooltip = 'Actions' }: ActionMenuProps) {
         document.body
       )}
 
-      {open && createPortal(
+      {open && hasItems && createPortal(
         <div
           ref={dropdownRef}
           className="act-menu-list"

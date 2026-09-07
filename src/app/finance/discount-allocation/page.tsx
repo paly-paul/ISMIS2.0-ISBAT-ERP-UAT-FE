@@ -285,6 +285,31 @@ export default function DiscountAllocationPage() {
   }
 
   const chosenDiscount = discountCatalogue.find(d => d.discountGuid === discountChoice)
+
+  // Calculation Type / Percentage-Amount are no longer user-editable per
+  // request — both were previously a free SearchSelect + number input,
+  // defaulting to 'Percentage'/blank regardless of what the picked discount
+  // itself defines, with a "Leave blank to inherit from the discount"
+  // placeholder implying an intentional per-assignment override. Now they're
+  // always mapped straight off the selected discount's own calcType/amtPer
+  // (Discount.calcType/amtPer — see lib/api/finance/discount.ts) and
+  // rendered read-only, confirmed by a real GET /students/:guid/discount
+  // response carrying these same two fields on the assignment itself
+  // (calcType: 2, amtPer: 30.00 for a real "Lumpsum Discount").
+  // Guarded on !editing — the Edit flow's own Calculation Type/Amount are
+  // seeded straight from discountDetail (the actual assignment) by
+  // startEdit() instead, since its Discount field is locked to
+  // discountDetail.discountGuid directly rather than driving discountChoice.
+  // Without this guard, discountChoice sitting empty/stale while editing
+  // would make chosenDiscount resolve to undefined here and reset the
+  // just-seeded values right back to the 'Percentage'/blank defaults.
+  useEffect(() => {
+    if (editing) return
+    if (!chosenDiscount) { setCalcType('Percentage'); setAmtPer(''); return }
+    setCalcType(chosenDiscount.calcType === CALC_TYPE_VALUES.Amount ? 'Amount' : 'Percentage')
+    setAmtPer(chosenDiscount.amtPer != null ? String(chosenDiscount.amtPer) : '')
+  }, [chosenDiscount, editing])
+
   // See isCancelledStatus's own comment — a cancelled assignment still
   // means "free to assign a new one", same as no assignment at all.
   const canAssignNew = !discountDetail || isCancelledStatus(discountDetail.discountStatus)
@@ -485,11 +510,11 @@ export default function DiscountAllocationPage() {
                     <div className="g2 mb-[14px]">
                       <div className="fg">
                         <div className="lbl">Calculation Type</div>
-                        <SearchSelect options={['Amount', 'Percentage']} value={calcType} onChange={v => setCalcType(v as 'Amount' | 'Percentage')} />
+                        <input className="ctrl" readOnly value={discountChoice ? calcType : ''} placeholder="Select a discount first" />
                       </div>
                       <div className="fg">
                         <div className="lbl">{calcType === 'Percentage' ? 'Percentage (%)' : 'Amount'}</div>
-                        <input className="ctrl" type="number" min={0} placeholder="Leave blank to inherit from the discount" value={amtPer} onChange={e => setAmtPer(e.target.value)} />
+                        <input className="ctrl" readOnly value={discountChoice ? (amtPer || '—') : ''} placeholder="Select a discount first" />
                       </div>
                     </div>
                     {/* Only shown for discounts flagged cop === "1" — see
@@ -543,7 +568,7 @@ export default function DiscountAllocationPage() {
 
                     <div className="flex gap-[10px] justify-end mt-4">
                       <button className="btn btn-neu" disabled={busy} onClick={() => setShowCancelConfirm(true)}><i className="lni lni-close"></i> Cancel Discount</button>
-                      {permissions.edit && <button className="btn btn-primary" disabled={busy} onClick={startEdit}><i className="lni lni-pencil"></i> Edit Discount</button>}
+                      {/* {permissions.edit && <button className="btn btn-primary" disabled={busy} onClick={startEdit}><i className="lni lni-pencil"></i> Edit Discount</button>} */}
                     </div>
                   </>
                 ) : (
@@ -560,11 +585,11 @@ export default function DiscountAllocationPage() {
                     <div className="g2 mb-[14px]">
                       <div className="fg">
                         <div className="lbl">Calculation Type</div>
-                        <SearchSelect options={['Amount', 'Percentage']} value={calcType} onChange={v => setCalcType(v as 'Amount' | 'Percentage')} />
+                        <input className="ctrl" readOnly value={calcType} />
                       </div>
                       <div className="fg">
                         <div className="lbl">{calcType === 'Percentage' ? 'Percentage (%)' : 'Amount'}</div>
-                        <input className="ctrl" type="number" min={0} placeholder="Leave blank to inherit from the discount" value={amtPer} onChange={e => setAmtPer(e.target.value)} />
+                        <input className="ctrl" readOnly value={amtPer || '—'} />
                       </div>
                     </div>
                     {showCorporateForAssigned && (

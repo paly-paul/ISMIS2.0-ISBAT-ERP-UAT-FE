@@ -13,7 +13,6 @@ import { useSemestersForProgram } from '@/hooks/academic/useSemesters'
 import { useBatchTimes } from '@/hooks/config/useBatchTimes'
 import { useBatches } from '@/hooks/academic/useBatches'
 import { useCountries } from '@/hooks/config/useCountries'
-import { useEnquiries } from '@/hooks/admission/useEnquiries'
 import { useProgramFeeStructures } from '@/hooks/academic/useProgramFeeStructure'
 import { usePagePermissions } from '@/hooks/users/usePagePermissions'
 import { sanitizePhoneInput } from '@/lib/errorMessages'
@@ -94,10 +93,14 @@ function Input({ placeholder, type = 'text', readOnly, value, onChange }: { plac
   if (type === 'date' && !readOnly) {
     return <DatePicker value={value} onChange={v => onChange?.(v)} placeholder={placeholder} />
   }
+  // .no-spinner strips the native up/down arrows on type="number" fields
+  // (Year, Duration (Years) below) — same class already used for Exchange
+  // Rates' number inputs elsewhere in the app.
+  const className = type === 'number' ? 'ctrl no-spinner' : 'ctrl'
   if (value !== undefined) {
-    return <input className="ctrl" type={type} placeholder={placeholder} readOnly={readOnly} value={value} onChange={e => onChange?.(e.target.value)} />
+    return <input className={className} type={type} placeholder={placeholder} readOnly={readOnly} value={value} onChange={e => onChange?.(e.target.value)} />
   }
-  return <input className="ctrl" type={type} placeholder={placeholder} readOnly={readOnly} />
+  return <input className={className} type={type} placeholder={placeholder} readOnly={readOnly} />
 }
 function Select({ options, placeholder, value, onChange }: { options: string[]; placeholder?: string; value?: string; onChange?: (v: string) => void }) {
   return <SearchSelect placeholder={placeholder || 'Select...'} options={options} value={value} onChange={onChange} />
@@ -294,7 +297,6 @@ export default function FilingPage() {
     setRefugeeId(a.refugeeId ?? '')
 
     setIntakeGuid(a.intakeGuid ?? '')
-    setEnquiryGuid(a.enquiryGuid ?? '')
     setCampusGuid(a.campusGuid ?? '')
     setProgramGuidState(a.programGuid ?? '')
     setSemesterGuidState(a.semesterGuid ?? '')
@@ -304,13 +306,14 @@ export default function FilingPage() {
   }
 
   // ── General (Personal Info tab) ─────────────────────────────────────────
-  // SaveGeneral.bru marks enquiryGuid "(optional)" — same claim Create.bru
-  // made about Application-Payments' identical field, which turned out to
-  // be false (confirmed by reproducing a 400 with only that field removed
-  // from an otherwise-working payload). Not independently confirmed here
-  // yet, but wired as required defensively given that precedent — worth
-  // testing whether omitting it here also 400s.
-  const [enquiryGuid, setEnquiryGuid] = useState('')
+  // enquiryGuid dropped from this page's own state entirely per request,
+  // 2026-09-07 — no longer tracked, prefilled, or picked here; the save
+  // payload below now always sends enquiryGuid: null. Flagged deliberately:
+  // SaveGeneral.bru marks it "(optional)", but the identical claim on
+  // Application-Payments' Create.bru turned out to be false (confirmed by
+  // reproducing a real 400 with only that field removed from an otherwise-
+  // working payload) — that was never independently re-confirmed here, so if
+  // SaveGeneral 400s on a null enquiryGuid, this is the first place to look.
   const [firstName, setFirstName] = useState('')
   const [lastName, setLastName] = useState('')
   const [gender, setGender] = useState('')
@@ -345,12 +348,6 @@ export default function FilingPage() {
   const [generalSaved, setGeneralSaved] = useState(false)
   const [intApplication, setIntApplication] = useState<number | null>(null)
 
-  // Restored as an editable, required picker — the current search source
-  // (/application-payments) only ever carries intEnquiry (a raw int, no
-  // confirmed guid mapping), never a real enquiryGuid, so every application
-  // selected from search hits the "missing Enquiry" save-blocking toast
-  // with nothing to fix it unless a real picker exists here.
-  const { data: enquiriesData }   = useEnquiries(1, 1000)
   const { data: campuses = [] }   = useCampuses()
   const { data: programs = [] }   = useProgramMasters()
   const { data: semesters = [] }  = useSemestersForProgram(programGuid, !!programGuid)
@@ -372,7 +369,6 @@ export default function FilingPage() {
   const fees = (allFeeStructuresData?.items ?? []).filter(f => f.programGuid === programGuid && f.status)
   const { data: countries = [] }  = useCountries()
 
-  const enquiryOptions   = (enquiriesData?.items ?? []).map(e => ({ value: e.enquiryGuid, label: `${e.studentName} (${e.enquiryCode})` }))
   const campusOptions    = campuses.map(c => ({ value: c.campusGuid, label: c.campusName }))
   const programOptions   = programs.map(p => ({ value: p.programGuid, label: `${p.programName} (${p.programCode})` }))
   const semesterOptions  = semesters.map(s => ({ value: s.semesterGuid, label: s.semName }))
@@ -405,7 +401,6 @@ export default function FilingPage() {
 
   function handleSaveGeneralAndAdvance() {
     if (!selectedApplication) { showToast('Select an application above first', 'error'); return }
-    if (!enquiryGuid) { showToast('Enquiry is required', 'error'); return }
     // Campus/Programme/Fee Structure are locked, auto-filled from the
     // selected application — if one is still missing here, the selected
     // application itself doesn't carry it and there's no picker left on
@@ -424,7 +419,9 @@ export default function FilingPage() {
     saveGeneral.mutate(
       {
         appRefNo: selectedApplication.appRefNo,
-        enquiryGuid,
+        // Always null now — see the note above this component's state
+        // declarations for why the field itself was dropped.
+        enquiryGuid: null,
         intakeCode: selectedIntake ? String(selectedIntake.intakeCode) : null,
         emailId: email.trim() || null,
         dob: dob || null,
@@ -677,12 +674,16 @@ export default function FilingPage() {
 
                   <div className="sec-divider mt-5">Programme Details</div>
                   {/* Intake picker stays hidden — intakeGuid prefills fine from the
-                      selected application. Enquiry is back as an editable, required
-                      picker: the current search source (/application-payments) only
-                      ever carries intEnquiry (a raw int, no confirmed guid mapping),
-                      never a real enquiryGuid, so EVERY application selected from
-                      search was hitting the "missing Enquiry" save-blocking toast
-                      with nothing on this page left to fix it. */}
+                      selected application. Enquiry dropped from this page entirely per
+                      request, 2026-09-07 — see the note above this component's state
+                      declarations (enquiryGuid is no longer tracked here at all; the save
+                      payload always sends enquiryGuid: null). Previously this was an
+                      editable, required picker, restored specifically because the search
+                      source (/application-payments) only ever carries intEnquiry (a raw
+                      int, no confirmed guid mapping), never a real enquiryGuid, which was
+                      hitting a "missing Enquiry" save-blocking toast for every application
+                      selected from search — if SaveGeneral turns out to actually require a
+                      real enquiryGuid, that exact failure mode is back. */}
                   {/* Campus/Programme/Fee Structure/Semester are locked read-only per the
                       same doc (req. 7) — all four are confirmed present on the selected
                       application's search result and prefill correctly; `disabled` keeps
@@ -693,7 +694,6 @@ export default function FilingPage() {
                       them left the picker permanently empty with no way to fix it. Left
                       editable until there's a confirmed source to prefill+lock them from. */}
                   <div className="g3 mt-3">
-                    <Field label="Enquiry" req><SearchSelect options={enquiryOptions} value={enquiryGuid} placeholder="-- Select Enquiry --" onChange={setEnquiryGuid} /></Field>
                     <Field label="Campus" req><SearchSelect options={campusOptions} value={campusGuid} placeholder="-- Select Campus --" onChange={setCampusGuid} disabled /></Field>
                     <Field label="Programme" req><SearchSelect options={programOptions} value={programGuid} placeholder="-- Select Programme --" onChange={setProgramGuid} disabled /></Field>
                   </div>

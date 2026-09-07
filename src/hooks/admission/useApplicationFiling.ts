@@ -17,11 +17,12 @@ import {
 const FILING_KEY = ['application-filing']
 
 // Backs /admission/applicants. No staleTime override — same default-fresh
-// behavior as the rest of this hook file.
-export function useApplications(page: number, pageSize: number) {
+// behavior as the rest of this hook file. search is part of the query key so
+// each term's page is cached separately, same convention as useEnquiries.
+export function useApplications(page: number, pageSize: number, search = '') {
   return useQuery({
-    queryKey: [...FILING_KEY, 'list', page, pageSize],
-    queryFn: () => getApplications(page, pageSize),
+    queryKey: [...FILING_KEY, 'list', page, pageSize, search],
+    queryFn: () => getApplications(page, pageSize, search),
   })
 }
 
