@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Toast } from '@/components/Toast'
 import { ScrollTable } from '@/components/ScrollTable'
 import { ActionMenu } from '@/components/ActionMenu'
@@ -12,15 +12,14 @@ import { RejectModal } from '@/components/modals/admission/RejectModal'
 import { VettingReviewModal } from '@/components/modals/admission/VettingReviewModal'
 import { useVettingQueue, useVetApplication } from '@/hooks/admission/useVetting'
 import { VettingQueueItem } from '@/lib/api/admission/vetting'
-import { usePagination } from '@/hooks/usePagination'
 
-// Fetches up to FETCH_SIZE rows in one request (still server-filtered by
-// studentName when searching — see the comment on useVettingQueue below),
-// then paginates that already-fetched set 10-at-a-time client-side via
-// usePagination. A real ceiling, not "fetch the whole queue" — if a search
-// genuinely matches more than FETCH_SIZE rows, only the first batch is
-// available to page through.
-const FETCH_SIZE = 1000
+// Real server-side pagination — only DISPLAY_PAGE_SIZE rows are ever
+// requested for the page currently on screen (studentName search is also a
+// real server-side filter, confirmed per VettingApiDocs.md, so it narrows
+// the actual queue, not just whatever's already loaded). Was previously a
+// single FETCH_SIZE = 1000 "fetch everything, paginate client-side" call,
+// which silently dropped anything past row 1000 once the real queue grew
+// past that — same fix as enquiry-list/applicants' own page.tsx.
 const DISPLAY_PAGE_SIZE = 10
 
 const PIPELINE_STEPS = [
@@ -60,37 +59,56 @@ export default function VettingPage() {
   const [openModals, setOpenModals] = useState<Set<string>>(new Set())
   const [filterProg, setFilterProg] = useState('all')
   const [search, setSearch] = useState('')
+  const [page, setPage] = useState(1)
   const [selectedApplicationGuid, setSelectedApplicationGuid] = useState<string | null>(null)
 
   function showToast(msg: string, type = '') { setToast({ msg, type }); setTimeout(() => setToast(null), 3500) }
   function openModal(id: string) { setOpenModals(prev => new Set(prev).add(id)) }
   function closeModal(id: string) { setOpenModals(prev => { const s = new Set(prev); s.delete(id); return s }) }
 
-  // studentName is a real server-side partial-match filter (see
-  // VettingApiDocs.md) — search narrows the actual queue server-side, not
-  // just the currently-loaded page; always fetches page 1 at FETCH_SIZE,
-  // since search changes what "the queue" even is.
-  const { data, isLoading } = useVettingQueue(1, FETCH_SIZE, { studentName: search.trim() || undefined })
+  // studentName is a real server-side partial-match filter, appRefNo an
+  // exact-match one (see the note on getVettingQueue). The single search box
+  // (placeholder: "Search Application Ref No. / Student…") was only ever
+  // sending the typed term as studentName — a typed App Ref No (format
+  // APP-YYYY-NNNN, see mockQueue below) was never sent as appRefNo at all,
+  // so it could never match. Sending both at once instead risks the backend
+  // ANDing them (student name partial-matches AND ref no exact-matches),
+  // which would break name search instead — so route by shape: a term that
+  // looks like an App Ref No goes to appRefNo, everything else to
+  // studentName, same "guess intent from shape" approach as the rest of
+  // this app's single-box searches over two differently-typed fields.
+  const searchTrimmed = search.trim()
+  // Just the "APP" prefix, not a stricter shape — this app's App Ref No
+  // formats aren't consistent everywhere (vetting's own mock data uses
+  // "APP-2025-0041", All Applicants' real data uses "APP20261/7115", no
+  // dash) — a real student name starting with "app" is vanishingly unlikely.
+  const looksLikeAppRefNo = /^app/i.test(searchTrimmed)
+  const { data, isLoading } = useVettingQueue(page, DISPLAY_PAGE_SIZE, looksLikeAppRefNo
+    ? { appRefNo: searchTrimmed || undefined }
+    : { studentName: searchTrimmed || undefined })
   const vetApplicationMutation = useVetApplication()
-
-  useEffect(() => {
-    console.log('[vetting page] render', { search, isLoading, itemCount: data?.items?.length ?? 0 })
-  }, [search, isLoading, data?.items?.length])
 
   const items = data?.items ?? []
   const summary = data?.summary
+  const totalCount = data?.totalCount ?? 0
+  const totalPages = Math.max(1, Math.ceil(totalCount / DISPLAY_PAGE_SIZE))
 
   // The API has no programme filter param — built dynamically from whatever
-  // programme names are present on the currently-fetched batch, same
-  // pattern as programme-master's level/group filter options.
+  // programme names are present on the currently-fetched page, same pattern
+  // as programme-master's level/group filter options. Now that only
+  // DISPLAY_PAGE_SIZE rows are ever loaded at a time (see above), this can
+  // only ever offer programmes present on the CURRENT page — a real, known
+  // narrowing versus the old FETCH_SIZE = 1000 batch, same tradeoff
+  // enquiry-list's own Channel/Intake filters already accepted for the same
+  // reason.
   const progOptions = [
     { value: 'all', label: 'All Programmes' },
     ...Array.from(new Set(items.map(i => i.programName))).map(name => ({ value: name, label: name })),
   ]
-  const filteredItems = filterProg === 'all' ? items : items.filter(r => r.programName === filterProg)
-  // Client-side pagination over the already-fetched (and already
-  // search-filtered server-side) batch — 10 rows per page for display.
-  const { page, setPage, totalPages, totalCount, pageItems: visibleRows } = usePagination(filteredItems, DISPLAY_PAGE_SIZE)
+  // Rows are already server-paginated (see useVettingQueue above) —
+  // visibleRows just narrows the current page's own rows by programme, it
+  // doesn't page through them again client-side.
+  const visibleRows = filterProg === 'all' ? items : items.filter(r => r.programName === filterProg)
 
   function updateSearch(value: string) { setSearch(value); setPage(1) }
 

@@ -3,10 +3,12 @@ import {
   createProgramMaster,
   createProgramMasterStep1,
   deleteProgramMasterComplete,
+  getProgramMasterByGuid,
   getProgramMasterFullDetails,
   getProgramMasters,
   getProgramMastersByCampus,
   updateProgramMasterComplete,
+  updateProgramMasterStep1,
   ProgramMaster,
   ProgramMasterInput,
   ProgramMasterCreateInput,
@@ -17,6 +19,7 @@ import {
   FeeLineInput,
   ProgramMasterFullDetails,
   ProgramMasterUpdateInput,
+  ProgramMasterUpdateStep1Input,
   ProgramUnitDetail,
   FeeLineDetail,
   FeeStructureDetail,
@@ -90,7 +93,31 @@ export function useCreateProgramMasterStep1() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (input: ProgramMasterCreateInput) => createProgramMasterStep1(input),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: PROGRAM_MASTERS_KEY }),
+    // Was invalidateQueries(PROGRAM_MASTERS_KEY) — refetched the ENTIRE
+    // Programme Master list (a "get all") in the background the instant Step
+    // 1 finishes and the wizard advances to Step 2, just to reflect the one
+    // new row. Fetches that single new programme by its own guid instead
+    // (get-program-by-guid.md's GET /program-master/{guid} — "get by id",
+    // via getProgramMasterByGuid) and merges it straight into the cached
+    // unfiltered list, so the Programme Master page shows it the moment the
+    // user navigates back without paying for a full-list round trip. Any
+    // already-cached search-key variants (PROGRAM_MASTERS_KEY, 'search', q)
+    // are left alone rather than patched — same tradeoff as before, they'll
+    // just refetch fresh next time that search term is actually typed again.
+    onSuccess: async (created) => {
+      try {
+        const full = await getProgramMasterByGuid(created.programGuid)
+        queryClient.setQueryData<ProgramMaster[]>(
+          PROGRAM_MASTERS_KEY,
+          old => old ? [full, ...old.filter(p => p.programGuid !== full.programGuid)] : old,
+        )
+      } catch {
+        // get-by-id failed (e.g. a transient error right after create) —
+        // fall back to the old behavior rather than leaving the list
+        // permanently stale with no way to recover short of a hard reload.
+        queryClient.invalidateQueries({ queryKey: PROGRAM_MASTERS_KEY })
+      }
+    },
   })
 }
 
@@ -109,6 +136,15 @@ export function useUpdateProgramMasterComplete() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: ({ programGuid, input }: { programGuid: string; input: ProgramMasterUpdateInput }) => updateProgramMasterComplete(programGuid, input),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: PROGRAM_MASTERS_KEY }),
+  })
+}
+
+export function useUpdateProgramMasterStep1() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ programGuid, input }: { programGuid: string; input: ProgramMasterUpdateStep1Input }) =>
+      updateProgramMasterStep1(programGuid, input),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: PROGRAM_MASTERS_KEY }),
   })
 }
@@ -132,6 +168,7 @@ export type {
   FeeLineInput,
   ProgramMasterFullDetails,
   ProgramMasterUpdateInput,
+  ProgramMasterUpdateStep1Input,
   ProgramUnitDetail,
   FeeLineDetail,
   FeeStructureDetail,
@@ -139,3 +176,4 @@ export type {
   FeeLineUpdateInput,
   FeeStructureUpdateInput,
 }
+

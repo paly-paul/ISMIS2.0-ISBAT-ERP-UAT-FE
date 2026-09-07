@@ -240,15 +240,6 @@ export function CompleteRegistrationModal({ isOpen, onClose, showToast, applicat
                 <SearchSelect placeholder="-- Select Registration Type --" options={registrationTypeOptions} value={registrationTypeId} onChange={setRegistrationTypeId} />
               </div>
 
-              <label className="flex items-center gap-2 mt-2" style={{ fontSize: 'var(--fs-sm)', cursor: 'pointer' }}>
-                <input type="checkbox" checked={aptech} onChange={e => setAptech(e.target.checked)} style={{ width: 16, height: 16 }} />
-                <span className="font-medium text-g700">Aptech Credit Exemption Student?</span>
-              </label>
-
-              <label className="flex items-center gap-2 mt-2" style={{ fontSize: 'var(--fs-sm)', cursor: 'pointer' }}>
-                <input type="checkbox" checked={isRefugee} onChange={e => setIsRefugee(e.target.checked)} style={{ width: 16, height: 16 }} />
-                <span className="font-medium text-g700">Refugee Student?</span>
-              </label>
               {isRefugee && (
                 <div className="fg mt-2">
                   <label className="lbl">Refugee ID <span className="req">*</span></label>

@@ -4219,6 +4219,107 @@ th:hover .th-fi {
    a real clickable button with an unread
    state.
 ═══════════════════════════════════════ */
+.ntf-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: var(--white);
+  border: 1.5px solid var(--b100);
+  border-radius: var(--rsm);
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  cursor: pointer;
+  user-select: none;
+  text-align: left;
+  transition: all .18s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .02);
+}
+
+.ntf-group-header:hover {
+  background: var(--b50);
+  border-color: var(--b200);
+  box-shadow: 0 2px 8px rgba(72, 105, 197, .08);
+}
+
+.ntf-group-header.collapsed {
+  margin-bottom: 8px;
+  background: #fbfcfe;
+  border-color: var(--g200);
+}
+
+.ntf-group-header.collapsed:hover {
+  background: var(--b50);
+  border-color: var(--b300);
+}
+
+.ntf-chevron-bubble {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--b100);
+  color: var(--b700);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  flex-shrink: 0;
+  transition: all .2s ease;
+}
+
+.ntf-group-header:hover .ntf-chevron-bubble {
+  background: var(--b200);
+  color: var(--b900);
+}
+
+.ntf-chevron-bubble i {
+  transition: transform .2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.ntf-chevron-bubble i.is-collapsed {
+  transform: rotate(-90deg);
+}
+
+.ntf-group-title {
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--b800);
+}
+
+.ntf-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--b700);
+  background: var(--white);
+  border: 1px solid var(--b200);
+  padding: 3px 9px;
+  border-radius: 999px;
+  transition: all .15s ease;
+}
+
+.ntf-group-header:hover .ntf-toggle-btn {
+  background: var(--b700);
+  border-color: var(--b700);
+  color: var(--white);
+}
+
+.ntf-group-header.collapsed .ntf-toggle-btn {
+  background: var(--g100);
+  border-color: var(--g300);
+  color: var(--g600);
+}
+
+.ntf-group-header.collapsed:hover .ntf-toggle-btn {
+  background: var(--b700);
+  border-color: var(--b700);
+  color: var(--white);
+}
+
 .ntf-list {
   display: flex;
   flex-direction: column;
@@ -4929,38 +5030,78 @@ body:has(.modal-overlay.open) {
 ═══════════════════════════════════════ */
 .toast {
   position: fixed;
-  bottom: 24px;
+  top: 24px;
   right: 24px;
   background: var(--g900);
   color: #fff;
-  padding: 12px 20px;
-  border-radius: var(--rsm);
-  font-size: 13px;
+  padding: 14px 20px;
+  border-radius: var(--radius);
+  font-size: 13.5px;
   font-weight: 500;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, .25);
-  z-index: 9999;
-  transform: translateY(80px);
+  box-shadow: 0 12px 32px rgba(15, 30, 61, .22), 0 4px 12px rgba(0, 0, 0, .14);
+  z-index: 10000;
+  transform: translateX(130%);
   opacity: 0;
-  transition: .3s cubic-bezier(.4, 0, .2, 1);
-  pointer-events: none;
-  max-width: 380px
+  pointer-events: auto;
+  min-width: 360px;
+  max-width: 520px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  line-height: 1.4;
 }
 
 .toast.show {
-  transform: translateY(0);
-  opacity: 1
+  animation: toast-slide-in-right .38s cubic-bezier(.16, 1, .3, 1) both;
+}
+
+@keyframes toast-slide-in-right {
+  0% {
+    transform: translateX(130%);
+    opacity: 0;
+  }
+  65% {
+    transform: translateX(-6px);
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(0);
+    opacity: 1;
+  }
 }
 
 .toast.toast-warn {
-  background: var(--amber)
+  background: var(--amber);
+  color: #fff;
 }
 
-.toast.toast-success {
-  background: var(--green)
+.toast.toast-info {
+  background: var(--b700);
+  color: #fff;
 }
 
-.toast.toast-danger {
-  background: var(--red)
+.toast.toast-success,
+.toast.toast-ok {
+  background: var(--green);
+  color: #fff;
+}
+
+.toast.toast-danger,
+.toast.toast-error,
+.toast.toast-err {
+  background: var(--red);
+  color: #fff;
+}
+
+@media (max-width: 480px) {
+  .toast {
+    top: 16px;
+    bottom: auto;
+    right: 12px;
+    left: 12px;
+    min-width: 0;
+    max-width: none;
+  }
 }
 
 /* ═══════════════════════════════════════
@@ -5672,6 +5813,14 @@ body:has(.modal-overlay.open) {
   color: var(--g500);
   background: var(--white);
   border: 1.5px solid var(--g200);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  user-select: none;
+}
+
+.prog-step:hover {
+  border-color: var(--b300);
+  color: var(--b700);
 }
 
 .prog-step.active {

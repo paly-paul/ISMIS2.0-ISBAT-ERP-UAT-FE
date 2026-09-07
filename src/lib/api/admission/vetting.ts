@@ -211,29 +211,17 @@ export function getVettingQueue(page = 1, pageSize = 10, filters?: { appRefNo?: 
   if (filters?.appRefNo) params.set('appRefNo', filters.appRefNo)
   if (filters?.studentName) params.set('studentName', filters.studentName)
   const url = `/api/v1/admissions/vetting/applications?${params.toString()}`
-  console.log('[vetting API] getVettingQueue request', { url, page, pageSize, filters })
   return apiGet<VettingQueueResponse | null>(url)
-    .then(data => {
-      const result = data ?? { items: [], totalCount: 0, pageNumber: page, pageSize, summary: { pendingCount: 0, oldestSubmittedDate: null } }
-      console.log('[vetting API] getVettingQueue response', result)
-      return result
-    })
+    .then(data => data ?? { items: [], totalCount: 0, pageNumber: page, pageSize, summary: { pendingCount: 0, oldestSubmittedDate: null } })
 }
 
 export function getVettingApplicationDetail(applicationGuid: string): Promise<VettingApplicationDetail> {
   if (MOCK_AUTH) {
     const found = mockDetails[applicationGuid]
     if (!found) return Promise.reject(new Error('Application not found'))
-    console.log('[vetting API] getVettingApplicationDetail mock', { applicationGuid })
     return Promise.resolve(found)
   }
-  const url = `/api/v1/admissions/vetting/applications/${applicationGuid}`
-  console.log('[vetting API] getVettingApplicationDetail request', { url, applicationGuid })
-  return apiGet<VettingApplicationDetail>(url)
-    .then(data => {
-      console.log('[vetting API] getVettingApplicationDetail response', { applicationGuid, data })
-      return data
-    })
+  return apiGet<VettingApplicationDetail>(`/api/v1/admissions/vetting/applications/${applicationGuid}`)
 }
 
 // Non-terminal — sets action=0 (Waiting), which drops the application out of

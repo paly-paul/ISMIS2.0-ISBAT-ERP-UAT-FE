@@ -39,7 +39,7 @@ export function Header({ panelOpen, setPanelOpen, profileOpen, setProfileOpen, p
   // showed up as an unwanted poll in the network tab).
   const [bellOpen, setBellOpen] = useState(false)
   const { data: previewResult, isLoading: previewLoading } = useNotificationsPreview()
-  const previewItems = previewResult?.items ?? []
+  const previewItems = (previewResult?.items ?? []).slice(0, 3)
 
   function openNotification(n: NotificationItem) {
     if (!n.isRead) markRead.mutate(n.notificationGuid)

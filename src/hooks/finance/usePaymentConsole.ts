@@ -14,11 +14,13 @@ import {
   getStudentProfile,
   searchStudents,
   updatePayment,
+  updatePaymentOther,
   AdvanceDepositInput,
   PaymentInput,
   PaymentOtherInput,
   PayableLedgersParams,
   UpdatePaymentInput,
+  UpdatePaymentOtherInput,
 } from '@/lib/api/finance/paymentConsole'
 import { PAYMENT_OTHERS_KEY } from './usePaymentOthers'
 
@@ -231,6 +233,19 @@ export function useUpdatePayment() {
         queryClient.invalidateQueries({ queryKey: [...PAYMENT_CONSOLE_KEY, 'current-semester-payable', applicationGuid] })
       }
     },
+  })
+}
+
+// Corrects an already-recorded Other payment (put-payment-other.md) — the
+// Other Payment tab's own history table, same "one shared list, invalidate
+// on any write" convention useCreatePaymentOther above uses for
+// PAYMENT_OTHERS_KEY.
+export function useUpdatePaymentOther() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ paymentOtherGuid, input }: { paymentOtherGuid: string; input: UpdatePaymentOtherInput }) =>
+      updatePaymentOther(paymentOtherGuid, input),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: PAYMENT_OTHERS_KEY }),
   })
 }
 

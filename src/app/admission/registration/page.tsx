@@ -51,11 +51,16 @@ export default function RegistrationPage() {
   const { data: intakes = [] } = useIntakes()
   const intakeOptions = [{ value: 'all', label: 'All Intakes' }, ...intakes.map(i => ({ value: i.intakeGuid, label: `${i.intakeCode} — ${i.description}` }))]
 
-  // studentName is a real server-side partial-match filter per
-  // registrar-desk-api-docs.html — the search box sends the typed term
-  // straight through, same convention as /admission/vetting.
+  const searchTrimmed = search.trim()
+  // An App Ref No starts with "APP", "ADM", contains "/", or is digits (e.g. APP20261/7117, ADM-26-0019, 7117).
+  const looksLikeAppRefNo = /^app/i.test(searchTrimmed) || /^adm/i.test(searchTrimmed) || searchTrimmed.includes('/') || /^\d+$/.test(searchTrimmed)
+
+  // Route search by shape: a term that looks like an App Ref No goes to
+  // appRefNo, everything else to studentName (same convention as /admission/vetting).
+  // Sending both would cause the backend to AND them (and fail).
   const { data, isLoading } = useRegistrarDeskApplications(page, PAGE_SIZE, {
-    studentName: search.trim() || undefined,
+    appRefNo: looksLikeAppRefNo ? (searchTrimmed || undefined) : undefined,
+    studentName: !looksLikeAppRefNo ? (searchTrimmed || undefined) : undefined,
     intakeGuid: filterIntake !== 'all' ? filterIntake : undefined,
   })
   const { data: counts } = useRegistrarDeskCounts()
@@ -118,8 +123,8 @@ export default function RegistrationPage() {
           <h2 className="text-base font-semibold text-g800">Provisionally Admitted &mdash; Awaiting Final Registration</h2>
           <div className="flex items-center gap-3 flex-wrap">
             <TableSearch
-              className="w-56"
-              placeholder="Search by student name…"
+              className="w-64"
+              placeholder="Search App. Ref / Student…"
               value={search}
               onChange={updateSearch}
               results={searchMatches.map(r => ({ id: r.applicationGuid, primary: r.appRefNo, secondary: r.studentName }))}
@@ -145,9 +150,15 @@ export default function RegistrationPage() {
                 <tr key={r.applicationGuid} className="border-b border-g100 hover:bg-g50">
                   <td>
                     <ActionMenu>
-                      {r.regPaid
-                        ? (permissions.edit && <button className="btn btn-neu btn-sm" onClick={() => handleRegister(r.applicationGuid)}><i className="lni lni-graduation" /> Register</button>)
-                        : <button className="btn btn-neu btn-sm" disabled>Awaiting Payment</button>}
+                      {r.regPaid ? (
+                        <button className="btn btn-neu btn-sm" onClick={() => handleRegister(r.applicationGuid)}>
+                          <i className="lni lni-graduation" /> Register
+                        </button>
+                      ) : (
+                        <button className="btn btn-neu btn-sm" disabled>
+                          Awaiting Payment
+                        </button>
+                      )}
                     </ActionMenu>
                   </td>
                   <td className="py-2.5 font-mono text-xs text-b600">{r.appRefNo}</td>

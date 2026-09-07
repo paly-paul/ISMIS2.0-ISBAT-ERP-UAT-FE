@@ -27,7 +27,15 @@ import {
 // ledgerNum 1/3/2, not matching array order at all), so this is sent as
 // ledgerNum on save instead of the "local-only, no confirmed field" state it
 // used to be in.
-type FeeItem = { id: number; amount: string; currencyGuid: string; ledgerGuid: string; ledgerPriority: string }
+// ledgerName carries the real name straight off GET fee-lines/:feeHdGuid
+// (ProgramFeeLineDetail.ledgerName) rather than relying solely on the
+// ledgerOptions cross-lookup below finding a match in the Ledger master
+// list — that list has no confirmed "fetch everything, unpaginated"
+// guarantee, so a ledger genuinely used on this fee structure could still be
+// missing from it (e.g. beyond whatever page size the backend defaults to),
+// which was silently leaving the Ledger picker blank despite a real,
+// already-known ledgerGuid/name sitting right there in the response.
+type FeeItem = { id: number; amount: string; currencyGuid: string; ledgerGuid: string; ledgerName?: string; ledgerPriority: string }
 // Keyed by real semesterGuid — save-complete's feeLines each carry a real
 // semesterGuid, unlike Program Master's own embedded fee structure (which
 // uses semCode, a 1-based int position — see the note on
@@ -142,7 +150,7 @@ export function FeeStructureModal({ isOpen, onClose, showToast, mode, editData }
     const semFees: SemFeesMap = {}
     feeLines.forEach(l => {
       const list = semFees[l.semesterGuid] ?? (semFees[l.semesterGuid] = [])
-      list.push({ id: nextId++, amount: String(l.amount), currencyGuid: l.currencyGuid, ledgerGuid: l.ledgerGuid, ledgerPriority: String(l.ledgerNum) })
+      list.push({ id: nextId++, amount: String(l.amount), currencyGuid: l.currencyGuid, ledgerGuid: l.ledgerGuid, ledgerName: l.ledgerName, ledgerPriority: String(l.ledgerNum) })
     })
 
     setStructures([{
@@ -204,7 +212,7 @@ export function FeeStructureModal({ isOpen, onClose, showToast, mode, editData }
     const semFees: SemFeesMap = {}
     copySourceLines.forEach(l => {
       const list = semFees[l.semesterGuid] ?? (semFees[l.semesterGuid] = [])
-      list.push({ id: nextId++, amount: String(l.amount), currencyGuid: l.currencyGuid, ledgerGuid: l.ledgerGuid, ledgerPriority: String(l.ledgerNum) })
+      list.push({ id: nextId++, amount: String(l.amount), currencyGuid: l.currencyGuid, ledgerGuid: l.ledgerGuid, ledgerName: l.ledgerName, ledgerPriority: String(l.ledgerNum) })
     })
     setStructures(prev => prev.map((s, i) => i !== activeIdx ? s : {
       ...s,
@@ -247,7 +255,24 @@ export function FeeStructureModal({ isOpen, onClose, showToast, mode, editData }
   const { data: financeCurrencies = [] } = useFinanceCurrencies()
   const financeCurrencyOptions = financeCurrencies.map(c => ({ value: c.currencyGuid, label: `${c.currencyCode} — ${c.currencyName}` }))
   const { data: ledgers = [] } = useLedgers()
-  const ledgerOptions = ledgers.map(l => ({ value: l.ledgerGuid, label: l.ledgerName }))
+  // Base options from the Ledger master list, PLUS a synthesized option for
+  // any ledgerGuid already sitting on a loaded fee item (from GET fee-lines
+  // or a Copy Fee Code source) that isn't in that list — using the real
+  // ledgerName the API already carried for it (see the FeeItem.ledgerName
+  // note above), rather than leaving the picker showing its blank
+  // placeholder for a genuinely real, already-known selection.
+  const ledgerOptions = (() => {
+    const base = ledgers.map(l => ({ value: l.ledgerGuid, label: l.ledgerName }))
+    const known = new Set(base.map(o => o.value))
+    const extra: { value: string; label: string }[] = []
+    structures.forEach(s => Object.values(s.semFees).forEach(items => items.forEach(item => {
+      if (item.ledgerGuid && item.ledgerName && !known.has(item.ledgerGuid)) {
+        known.add(item.ledgerGuid)
+        extra.push({ value: item.ledgerGuid, label: item.ledgerName })
+      }
+    })))
+    return [...base, ...extra]
+  })()
 
   if (!isOpen) return null
 

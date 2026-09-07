@@ -202,7 +202,7 @@ function StudentProfileContent() {
   // not wired to any save endpoint (none confirmed for this workflow).
   const [firstName, setFirstName] = useState('')
   const [lastName, setLastName] = useState('')
-  const [gender, setGender] = useState('Female')
+  const [gender, setGender] = useState('')
   const [email, setEmail] = useState('')
   const [phone, setPhone] = useState('')
 
@@ -279,6 +279,14 @@ function StudentProfileContent() {
     const derivedEmail = `${studentNo.toLowerCase().replace(/[^a-z0-9]/g, '.')}@isbat.ac.ug`
     setFirstName(parts[0] ?? '')
     setLastName(parts.slice(1).join(' '))
+    // Gender field is display-only now — was previously a hardcoded
+    // 'Female' default regardless of the actual student (never wired to
+    // real data since it was editable and no save endpoint existed for it
+    // either). student (StudentDto, the list/search shape) has no gender
+    // field at all — only StudentDetailDto (`detail`) does — so this seeds
+    // from whatever `detail` already has at the time `student` changes; the
+    // effect below corrects it once `detail` itself actually resolves.
+    setGender(detail?.gender || '—')
     setStuEmail(derivedEmail)
     setEmail(derivedEmail)
     setStuPhone('+256 701 234 567')
@@ -294,6 +302,18 @@ function StudentProfileContent() {
     ])
     setTab('info')
   }, [student])
+
+  // Gender specifically re-seeded off `detail` on its own, separate from the
+  // reset-everything effect above — `detail` (useStudent(effectiveStudentGuid))
+  // almost always resolves after `student` itself (student.gender is only
+  // populated when it was seeded from a prior detail fetch via
+  // normalizeStudentDetail, e.g. the URL-driven ?studentGuid= flow; a
+  // StudentLookup search result typically won't carry it), so this corrects
+  // gender once the real value actually arrives instead of leaving it on
+  // whatever the effect above had at the time (stale, or the '—' fallback).
+  useEffect(() => {
+    if (detail?.gender) setGender(detail.gender)
+  }, [detail])
 
   // sponsorRequested/refugeeRequested reset here too — a newly-loaded (or
   // cleared) student starts back at "not checked" for both, same as a first
@@ -490,7 +510,6 @@ function StudentProfileContent() {
                   )}
                 </div>
                 <div className="pc-hero-facts">
-                  <div className="pc-hero-fact"><span className="pc-hero-fact-lbl">Status</span><span className="pc-hero-fact-val">{detail?.studActive === 1 ? '✓ Active' : detail ? '⚠ Inactive' : '…'}</span></div>
                   <div className="pc-hero-fact"><span className="pc-hero-fact-lbl">Batch</span><span className="pc-hero-fact-val" title={student.batchCode || detail?.batch || '—'}>{student.batchCode || detail?.batch || '—'}</span></div>
                   <div className="pc-hero-fact"><span className="pc-hero-fact-lbl">Semester</span><span className="pc-hero-fact-val" title={student.semesterName || detail?.semester || '—'}>{student.semesterName || detail?.semester || '—'}</span></div>
                   <div className="pc-hero-fact"><span className="pc-hero-fact-lbl">Campus</span><span className="pc-hero-fact-val">Campus</span></div>
@@ -557,7 +576,6 @@ function StudentProfileContent() {
                 </div>
                 <div className="stu-meta-item"><div className="stu-meta-lbl">Learning Mode</div><div className="stu-meta-val">Campus</div></div>
                 <div className="stu-meta-item"><div className="stu-meta-lbl">Registration No.</div><div className="stu-meta-val">{student.studentRegNo || detail?.regNo}</div></div>
-                <div className="stu-meta-item"><div className="stu-meta-lbl">Status</div><div className="stu-meta-val">{detail?.regStatusName || '—'}</div></div>
               </div>
             </div>
 
@@ -576,7 +594,7 @@ function StudentProfileContent() {
                   <div className="g3">
                     <div className="fg"><label className="lbl">First Name <span className="req">*</span></label><input className="ctrl" value={firstName} onChange={e => setFirstName(e.target.value)} /></div>
                     <div className="fg"><label className="lbl">Last Name <span className="req">*</span></label><input className="ctrl" value={lastName} onChange={e => setLastName(e.target.value)} /></div>
-                    <div className="fg"><label className="lbl">Gender <span className="req">*</span></label><SearchSelect options={['Female', 'Male', 'Other']} value={gender} onChange={setGender} /></div>
+                    <div className="fg"><label className="lbl">Gender</label><input className="ctrl" readOnly value={gender} /></div>
                   </div>
                 </div>
                 <div className="card">
@@ -587,7 +605,6 @@ function StudentProfileContent() {
                     <div className="fg"><label className="lbl">Programme</label><input className="ctrl" readOnly value={student.programName || detail?.programme || '—'} /></div>
                     <div className="fg"><label className="lbl">Current Batch</label><input className="ctrl" readOnly value={student.batchCode || detail?.batch || '—'} /></div>
                     <div className="fg"><label className="lbl">Current Semester</label><input className="ctrl" readOnly value={student.semesterName || detail?.semester || '—'} /></div>
-                    <div className="fg"><label className="lbl">Status</label><input className="ctrl" readOnly value={detail?.regStatusName || (detail?.studActive === 1 ? 'Active' : '—')} style={{ color: 'var(--green)', fontWeight: 700 }} /></div>
                   </div>
                   <div className="info-box"><i className="lni lni-information" style={{ color: 'var(--b700)', fontSize: 15, flexShrink: 0 }}></i><div style={{ fontSize: 12 }}>To change Batch, Programme, Learning Mode, or Intake — use the quick-action buttons in the banner above or navigate via the Operations section in the sidebar.</div></div>
                 </div>
@@ -701,11 +718,12 @@ function StudentProfileContent() {
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '5px 10px', marginTop: 12, fontSize: 10.5 }}>
                         <div><span style={{ color: 'rgba(255,255,255,.55)' }}>Card No.</span> {currentCard?.issueCode || '—'}</div>
                         <div><span style={{ color: 'rgba(255,255,255,.55)' }}>Batch</span> {student.batchCode || '—'}</div>
-                        {/* Batch Time / Nationality have no field anywhere on the wire yet
-                            (not on StudentDto/StudentDetailDto, not on the id-cards DTO) —
-                            shown as placeholders rather than invented, same "flag the gap"
-                            convention as the commented-out photo-upload/ESSL UI above. */}
-                        <div><span style={{ color: 'rgba(255,255,255,.55)' }}>Batch Time</span> —</div>
+                        {/* Batch Time confirmed on the id-cards DTO itself (card.batchTimeInfo.
+                            batchTime), 2026-09-07 — Nationality still has no field anywhere on
+                            the wire (not on StudentDto/StudentDetailDto, not here either),
+                            still shown as a placeholder, same "flag the gap" convention as the
+                            commented-out photo-upload/ESSL UI above. */}
+                        <div><span style={{ color: 'rgba(255,255,255,.55)' }}>Batch Time</span> {card?.batchTimeInfo?.batchTime || '—'}</div>
                         <div><span style={{ color: 'rgba(255,255,255,.55)' }}>Nationality</span> —</div>
                         <div><span style={{ color: 'rgba(255,255,255,.55)' }}>Joining</span> {joiningDate ? formatDate(joiningDate) : '—'}</div>
                         <div><span style={{ color: 'rgba(255,255,255,.55)' }}>Expiry</span> {expiryDate ? formatDate(expiryDate) : '—'}</div>

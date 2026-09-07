@@ -19,6 +19,8 @@ export interface Batch {
   // 0/1 flag, not a multi-value enum — same convention as country.ts's
   // defaultCountry.
   active: number
+  bInCharge?: string
+  pHead?: string | null
 }
 
 interface BatchListResult {

@@ -708,12 +708,11 @@ export function getLedgerOthers(): Promise<LedgerOthersDto[]> {
 // funding modes: cash/bank (paymentAdvanceGuid omitted — receiptBookGuid
 // required, procBankGuid required too unless payType is Cash) or from an
 // existing advance deposit (paymentAdvanceGuid supplied — no receipt/book/
-// bank needed). Only cash/bank mode is wired on the form: there's no picker
-// anywhere in this app for an existing advance deposit's paymentAdvanceGuid
-// (createAdvanceDeposit only *creates* one; nothing lists a student's
-// existing deposits with remaining balance) — the Advance Payment checkbox
-// stays local-only and blocks submit with a toast rather than sending a
-// fabricated paymentAdvanceGuid that would 404.
+// bank needed). Both modes are wired on the form now — the Advance Payment
+// checkbox opens AdvanceDepositPickerModal (get-payment-advances.md) instead
+// of flipping a local-only flag (2026-09-01); a real paymentAdvanceGuid is
+// only ever set once a deposit is actually picked there, so this field is
+// never fabricated.
 export interface PaymentOtherInput {
   applicationGuid: string
   studentGuid: string | null
@@ -749,5 +748,43 @@ export function createPaymentOther(input: PaymentOtherInput): Promise<PaymentOth
       amount: input.amount,
     })
   }
-  return apiPost<PaymentOtherResult>('/api/v1/finance/payment-console/payment-other', input)
+  // Was '/api/v1/finance/payment-console/payment-other' — stale per
+  // post-payment-other.md's own changelog (2026-09-05): the route moved to
+  // POST /api/v1/finance/other-payment when the doc/endpoint moved out of
+  // the payment-console folder into its own "other-payment" feature
+  // (API ID unchanged). This file's own GET counterpart (paymentOthers.ts)
+  // already calls the new /other-payment path — this POST was simply never
+  // updated to match when the move happened.
+  return apiPost<PaymentOtherResult>('/api/v1/finance/other-payment', input)
+}
+
+// Confirmed via put-payment-other.md — corrects amount/date/bank/remarks on
+// an already-recorded Other payment. Narrower than tuition's own
+// UpdatePaymentInput: no currencyGuid/receiptBookGuid/payType/
+// changeAllSemesters here — the fee type (ledgerOthersGuid) and currency
+// aren't on this request at all and can't be changed (reverse + re-enter
+// instead, per the doc). A payment funded from an advance deposit
+// (PaymentOtherDto.advance === 1) can't be edited here either — the handler
+// rejects it with a real 400 message, surfaced as-is by the caller.
+export interface UpdatePaymentOtherInput {
+  amount: number
+  payDate: string
+  bankGuid: string | null
+  remarks: string | null
+}
+
+export function updatePaymentOther(paymentOtherGuid: string, input: UpdatePaymentOtherInput): Promise<PaymentOtherResult> {
+  if (MOCK_AUTH) {
+    return Promise.resolve({
+      paymentOtherGuid,
+      paymentCode: 'OTH-MOCK-EDITED',
+      receipt: 'RCP-MOCK-EDITED',
+      amount: input.amount,
+    })
+  }
+  // Same folder move as the create endpoint above — was never
+  // '/api/v1/finance/payment-console/payment-other/{guid}' here at all
+  // (this is a brand-new integration), so wired straight to the current
+  // route per put-payment-other.md's changelog.
+  return apiPut<PaymentOtherResult>(`/api/v1/finance/other-payment/${paymentOtherGuid}`, input)
 }

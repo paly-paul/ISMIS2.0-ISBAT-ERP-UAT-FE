@@ -8,17 +8,12 @@ import { TableSearch } from '@/components/TableSearch'
 import { Pagination } from '@/components/Pagination'
 import { EmptyState } from '@/components/EmptyState'
 import { TableLoadingState } from '@/components/TableLoadingState'
-import { usePagination } from '@/hooks/usePagination'
 import { useApplications, useExportApplicationsCsv, ApplicationListItem } from '@/hooks/admission/useApplicationFiling'
 import { useProgramMasters } from '@/hooks/academic/useProgramMaster'
 import { downloadBlob } from '@/lib/downloadBlob'
 import { AuthError } from '@/lib/api/client'
 
 const PAGE_SIZE = 10
-// This endpoint has no search param (unlike Filing's payment-search) — fetch
-// a page large enough to cover the whole list once, then filter/paginate
-// client-side, same pattern as batch-management/enquiry-followup-master.
-const FETCH_ALL_PAGE_SIZE = 1000
 // Don't narrow the table (or open the search dropdown) until the user's
 // typed at least this many characters — same convention as the other
 // master pages' search boxes.
@@ -42,11 +37,22 @@ export default function ApplicantsPage() {
   const router = useRouter()
   const [toast, setToast] = useState<{ msg: string; type: string } | null>(null)
   const [search, setSearch] = useState('')
+  const [page, setPage] = useState(1)
 
   function showToast(msg: string, type = '') { setToast({ msg, type }); setTimeout(() => setToast(null), 3500) }
 
-  const { data, isLoading } = useApplications(1, FETCH_ALL_PAGE_SIZE)
-  const allRows = data?.items ?? []
+  const searchTrimmed = search.trim()
+  // Server-side search (see getApplications) — only actually queried once
+  // the term clears MIN_SEARCH_CHARS, same gate TableSearch's own dropdown
+  // uses. Real per-page fetches now too (was a single FETCH_ALL_PAGE_SIZE =
+  // 1000 fetch, paginated/searched entirely client-side — silently dropped
+  // anything past row 1000 once the real table grew past that), same fix as
+  // enquiry-list's page.
+  const activeSearch = searchTrimmed.length >= MIN_SEARCH_CHARS ? searchTrimmed : ''
+  const { data, isLoading } = useApplications(page, PAGE_SIZE, activeSearch)
+  const pageItems = data?.items ?? []
+  const totalCount = data?.totalCount ?? 0
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE))
 
   // programName has no counterpart on this DTO at all — resolve it
   // client-side, same fallback pattern as enquiry-list/page.tsx.
@@ -56,19 +62,10 @@ export default function ApplicantsPage() {
     return programs.find(p => p.programGuid === programGuid)?.programName ?? '—'
   }
 
-  function matchesSearch(a: ApplicationListItem, term: string) {
-    return `${a.appRefNo} ${applicantName(a)} ${a.emailId ?? ''} ${a.phone ?? ''} ${a.intakeCode ?? ''} ${resolveProgramName(a.programGuid)}`
-      .toLowerCase()
-      .includes(term)
-  }
-
-  const searchTrimmed = search.trim()
-  const filtered = allRows.filter(a => searchTrimmed.length < MIN_SEARCH_CHARS || matchesSearch(a, searchTrimmed.toLowerCase()))
-  const searchMatches = searchTrimmed.length >= MIN_SEARCH_CHARS
-    ? allRows.filter(a => matchesSearch(a, searchTrimmed.toLowerCase())).slice(0, 8)
-    : []
-
-  const { page, setPage, totalPages, totalCount, pageItems } = usePagination(filtered, PAGE_SIZE)
+  // Search itself now happens server-side — pageItems already only contains
+  // matches for activeSearch, so the dropdown just reuses them directly
+  // (capped to 8) instead of re-filtering a full unpaginated list.
+  const searchMatches = searchTrimmed.length >= MIN_SEARCH_CHARS ? pageItems.slice(0, 8) : []
 
   // No filter UI on this page yet (see FETCH_ALL_PAGE_SIZE's own note) — the
   // export always pulls the full, unfiltered dataset, same "everything the
@@ -99,7 +96,7 @@ export default function ApplicantsPage() {
             className="w-56"
             placeholder="Search applicants…"
             value={search}
-            onChange={setSearch}
+            onChange={v => { setSearch(v); setPage(1) }}
             results={searchMatches.map(a => ({ id: a.applicationGuid, primary: a.appRefNo, secondary: applicantName(a) }))}
             minChars={MIN_SEARCH_CHARS}
             onSelect={() => router.push('/admission/registration')}
@@ -130,7 +127,7 @@ export default function ApplicantsPage() {
             <tbody>
               {isLoading
                 ? <TableLoadingState colSpan={999} />
-                : filtered.length === 0
+                : pageItems.length === 0
                   ? <EmptyState colSpan={999} hasFilters={!!search.trim()} onClearFilters={() => setSearch('')} />
                   : null}
               {pageItems.map((a, i) => (

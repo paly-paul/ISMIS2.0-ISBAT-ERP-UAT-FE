@@ -40,6 +40,7 @@ export function SearchSelect({
   const triggerRef = useRef<HTMLButtonElement>(null)
   const dropRef    = useRef<HTMLDivElement>(null)
   const inputRef   = useRef<HTMLInputElement>(null)
+  const optsRef    = useRef<HTMLDivElement>(null)
 
   const current  = controlled ? value! : internal
   const selected = normalised.find(o => o.value === current)
@@ -79,6 +80,22 @@ export function SearchSelect({
   useEffect(() => {
     if (open) inputRef.current?.focus()
     else setSearch('')
+  }, [open])
+
+  // Long option lists (e.g. DatePicker's year picker — 111 entries) always
+  // rendered starting from the top on open, with no indication the currently
+  // selected value was buried well below the fold — nothing scrolled to it.
+  // Center the active option in the scrollable list as soon as the dropdown
+  // (re)opens, scoped to the list's own scrollTop rather than
+  // Element.scrollIntoView so it can't drag the page/modal underneath along
+  // with it (the portal is position: fixed, but scrollIntoView still walks
+  // every scrollable ancestor up the DOM, not just this list).
+  useEffect(() => {
+    if (!open) return
+    const container = optsRef.current
+    const activeEl = container?.querySelector<HTMLElement>('.fil-active')
+    if (!container || !activeEl) return
+    container.scrollTop = activeEl.offsetTop - container.clientHeight / 2 + activeEl.clientHeight / 2
   }, [open])
 
   useEffect(() => {
@@ -181,7 +198,7 @@ export function SearchSelect({
               onClick={e => e.stopPropagation()}
             />
           </div>
-          <div className="ss-opts" style={{ maxHeight: pos.maxHeight }}>
+          <div className="ss-opts" ref={optsRef} style={{ maxHeight: pos.maxHeight }}>
             {visible.length === 0
               ? <div className="ss-no-match">No matches</div>
               : visible.map(o => (

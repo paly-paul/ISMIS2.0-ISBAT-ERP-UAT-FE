@@ -56,6 +56,27 @@ export default function NotificationsPage() {
     return order.map(typeCode => ({ typeCode, items: byType.get(typeCode)! }))
   }, [items])
 
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
+
+  function toggleGroup(typeCode: string) {
+    setCollapsedGroups(prev => {
+      const next = new Set(prev)
+      if (next.has(typeCode)) next.delete(typeCode)
+      else next.add(typeCode)
+      return next
+    })
+  }
+
+  const allCollapsed = groupedItems.length > 0 && groupedItems.every(g => collapsedGroups.has(g.typeCode))
+
+  function toggleAllGroups() {
+    if (allCollapsed) {
+      setCollapsedGroups(new Set())
+    } else {
+      setCollapsedGroups(new Set(groupedItems.map(g => g.typeCode)))
+    }
+  }
+
   // Debounce the raw input (~300ms per the doc) rather than a request per
   // keystroke.
   useEffect(() => {
@@ -151,37 +172,95 @@ export default function NotificationsPage() {
             </div>
           ) : (
             <>
-              {groupedItems.map(({ typeCode, items: group }, gi) => (
-                <div key={typeCode} className={gi > 0 ? 'mt-1' : undefined}>
-                  <div className="sec-divider flex items-center justify-between" style={gi === 0 ? { paddingTop: 0 } : undefined}>
-                    <span>{notificationTypeLabel(typeCode)}</span>
-                    <span className="badge badge-grey">{group.length}</span>
-                  </div>
-                  <div className="ntf-list">
-                    {group.map((n, i) => {
-                      const visual = notificationVisual(n.typeCode)
-                      return (
-                        <button
-                          key={n.notificationGuid}
-                          className={`ntf-item${n.isRead ? '' : ' unread'}`}
-                          style={{ animationDelay: `${Math.min(i, 8) * 30}ms` }}
-                          onClick={() => openNotification(n)}
-                        >
-                          <span className={`ntf-dot ${visual.tone}`}><i className={`lni ${visual.icon}`}></i></span>
-                          <span className="ntf-content">
-                            <span className="ntf-top-row">
-                              <span className="ntf-title">{n.title}</span>
-                              {!n.isRead && <span className="ntf-unread-mark"></span>}
-                              <span className="ntf-time">{timeAgo(n.createdDate)}</span>
-                            </span>
-                            <span className="ntf-body">{n.body}</span>
-                          </span>
-                        </button>
-                      )
-                    })}
-                  </div>
+              {groupedItems.length > 1 && (
+                <div className="flex items-center justify-between" style={{ marginBottom: 10, padding: '0 2px' }}>
+                  <span style={{ fontSize: 12, color: 'var(--g500)', fontWeight: 500 }}>
+                    {groupedItems.length} categories ({items.length} total)
+                  </span>
+                  <button
+                    type="button"
+                    className="btn btn-neu btn-xs"
+                    onClick={toggleAllGroups}
+                    style={{
+                      fontSize: 11.5,
+                      gap: 5,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      padding: '3px 10px',
+                      fontWeight: 600,
+                      color: 'var(--b700)',
+                    }}
+                    title={allCollapsed ? 'Expand all categories' : 'Collapse all categories'}
+                  >
+                    <i className={`lni ${allCollapsed ? 'lni-chevron-down' : 'lni-chevron-up'}`} style={{ fontSize: 10 }} />
+                    <span>{allCollapsed ? 'Expand All' : 'Collapse All'}</span>
+                  </button>
                 </div>
-              ))}
+              )}
+              {groupedItems.map(({ typeCode, items: group }, gi) => {
+                const isCollapsed = collapsedGroups.has(typeCode)
+                const unreadInGroup = group.filter(n => !n.isRead).length
+
+                return (
+                  <div key={typeCode} className={gi > 0 ? (isCollapsed ? 'mt-2' : 'mt-4') : undefined}>
+                    <button
+                      type="button"
+                      className={`ntf-group-header${isCollapsed ? ' collapsed' : ''}`}
+                      onClick={() => toggleGroup(typeCode)}
+                      aria-expanded={!isCollapsed}
+                      title={isCollapsed ? `Click to expand ${notificationTypeLabel(typeCode)}` : `Click to collapse ${notificationTypeLabel(typeCode)}`}
+                    >
+                      <span className="flex items-center" style={{ gap: 10 }}>
+                        <span className="ntf-chevron-bubble">
+                          <i className={`lni lni-chevron-down${isCollapsed ? ' is-collapsed' : ''}`} />
+                        </span>
+                        <span className="ntf-group-title">{notificationTypeLabel(typeCode)}</span>
+                        {unreadInGroup > 0 && (
+                          <span
+                            className="badge badge-blue"
+                            style={{ fontSize: 10, padding: '1px 7px', fontWeight: 600 }}
+                            title={`${unreadInGroup} unread in this category`}
+                          >
+                            {unreadInGroup} new
+                          </span>
+                        )}
+                      </span>
+                      <span className="flex items-center" style={{ gap: 10 }}>
+                        <span className="badge badge-grey">{group.length}</span>
+                        <span className="ntf-toggle-btn">
+                          <i className={`lni ${isCollapsed ? 'lni-chevron-down' : 'lni-chevron-up'}`} style={{ fontSize: 10 }} />
+                          <span>{isCollapsed ? 'Expand' : 'Collapse'}</span>
+                        </span>
+                      </span>
+                    </button>
+                    {!isCollapsed && (
+                      <div className="ntf-list">
+                        {group.map((n, i) => {
+                          const visual = notificationVisual(n.typeCode)
+                          return (
+                            <button
+                              key={n.notificationGuid}
+                              className={`ntf-item${n.isRead ? '' : ' unread'}`}
+                              style={{ animationDelay: `${Math.min(i, 8) * 30}ms` }}
+                              onClick={() => openNotification(n)}
+                            >
+                              <span className={`ntf-dot ${visual.tone}`}><i className={`lni ${visual.icon}`}></i></span>
+                              <span className="ntf-content">
+                                <span className="ntf-top-row">
+                                  <span className="ntf-title">{n.title}</span>
+                                  {!n.isRead && <span className="ntf-unread-mark"></span>}
+                                  <span className="ntf-time">{timeAgo(n.createdDate)}</span>
+                                </span>
+                                <span className="ntf-body">{n.body}</span>
+                              </span>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
               <div className="flex items-center justify-between mt-3" style={{ fontSize: 12.5, color: 'var(--g500)' }}>
                 <span>Showing {items.length} of {totalCount.toLocaleString()}</span>
                 {hasMore && (

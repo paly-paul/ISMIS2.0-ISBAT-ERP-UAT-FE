@@ -168,7 +168,7 @@ const mockDetails: Record<string, RegistrationDetail> = Object.fromEntries(
 export function getRegistrarDeskApplications(page = 1, pageSize = 10, filters?: RegistrarDeskQueueFilters): Promise<RegistrarDeskQueueResult> {
   if (MOCK_AUTH) {
     let items = mockQueue
-    if (filters?.appRefNo) items = items.filter(i => i.appRefNo === filters.appRefNo)
+    if (filters?.appRefNo) items = items.filter(i => i.appRefNo.toLowerCase().includes(filters.appRefNo!.toLowerCase()))
     if (filters?.studentName) items = items.filter(i => i.studentName.toLowerCase().includes(filters.studentName!.toLowerCase()))
     return Promise.resolve({ items, totalCount: items.length, pageNumber: page, pageSize })
   }

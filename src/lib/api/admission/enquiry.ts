@@ -174,11 +174,19 @@ export function createEnquiry(input: EnquiryInput): Promise<unknown> {
 
 // List query for the enquiry-list page. Real: paginated, page/pageSize
 // passed straight through (confirmed via List.bru + a real sample response).
-export function getEnquiries(page = 1, pageSize = 10): Promise<EnquiryListResult> {
+// `search` is NOT confirmed against a real backend sample the way page/
+// pageSize are — appended as `&search=` to match the convention already used
+// by other real master lists in this app (see getExamRules) on the
+// assumption an unrecognized param is just ignored server-side rather than
+// erroring, so this degrades to today's unfiltered-page behavior if the
+// backend doesn't actually support it.
+export function getEnquiries(page = 1, pageSize = 10, search = ''): Promise<EnquiryListResult> {
   if (MOCK_AUTH) {
     return Promise.resolve({ items: mockEnquiries, totalCount: mockEnquiries.length, pageNumber: page, pageSize })
   }
-  return apiGet<EnquiryListResult | null>(`/api/v1/admissions/enquiries?page=${page}&pageSize=${pageSize}`)
+  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) })
+  if (search.trim()) params.set('search', search.trim())
+  return apiGet<EnquiryListResult | null>(`/api/v1/admissions/enquiries?${params.toString()}`)
     .then(data => data ?? { items: [], totalCount: 0, pageNumber: page, pageSize })
 }
 

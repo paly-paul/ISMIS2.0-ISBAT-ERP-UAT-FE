@@ -57,7 +57,13 @@ export default function EnquiryListPage() {
   const [intakeGuid, setIntakeGuid] = useState('')
   const [page, setPage] = useState(1)
 
-  const { data, isLoading: loading } = useEnquiries(page, DISPLAY_PAGE_SIZE)
+  const searchTrimmed = search.trim()
+  // Server-side search (see getEnquiries) — only actually queried once the
+  // term clears MIN_SEARCH_CHARS, same gate TableSearch's own dropdown uses,
+  // so a 1-character keystroke doesn't fire a request against the full ~11k
+  // row table.
+  const activeSearch = searchTrimmed.length >= MIN_SEARCH_CHARS ? searchTrimmed : ''
+  const { data, isLoading: loading } = useEnquiries(page, DISPLAY_PAGE_SIZE, activeSearch)
   const updateEnquiry = useUpdateEnquiry()
   const rows = data?.items ?? []
   const totalCount = data?.totalCount ?? 0
@@ -99,13 +105,6 @@ export default function EnquiryListPage() {
     return enquiryStatuses.find(s => s.enquiryStatusGuid === enquiryStatusGuid)?.enquiryStatusName
   }
 
-  // Only narrows whatever DISPLAY_PAGE_SIZE rows are already loaded for the
-  // current page — see the module-level comment on server-side pagination.
-  function matchesSearch(r: typeof rows[number], term: string) {
-    return `${r.enquiryCode} ${r.studentName} ${r.mobile} ${r.email} ${resolveProgramName(r)} ${r.sourceName ?? ''} ${resolveStatusName(r.enquiryStatusGuid) ?? ''}`
-      .toLowerCase()
-      .includes(term)
-  }
   // `channel` stores the real enquirySourceGuid (not sourceName) so it can
   // double as the counts endpoint's `sourceGuid` filter above. Sourced from
   // the actual Enquiry Source master rather than derived from the
@@ -117,9 +116,11 @@ export default function EnquiryListPage() {
     { value: '', label: 'All Channels' },
     ...enquirySources.map(s => ({ value: s.enquirySourceGuid, label: s.enquirySourceName })),
   ]
-  const searchTrimmed = search.trim()
+  // Search itself now happens server-side (see useEnquiries above) — rows
+  // already only contain matches for activeSearch. Channel/Intake stay
+  // client-side, narrowing only the current page's own rows (same
+  // pre-existing limitation as before this change, unrelated to search).
   const filteredRows = rows.filter(r =>
-    (searchTrimmed.length < MIN_SEARCH_CHARS || matchesSearch(r, searchTrimmed.toLowerCase())) &&
     (!channel || r.enquirySourceGuid === channel) &&
     (!intakeGuid || r.intakeGuid === intakeGuid)
   )
@@ -150,8 +151,8 @@ export default function EnquiryListPage() {
           <p className="text-sm text-g500 mt-0.5">All enquiries across channels — walk-in, phone, online &amp; kiosk</p>
         </div>
         <div className="flex gap-2">
-          <button className="btn btn-ghost" onClick={() => router.push('/admission/dashboard')}><i className="lni lni-arrow-left" /> Back</button>
-          {permissions.add && <button className="btn btn-primary" onClick={() => openModal('enquiry-form-modal')}><i className="lni lni-plus" /> New Enquiry</button>}
+          {/* <button className="btn btn-ghost" onClick={() => router.push('/admission/dashboard')}><i className="lni lni-arrow-left" /> Back</button> */}
+          {/* {permissions.add && <button className="btn btn-primary" onClick={() => openModal('enquiry-form-modal')}><i className="lni lni-plus" /> New Enquiry</button>} */}
         </div>
       </div>
 
