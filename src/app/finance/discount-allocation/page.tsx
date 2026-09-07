@@ -536,11 +536,11 @@ export default function DiscountAllocationPage() {
                     </div>
 
                     <div className="flex gap-[10px] justify-end">
-                      {permissions.add && (
+                      {/* permissions.add && ( */}
                         <button className="btn btn-primary btn-lg" disabled={assignDiscount.isPending} onClick={handleAssign}>
                           <i className="lni lni-checkmark"></i> {assignDiscount.isPending ? 'Assigning…' : 'Assign Discount'}
                         </button>
-                      )}
+                      {/* )} */}
                     </div>
                   </>
                 ) : !editing ? (
@@ -613,11 +613,11 @@ export default function DiscountAllocationPage() {
                     </div>
                     <div className="flex gap-[10px] justify-end">
                       <button className="btn btn-neu" disabled={updateDiscount.isPending} onClick={() => setEditing(false)}>Discard</button>
-                      {permissions.edit && (
+                      {/* permissions.edit && ( */}
                         <button className="btn btn-primary" disabled={updateDiscount.isPending} onClick={handleSaveEdit}>
                           <i className="lni lni-checkmark"></i> {updateDiscount.isPending ? 'Saving…' : 'Save Changes'}
                         </button>
-                      )}
+                      {/* )} */}
                     </div>
                   </>
                 )}

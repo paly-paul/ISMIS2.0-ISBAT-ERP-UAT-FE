@@ -552,11 +552,11 @@ export default function NcheGuildPaymentPage() {
                                 <button className="btn btn-neu btn-sm" onClick={() => setViewEntry(h)}>
                                   <i className="lni lni-eye"></i> View
                                 </button>
-                                {permissions.edit && (
+                                {/* permissions.edit && ( */}
                                   <button className="btn btn-neu btn-sm" onClick={() => setEditTarget(h)}>
                                     <i className="lni lni-pencil-alt"></i> Edit
                                   </button>
-                                )}
+                                {/* )} */}
                                 {permissions.delete && (
                                   <button className="btn btn-neu btn-sm" onClick={() => handleDelete(h)}>
                                     <i className="lni lni-trash-can"></i> Delete
@@ -634,11 +634,7 @@ export default function NcheGuildPaymentPage() {
                   </div>
                 )}
                 <div className="flex gap-[10px] justify-end items-center">
-                  {/* permissions.add && ( */}
-                    <button className="btn btn-primary btn-lg" disabled={isSaving} onClick={handleSave}>
-                      <i className="lni lni-save"></i> {isSaving ? 'Saving…' : `Save ${CATEGORY_LABEL[category]} Payment`}
-                    </button>
-                  {/* )} */}
+u
                 </div>
               </div>
             </div>

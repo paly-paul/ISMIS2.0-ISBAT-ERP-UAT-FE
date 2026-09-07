@@ -219,7 +219,7 @@ export default function Page() {
                         <button className="btn btn-neu btn-sm" onClick={() => openReceipt(r, false)}>
                           <i className="lni lni-eye"></i> View
                         </button>
-                        {r.category === 1 && permissions.edit && (
+                        {r.category === 1 && /* permissions.edit && */ (
                           <button
                             className="btn btn-neu btn-sm"
                             onClick={() => setEditEntry({ paymentGuid: r.paymentGuid, amount: r.amount, payDate: r.payDate, payType: r.payType, label: r.receiptNo })}
