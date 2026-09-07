@@ -634,11 +634,11 @@ export default function NcheGuildPaymentPage() {
                   </div>
                 )}
                 <div className="flex gap-[10px] justify-end items-center">
-                  {permissions.add && (
+                  {/* permissions.add && ( */}
                     <button className="btn btn-primary btn-lg" disabled={isSaving} onClick={handleSave}>
                       <i className="lni lni-save"></i> {isSaving ? 'Saving…' : `Save ${CATEGORY_LABEL[category]} Payment`}
                     </button>
-                  )}
+                  {/* )} */}
                 </div>
               </div>
             </div>
