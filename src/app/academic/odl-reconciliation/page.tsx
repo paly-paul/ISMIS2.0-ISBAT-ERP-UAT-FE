@@ -2,8 +2,10 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Toast } from '@/components/Toast'
+import { usePagePermissions } from '@/hooks/users/usePagePermissions'
 
 export default function Page() {
+  const permissions = usePagePermissions()
   const router = useRouter()
   const [openModals, setOpenModals] = useState<Set<string>>(new Set())
   const [toast, setToast] = useState<{ msg: string; type: string } | null>(null)
@@ -49,8 +51,8 @@ export default function Page() {
                 </div>
                 <div className="flex gap-2">
                   <button className="btn btn-neu btn-sm" onClick={() => showToast('Viewing DPO transaction TKN-4829...', 'success')}><i className="lni lni-search-alt"></i> Verify Token</button>
-                  <button className="btn btn-danger btn-sm" onClick={() => showToast('Reconciliation rejected. Applicant notified.', 'warn')}><i className="lni lni-close"></i> Reject</button>
-                  <button className="btn btn-success btn-sm" onClick={() => showToast('ODL-2026-001 reconciled. Ssebulime Patrick moved to regular application.', 'success')}><i className="lni lni-checkmark"></i> Confirm Reconciled</button>
+                  {permissions.delete && <button className="btn btn-danger btn-sm" onClick={() => showToast('Reconciliation rejected. Applicant notified.', 'warn')}><i className="lni lni-close"></i> Reject</button>}
+                  {permissions.edit && <button className="btn btn-success btn-sm" onClick={() => showToast('ODL-2026-001 reconciled. Ssebulime Patrick moved to regular application.', 'success')}><i className="lni lni-checkmark"></i> Confirm Reconciled</button>}
                 </div>
               </div>
             </div>
@@ -73,8 +75,8 @@ export default function Page() {
                 </div>
                 <div className="flex gap-2">
                   <button className="btn btn-neu btn-sm" onClick={() => showToast('Viewing DPO transaction TKN-4831...', 'success')}><i className="lni lni-search-alt"></i> Verify Token</button>
-                  <button className="btn btn-danger btn-sm" onClick={() => showToast('Reconciliation rejected.', 'warn')}><i className="lni lni-close"></i> Reject</button>
-                  <button className="btn btn-success btn-sm" onClick={() => showToast('ODL-2026-002 reconciled. Nakiyaga Flavia moved to regular application.', 'success')}><i className="lni lni-checkmark"></i> Confirm Reconciled</button>
+                  {permissions.delete && <button className="btn btn-danger btn-sm" onClick={() => showToast('Reconciliation rejected.', 'warn')}><i className="lni lni-close"></i> Reject</button>}
+                  {permissions.edit && <button className="btn btn-success btn-sm" onClick={() => showToast('ODL-2026-002 reconciled. Nakiyaga Flavia moved to regular application.', 'success')}><i className="lni lni-checkmark"></i> Confirm Reconciled</button>}
                 </div>
               </div>
             </div>

@@ -11,11 +11,13 @@ import { usePagination } from '@/hooks/usePagination'
 import { AssessmentTypeFormModal } from './_components/AssessmentTypeFormModal'
 import { AssessmentTypeViewModal } from './_components/AssessmentTypeViewModal'
 import { useAssessmentTypes, useDeleteAssessmentType } from '@/hooks/assessment/useAssessmentTypes'
+import { usePagePermissions } from '@/hooks/users/usePagePermissions'
 
 const FETCH_SIZE = 12000
 const DISPLAY_PAGE_SIZE = 10
 
 export default function AssessmentTypesPage() {
+  const permissions = usePagePermissions()
   const router = useRouter()
   const [toast, setToast] = useState<{ msg: string; type: string } | null>(null)
   const [isModalOpen, setIsModalOpen] = useState(false)
@@ -86,9 +88,11 @@ export default function AssessmentTypesPage() {
           <button className="btn btn-neu btn-sm flex items-center gap-1.5" onClick={() => router.back()}>
             <i className="lni lni-arrow-left font-bold" /> Back
           </button>
-          <button className="btn btn-primary btn-sm flex items-center gap-1.5" onClick={handleAddNew}>
-            <i className="lni lni-plus font-bold" /> Add Fee Clearance
-          </button>
+          {permissions.add && (
+            <button className="btn btn-primary btn-sm flex items-center gap-1.5" onClick={handleAddNew}>
+              <i className="lni lni-plus font-bold" /> Add Fee Clearance
+            </button>
+          )}
         </div>
       </div>
 
@@ -131,12 +135,16 @@ export default function AssessmentTypesPage() {
                       <button className="btn btn-neu btn-sm" onClick={() => handleView(r.assessmentTypeGuid)}>
                         <i className="lni lni-eye" /> View
                       </button>
-                      <button className="btn btn-neu btn-sm" onClick={() => handleEdit(r.assessmentTypeGuid)}>
-                        <i className="lni lni-pencil" /> Edit Fee
-                      </button>
-                      <button className="btn btn-neu btn-sm text-clr-red" onClick={() => setDeleteTarget({ guid: r.assessmentTypeGuid, name: r.assessmentName || '' })}>
-                        <i className="lni lni-trash-can" /> Delete
-                      </button>
+                      {permissions.edit && (
+                        <button className="btn btn-neu btn-sm" onClick={() => handleEdit(r.assessmentTypeGuid)}>
+                          <i className="lni lni-pencil" /> Edit Fee
+                        </button>
+                      )}
+                      {permissions.delete && (
+                        <button className="btn btn-neu btn-sm text-clr-red" onClick={() => setDeleteTarget({ guid: r.assessmentTypeGuid, name: r.assessmentName || '' })}>
+                          <i className="lni lni-trash-can" /> Delete
+                        </button>
+                      )}
                     </ActionMenu>
                   </td>
                   <td className="font-mono text-sm">{r.assessmentCode}</td>

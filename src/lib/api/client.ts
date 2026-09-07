@@ -60,16 +60,11 @@ function redirectToLogin(triggeredBy: string, cause: unknown) {
   // and this context would otherwise be lost, making a "why did I get logged
   // out on this page" report impossible to root-cause after the fact.
   if (typeof window !== 'undefined') {
-    // Skip the /login portal-selection page — send the user straight back to
-    // the portal they were on (student vs. staff/faculty) so a silent
-    // refresh failure lands them on the same sign-in form as an explicit
-    // sign-out, not a page asking them to pick a portal again.
-    const target = window.location.pathname.startsWith('/student') ? '/login/student' : '/login/staff'
     console.warn(
-      `[auth] Redirecting to ${target} — refresh failed after a 401 from "${triggeredBy}".`,
+      `[auth] Redirecting to /login — refresh failed after a 401 from "${triggeredBy}".`,
       cause,
     )
-    window.location.href = target
+    window.location.href = '/login'
   }
 }
 

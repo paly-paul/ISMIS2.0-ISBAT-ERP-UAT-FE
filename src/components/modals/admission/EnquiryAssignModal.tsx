@@ -57,21 +57,7 @@ export function EnquiryAssignModal({ isOpen, onClose, showToast, enquiryGuid, up
   const [errors, setErrors]   = useState<Record<string, string>>({})
 
   const advisorOptions = employees.map(e => ({ value: e.employeeGuid, label: e.empName }))
-  // The enquiry's already-assigned programme can be missing from
-  // useProgramMasters()'s own list (seen live — a real enquiry whose
-  // programGuid/programName/programCode all come back populated, but that
-  // guid isn't in the master list SearchSelect matches against, so it silently
-  // fell back to the "— select —" placeholder even though programGuid state
-  // was set correctly). Falls back to a synthetic option built from the
-  // enquiry's own programName/programCode in that case — same "resolve from
-  // what the record itself carries" fallback enquiry-list's own
-  // resolveProgramName already relies on.
-  const programOptions = [
-    ...programs.map(p => ({ value: p.programGuid, label: `${p.programName} (${p.programCode})` })),
-    ...(enquiry?.programGuid && !programs.some(p => p.programGuid === enquiry.programGuid)
-      ? [{ value: enquiry.programGuid, label: enquiry.programCode ? `${enquiry.programName} (${enquiry.programCode})` : (enquiry.programName ?? 'Unknown Programme') }]
-      : []),
-  ]
+  const programOptions = programs.map(p => ({ value: p.programGuid, label: `${p.programName} (${p.programCode})` }))
   const campusOptions  = campuses.map(c => ({ value: c.campusGuid, label: c.campusName }))
 
   // Prefill once the enquiry loads. Re-runs whenever a different guid is

@@ -11,6 +11,7 @@ import { BaselinePanel } from '@/components/student/BaselinePanel'
 import { StudentDto } from '@/lib/api/student/student'
 import { useDropoutStudents, useRejoinCandidate, useRejoinBatches, useRejoinStudent } from '@/hooks/student/useDropoutRejoin'
 import { useBatchTimes } from '@/hooks/config/useBatchTimes'
+import { usePagePermissions } from '@/hooks/users/usePagePermissions'
 
 // Ported from isbat_student_module.html's Intake Transfer page. Only the
 // "Dropout Rejoin" reason has a real backend contract — students/dropout-
@@ -74,6 +75,7 @@ export default function Page() {
 // Dropout Rejoin — real flow against students/dropout-rejoin/*.md.
 // ---------------------------------------------------------------------------
 function DropoutRejoinPanel({ showToast }: { showToast: (msg: string, type?: string) => void }) {
+  const permissions = usePagePermissions()
   const router = useRouter()
   const searchParams = useSearchParams()
   // Student Profile's action menu links here as
@@ -273,7 +275,7 @@ function DropoutRejoinPanel({ showToast }: { showToast: (msg: string, type?: str
               <div className="fg"><label className="lbl">Remarks</label><textarea className="ctrl" rows={3} placeholder="Optional notes (not sent to the server — the endpoint takes no remarks field)." value={remarks} onChange={e => setRemarks(e.target.value)} /></div>
               <div className="flex gap-2" style={{ justifyContent: 'flex-end' }}>
                 <button className="btn btn-neu" onClick={handleClear}>Cancel</button>
-                <button className="btn btn-primary" disabled={!canExecute} onClick={() => setConfirmOpen(true)}><i className="lni lni-checkmark"></i> Rejoin Student</button>
+                {permissions.edit && <button className="btn btn-primary" disabled={!canExecute} onClick={() => setConfirmOpen(true)}><i className="lni lni-checkmark"></i> Rejoin Student</button>}
               </div>
             </div>
             <div className="card">
@@ -318,6 +320,7 @@ function DropoutRejoinPanel({ showToast }: { showToast: (msg: string, type?: str
 // page-local mock data, same as before this page grew a Dropout Rejoin mode.
 // ---------------------------------------------------------------------------
 function DefermentPanel({ showToast }: { showToast: (msg: string, type?: string) => void }) {
+  const permissions = usePagePermissions()
   const [student, setStudent] = useState<StudentDto | null>(null)
   const [targetIntake, setTargetIntake] = useState(TARGET_INTAKES[0].value)
   const [targetBatch, setTargetBatch] = useState('BSc.IT-2025A · Day')
@@ -393,7 +396,7 @@ function DefermentPanel({ showToast }: { showToast: (msg: string, type?: string)
               <div className="fg"><label className="lbl">Mandatory Remarks <span className="req">*</span></label><textarea className="ctrl" rows={3} placeholder="Detail the circumstances leading to this intake shift…" value={remarks} onChange={e => setRemarks(e.target.value)} /></div>
               <div className="flex gap-2" style={{ justifyContent: 'flex-end' }}>
                 <button className="btn btn-neu" onClick={handleClear}>Cancel</button>
-                <button className="btn btn-primary" onClick={() => setConfirmOpen(true)}><i className="lni lni-checkmark"></i> Execute Intake Transfer</button>
+                {permissions.edit && <button className="btn btn-primary" onClick={() => setConfirmOpen(true)}><i className="lni lni-checkmark"></i> Execute Intake Transfer</button>}
               </div>
             </div>
             <div>

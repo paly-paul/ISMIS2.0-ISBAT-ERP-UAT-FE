@@ -65,7 +65,7 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
         profileOpen={profileOpen}
         setProfileOpen={setProfileOpen}
         profileRef={profileRef}
-        onSignOut={() => router.push('/login/student')}
+        onSignOut={() => router.push('/')}
         displayName={displayName ?? undefined}
       />
       <div className="layout">

@@ -65,7 +65,7 @@ export default function ConfigLayout({ children }: { children: React.ReactNode }
         profileOpen={profileOpen}
         setProfileOpen={setProfileOpen}
         profileRef={profileRef}
-        onSignOut={() => router.push('/login/staff')}
+        onSignOut={() => router.push('/')}
         displayName={displayName ?? undefined}
       />
       <div className="layout">

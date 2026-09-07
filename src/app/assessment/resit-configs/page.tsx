@@ -12,11 +12,13 @@ import { ResitConfigFormModal } from './_components/ResitConfigFormModal'
 import { ResitConfigViewModal } from './_components/ResitConfigViewModal'
 import { useResitConfigs, useDeleteResitConfig } from '@/hooks/assessment/useResitConfigs'
 import { useIntakes } from '@/hooks/academic/useIntakes'
+import { usePagePermissions } from '@/hooks/users/usePagePermissions'
 
 const FETCH_SIZE = 12000
 const DISPLAY_PAGE_SIZE = 10
 
 export default function ResitConfigsPage() {
+  const permissions = usePagePermissions()
   const router = useRouter()
   const [toast, setToast] = useState<{ msg: string; type: string } | null>(null)
   
@@ -85,9 +87,11 @@ export default function ResitConfigsPage() {
           <button className="btn btn-ghost flex-1 sm:flex-none justify-center" onClick={() => router.push('/assessment/dashboard')}>
             <i className="lni lni-arrow-left" /> Back
           </button>
-          <button className="btn btn-primary flex-1 sm:flex-none justify-center whitespace-nowrap" onClick={handleAddNew}>
-            <i className="lni lni-plus" /> Create Resit Window
-          </button>
+          {permissions.add && (
+            <button className="btn btn-primary flex-1 sm:flex-none justify-center whitespace-nowrap" onClick={handleAddNew}>
+              <i className="lni lni-plus" /> Create Resit Window
+            </button>
+          )}
         </div>
       </div>
 
@@ -136,12 +140,16 @@ export default function ResitConfigsPage() {
                         <button className="btn btn-neu btn-sm" onClick={() => handleView(r.resitConfigGuid)}>
                           <i className="lni lni-eye" /> View
                         </button>
-                        <button className="btn btn-neu btn-sm" onClick={() => handleEdit(r.resitConfigGuid)}>
-                          <i className="lni lni-pencil" /> Edit
-                        </button>
-                        <button className="btn btn-neu btn-sm text-clr-red" onClick={() => setDeleteTarget(r.resitConfigGuid)}>
-                          <i className="lni lni-trash-can" /> Delete
-                        </button>
+                        {permissions.edit && (
+                          <button className="btn btn-neu btn-sm" onClick={() => handleEdit(r.resitConfigGuid)}>
+                            <i className="lni lni-pencil" /> Edit
+                          </button>
+                        )}
+                        {permissions.delete && (
+                          <button className="btn btn-neu btn-sm text-clr-red" onClick={() => setDeleteTarget(r.resitConfigGuid)}>
+                            <i className="lni lni-trash-can" /> Delete
+                          </button>
+                        )}
                       </ActionMenu>
                     </td>
                     <td className="font-medium text-g800">{r.refCode}</td>

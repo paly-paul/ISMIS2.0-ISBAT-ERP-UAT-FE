@@ -5,6 +5,7 @@ import { ActionMenu } from '@/components/ActionMenu'
 import { Toast } from '@/components/Toast'
 import { useServiceCategories, useCreateServiceCategory, useUpdateServiceCategory, useDeleteServiceCategory } from '@/hooks/student/useServiceCategories'
 import { ServiceCategoryDto } from '@/lib/api/student/serviceCategories'
+import { usePagePermissions } from '@/hooks/users/usePagePermissions'
 
 // Split out of the old combined "Category Masters" page (student/masters/)
 // per request — this half owns Service Category Master only (the ticketing
@@ -14,6 +15,7 @@ import { ServiceCategoryDto } from '@/lib/api/student/serviceCategories'
 // note field on the backend, so that mock-only column/input was dropped
 // rather than faked.
 export default function Page() {
+  const permissions = usePagePermissions()
   const [toast, setToast] = useState<{ msg: string; type: string } | null>(null)
 
   const { data: serviceCatsPage, isLoading: serviceCatsLoading } = useServiceCategories()
@@ -54,7 +56,7 @@ export default function Page() {
       <div className="page active">
         <div className="pg-hdr"><div><div className="pg-title">Service Category Master</div><div className="pg-sub">Student Services ticketing category configuration</div></div></div>
         <div className="card">
-          <div className="card-hdr"><div className="card-title"><i className="lni lni-ticket"></i> Service Category Master</div><button className="btn btn-primary btn-sm" onClick={openAddService}><i className="lni lni-plus"></i> Add</button></div>
+          <div className="card-hdr"><div className="card-title"><i className="lni lni-ticket"></i> Service Category Master</div>{permissions.add && <button className="btn btn-primary btn-sm" onClick={openAddService}><i className="lni lni-plus"></i> Add</button>}</div>
           <ScrollTable>
             <table>
               <thead><tr><th>Category</th><th style={{ width: 90 }}></th></tr></thead>
@@ -68,8 +70,8 @@ export default function Page() {
                     <td><strong>{c.categoryName}</strong></td>
                     <td>
                       <ActionMenu>
-                        <button className="btn btn-neu btn-sm" onClick={() => openEditService(c)}><i className="lni lni-pencil-alt"></i> Edit</button>
-                        <button className="btn btn-neu btn-sm" style={{ color: 'var(--red)' }} onClick={() => removeServiceCategory(c.serviceCategoryGuid)}><i className="lni lni-trash-can"></i> Delete</button>
+                        {permissions.edit && <button className="btn btn-neu btn-sm" onClick={() => openEditService(c)}><i className="lni lni-pencil-alt"></i> Edit</button>}
+                        {permissions.delete && <button className="btn btn-neu btn-sm" style={{ color: 'var(--red)' }} onClick={() => removeServiceCategory(c.serviceCategoryGuid)}><i className="lni lni-trash-can"></i> Delete</button>}
                       </ActionMenu>
                     </td>
                   </tr>

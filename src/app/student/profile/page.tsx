@@ -15,6 +15,7 @@ import { useStudentDiscount, useAssignStudentDiscount, useUpdateStudentDiscount,
 import { useDiscounts } from '@/hooks/finance/useDiscounts'
 import { CALC_TYPE_VALUES } from '@/lib/api/finance/discount'
 import { formatDate } from '@/lib/date'
+import { usePagePermissions } from '@/hooks/users/usePagePermissions'
 
 const MOCK_AUTH = process.env.NEXT_PUBLIC_AUTH_MOCK === 'true'
 
@@ -84,6 +85,7 @@ function formatDiscountDetail(detail: StudentDiscountDto) {
 }
 
 function StudentProfileContent() {
+  const permissions = usePagePermissions()
   const router = useRouter()
   const searchParams = useSearchParams()
   // Student Master's "View" row action links here as
@@ -475,15 +477,17 @@ function StudentProfileContent() {
                       preloads this same student instead of requiring a second
                       StudentLookup search — same deep-link convention Student
                       Master's own "View" action uses to reach this page. */}
-                  <ActionMenu tooltip="Student Actions">
-                    {/* lni-transfer isn't a real LineIcons 4.0 class (silently renders
-                        nothing) — lni-shuffle is what the sidebar leaf uses for this
-                        same page, see menu.ts. */}
-                    <button className="btn btn-neu btn-sm" onClick={() => router.push('/student/batch-transfer?studentGuid=' + student.studentGuid)}><i className="lni lni-shuffle"></i> Batch Transfer</button>
-                    <button className="btn btn-neu btn-sm" onClick={() => router.push('/student/prog-transfer?studentGuid=' + student.studentGuid)}><i className="lni lni-graduation"></i> Prog. Transfer</button>
-                    <button className="btn btn-neu btn-sm" onClick={() => router.push('/student/learning-mode?studentGuid=' + student.studentGuid)}><i className="lni lni-display"></i> Learning Mode</button>
-                    <button className="btn btn-neu btn-sm" onClick={() => router.push('/student/intake-transfer?studentGuid=' + student.studentGuid)}><i className="lni lni-calendar"></i> Dropout Rejoin</button>
-                  </ActionMenu>
+                  {permissions.edit && (
+                    <ActionMenu tooltip="Student Actions">
+                      {/* lni-transfer isn't a real LineIcons 4.0 class (silently renders
+                          nothing) — lni-shuffle is what the sidebar leaf uses for this
+                          same page, see menu.ts. */}
+                      <button className="btn btn-neu btn-sm" onClick={() => router.push('/student/batch-transfer?studentGuid=' + student.studentGuid)}><i className="lni lni-shuffle"></i> Batch Transfer</button>
+                      <button className="btn btn-neu btn-sm" onClick={() => router.push('/student/prog-transfer?studentGuid=' + student.studentGuid)}><i className="lni lni-graduation"></i> Prog. Transfer</button>
+                      <button className="btn btn-neu btn-sm" onClick={() => router.push('/student/learning-mode?studentGuid=' + student.studentGuid)}><i className="lni lni-display"></i> Learning Mode</button>
+                      <button className="btn btn-neu btn-sm" onClick={() => router.push('/student/intake-transfer?studentGuid=' + student.studentGuid)}><i className="lni lni-calendar"></i> Dropout Rejoin</button>
+                    </ActionMenu>
+                  )}
                 </div>
                 <div className="pc-hero-facts">
                   <div className="pc-hero-fact"><span className="pc-hero-fact-lbl">Status</span><span className="pc-hero-fact-val">{detail?.studActive === 1 ? '✓ Active' : detail ? '⚠ Inactive' : '…'}</span></div>
@@ -596,7 +600,7 @@ function StudentProfileContent() {
                 </div>
                 <div className="flex gap-2" style={{ justifyContent: 'flex-end', marginBottom: 20 }}>
                   <button className="btn btn-neu">Discard</button>
-                  <button className="btn btn-primary" onClick={() => showToast('Profile saved', 'ok')}><i className="lni lni-save"></i> Save Profile</button>
+                  {permissions.edit && <button className="btn btn-primary" onClick={() => showToast('Profile saved', 'ok')}><i className="lni lni-save"></i> Save Profile</button>}
                 </div>
               </div>
             )}
@@ -635,10 +639,10 @@ function StudentProfileContent() {
                       {currentCard ? (
                         <>
                           <button className="btn btn-neu btn-sm" onClick={handleRenewCard} disabled={issueOrRenewIdCard.isPending}><i className="lni lni-reload"></i> Renew</button>
-                          <button className="btn btn-primary btn-sm" onClick={handleSaveCard} disabled={updateIdCardDates.isPending}><i className="lni lni-save"></i> Save Dates</button>
+                          {permissions.edit && <button className="btn btn-primary btn-sm" onClick={handleSaveCard} disabled={updateIdCardDates.isPending}><i className="lni lni-save"></i> Save Dates</button>}
                         </>
                       ) : (
-                        <button className="btn btn-primary btn-sm" onClick={handleSaveCard} disabled={issueOrRenewIdCard.isPending}><i className="lni lni-save"></i> Issue Card</button>
+                        permissions.edit && <button className="btn btn-primary btn-sm" onClick={handleSaveCard} disabled={issueOrRenewIdCard.isPending}><i className="lni lni-save"></i> Issue Card</button>
                       )}
                     </div>
                   </div>
@@ -810,7 +814,7 @@ function StudentProfileContent() {
             </div>
             <div className="modal-footer">
               <button className="btn btn-neu" onClick={() => setRefugeeModalOpen(false)} disabled={assignRefugeeStatus.isPending}>Cancel</button>
-              <button className="btn btn-primary" onClick={handleAssignRefugee} disabled={assignRefugeeStatus.isPending}><i className="lni lni-checkmark"></i> {assignRefugeeStatus.isPending ? 'Saving…' : 'Grant Status'}</button>
+              {permissions.edit && <button className="btn btn-primary" onClick={handleAssignRefugee} disabled={assignRefugeeStatus.isPending}><i className="lni lni-checkmark"></i> {assignRefugeeStatus.isPending ? 'Saving…' : 'Grant Status'}</button>}
             </div>
           </div>
         </div>
@@ -855,14 +859,16 @@ function StudentProfileContent() {
               {hasActiveDiscount && (
                 <div className="flex gap-2">
                   <button className="btn btn-neu btn-sm" onClick={() => handleCancelDiscount(false)} disabled={cancelStudentDiscount.isPending}>Cancel (from next semester)</button>
-                  <button className="btn btn-danger btn-sm" onClick={() => handleCancelDiscount(true)} disabled={cancelStudentDiscount.isPending}>Cancel Immediately</button>
+                  {permissions.delete && <button className="btn btn-danger btn-sm" onClick={() => handleCancelDiscount(true)} disabled={cancelStudentDiscount.isPending}>Cancel Immediately</button>}
                 </div>
               )}
               <div className="flex gap-2">
                 <button className="btn btn-neu" onClick={() => setDiscountModalOpen(false)}>Close</button>
-                <button className="btn btn-primary" onClick={handleSaveDiscount} disabled={assignStudentDiscount.isPending || updateStudentDiscount.isPending}>
-                  <i className="lni lni-checkmark"></i> {assignStudentDiscount.isPending || updateStudentDiscount.isPending ? 'Saving…' : hasActiveDiscount ? 'Update Terms' : 'Assign Discount'}
-                </button>
+                {permissions.edit && (
+                  <button className="btn btn-primary" onClick={handleSaveDiscount} disabled={assignStudentDiscount.isPending || updateStudentDiscount.isPending}>
+                    <i className="lni lni-checkmark"></i> {assignStudentDiscount.isPending || updateStudentDiscount.isPending ? 'Saving…' : hasActiveDiscount ? 'Update Terms' : 'Assign Discount'}
+                  </button>
+                )}
               </div>
             </div>
           </div>

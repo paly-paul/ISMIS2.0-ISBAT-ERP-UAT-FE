@@ -19,6 +19,7 @@ import {
   DISCOUNT_STATUS_LABELS,
 } from '@/hooks/student/useStudentDiscount'
 import { CALC_TYPE_VALUES, CALC_TYPE_LABELS } from '@/lib/api/finance/discount'
+import { usePagePermissions } from '@/hooks/users/usePagePermissions'
 
 // Sketch: a Payment-Console-style split — Student Master search on the
 // left, an "Apply Discount" form on the right with Edit/Cancel Discount
@@ -83,6 +84,7 @@ function isCancelledStatus(status: number | null | undefined) {
 }
 
 export default function DiscountAllocationPage() {
+  const permissions = usePagePermissions()
   const router = useRouter()
   const [toast, setToast] = useState<{ msg: string; type: string } | null>(null)
   function showToast(msg: string, type = '') { setToast({ msg, type }); setTimeout(() => setToast(null), 3500) }
@@ -509,9 +511,11 @@ export default function DiscountAllocationPage() {
                     </div>
 
                     <div className="flex gap-[10px] justify-end">
-                      <button className="btn btn-primary btn-lg" disabled={assignDiscount.isPending} onClick={handleAssign}>
-                        <i className="lni lni-checkmark"></i> {assignDiscount.isPending ? 'Assigning…' : 'Assign Discount'}
-                      </button>
+                      {permissions.add && (
+                        <button className="btn btn-primary btn-lg" disabled={assignDiscount.isPending} onClick={handleAssign}>
+                          <i className="lni lni-checkmark"></i> {assignDiscount.isPending ? 'Assigning…' : 'Assign Discount'}
+                        </button>
+                      )}
                     </div>
                   </>
                 ) : !editing ? (
@@ -539,7 +543,7 @@ export default function DiscountAllocationPage() {
 
                     <div className="flex gap-[10px] justify-end mt-4">
                       <button className="btn btn-neu" disabled={busy} onClick={() => setShowCancelConfirm(true)}><i className="lni lni-close"></i> Cancel Discount</button>
-                      <button className="btn btn-primary" disabled={busy} onClick={startEdit}><i className="lni lni-pencil"></i> Edit Discount</button>
+                      {permissions.edit && <button className="btn btn-primary" disabled={busy} onClick={startEdit}><i className="lni lni-pencil"></i> Edit Discount</button>}
                     </div>
                   </>
                 ) : (
@@ -584,9 +588,11 @@ export default function DiscountAllocationPage() {
                     </div>
                     <div className="flex gap-[10px] justify-end">
                       <button className="btn btn-neu" disabled={updateDiscount.isPending} onClick={() => setEditing(false)}>Discard</button>
-                      <button className="btn btn-primary" disabled={updateDiscount.isPending} onClick={handleSaveEdit}>
-                        <i className="lni lni-checkmark"></i> {updateDiscount.isPending ? 'Saving…' : 'Save Changes'}
-                      </button>
+                      {permissions.edit && (
+                        <button className="btn btn-primary" disabled={updateDiscount.isPending} onClick={handleSaveEdit}>
+                          <i className="lni lni-checkmark"></i> {updateDiscount.isPending ? 'Saving…' : 'Save Changes'}
+                        </button>
+                      )}
                     </div>
                   </>
                 )}
@@ -624,7 +630,7 @@ export default function DiscountAllocationPage() {
             </div>
             <div className="modal-footer" style={{ justifyContent: 'space-between' }}>
               <button className="btn btn-neu" disabled={cancelDiscount.isPending} onClick={() => handleCancelDiscount(false)}>Cancel from Next Semester</button>
-              <button className="btn btn-danger" disabled={cancelDiscount.isPending} onClick={() => handleCancelDiscount(true)}>Cancel Immediately</button>
+              {permissions.delete && <button className="btn btn-danger" disabled={cancelDiscount.isPending} onClick={() => handleCancelDiscount(true)}>Cancel Immediately</button>}
             </div>
           </div>
         </div>

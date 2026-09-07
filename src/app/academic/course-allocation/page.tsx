@@ -13,6 +13,7 @@ import { useIntakes } from '@/hooks/academic/useIntakes'
 import { useEmployees } from '@/hooks/employee/useEmployees'
 import { useFaculties } from '@/hooks/config/useFaculties'
 import { useProgramPlannings, useCreateProgramPlanning, useDeleteProgramPlanning } from '@/hooks/academic/useProgramPlannings'
+import { usePagePermissions } from '@/hooks/users/usePagePermissions'
 import { AuthError } from '@/lib/api/client'
 
 // Confirmed via allocation/*.md — real endpoints now (was UI-only mock
@@ -30,6 +31,7 @@ const TERM_OPTIONS = [
 const PAGE_SIZE = 10
 
 export default function CourseAllocationPage() {
+  const permissions = usePagePermissions()
   const [toast, setToast] = useState<{ msg: string; type: string } | null>(null)
   function showToast(msg: string, type = '') { setToast({ msg, type }); setTimeout(() => setToast(null), 3500) }
 
@@ -247,9 +249,11 @@ export default function CourseAllocationPage() {
         </div>
         <div className="flex gap-[10px] justify-end mt-2">
           <button className="btn btn-neu" onClick={handleCancel}><i className="lni lni-close"></i> Cancel</button>
-          <button className="btn btn-primary" disabled={isAllocating} onClick={handleAllocate}>
-            <i className="lni lni-checkmark"></i> {isAllocating ? 'Allocating…' : 'Allocate'}
-          </button>
+          {permissions.add && (
+            <button className="btn btn-primary" disabled={isAllocating} onClick={handleAllocate}>
+              <i className="lni lni-checkmark"></i> {isAllocating ? 'Allocating…' : 'Allocate'}
+            </button>
+          )}
         </div>
       </div>
 
@@ -289,9 +293,11 @@ export default function CourseAllocationPage() {
                   <td className="text-g600">{r.description ? `${r.description} (${r.intakeCode})` : '—'}</td>
                   <td>{r.term != null ? <span className="badge badge-blue">Term {r.term}</span> : '—'}</td>
                   <td>
-                    <button className="btn btn-danger btn-sm" onClick={() => setDeleteTarget(r)} title="Remove allocation">
-                      <i className="lni lni-trash-can"></i>
-                    </button>
+                    {permissions.delete && (
+                      <button className="btn btn-danger btn-sm" onClick={() => setDeleteTarget(r)} title="Remove allocation">
+                        <i className="lni lni-trash-can"></i>
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
