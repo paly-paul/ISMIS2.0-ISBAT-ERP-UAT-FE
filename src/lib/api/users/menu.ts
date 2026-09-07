@@ -295,26 +295,21 @@ const mockMenu: MenuNode[] = [
   ]),
 ]
 
-// TEMPORARY: the real /me/menu response has no Employee module yet (backend
-// permission model isn't wired up for it) — Employee Master would otherwise
-// vanish from the sidebar entirely. Force it in until the backend starts
-// returning a real "Employee" node; this stops applying the moment it does,
-// since the merge is skipped once one is present.
-const HARDCODED_EMPLOYEE_MODULE: MenuNode = module_('Employee', 'briefcase', [
-  section('Employee Records', [
-    leaf('Employee Master', 'user', 'employee-master'),
-  ]),
-])
-
-const HARDCODED_ASSESSMENT_MODULE: MenuNode = module_('Assessment', 'pencil-alt', ASSESSMENT_SECTIONS)
-
-// TEMPORARY: the real /me/menu response has no Activity Log module yet —
-// force it in until the backend starts returning a real "Activity Log" node.
-const HARDCODED_ACTIVITY_LOG_MODULE: MenuNode = module_('Activity Log', 'list', [
-  section('Audit Trail', [
-    leaf('Activity Log', 'list', '/activity-log/logs'),
-  ]),
-])
+// Whole-module fallbacks (HARDCODED_EMPLOYEE_MODULE / HARDCODED_ASSESSMENT_MODULE /
+// HARDCODED_ACTIVITY_LOG_MODULE, and the "module missing → inject it anyway"
+// branches previously in mergeFinanceSections/mergeStudentSections/
+// mergeConfigSections below) were removed 2026-09-07. They were built to
+// paper over "the backend hasn't registered this module on its permission
+// model yet", but real /me/menu responses now prove the backend correctly
+// scopes whole modules per role (e.g. a response containing only "Academic"
+// for a role that genuinely has nothing else) — so a missing module means
+// "this role doesn't have it", not "not registered yet", and injecting it
+// back in with hardcoded full access was actively wrong. A module absent
+// from the real response is now just absent from the sidebar. The
+// leaf/section-level "ensure"/merge patches below are unaffected — those
+// only ever touch a module that IS present in the real response (patching in
+// one new frontend-only page/section inside an already-granted module), a
+// different and much lower-risk case that stays as-is.
 
 // TEMPORARY: unlike Employee above, the real /me/menu response DOES have a
 // Finance module (it backs the already-real Cooperates/Discounts/Ledgers/
@@ -328,7 +323,10 @@ const HARDCODED_ACTIVITY_LOG_MODULE: MenuNode = module_('Activity Log', 'list', 
 // returning that specific section for real.
 function mergeFinanceSections(menu: MenuNode[]): MenuNode[] {
   const financeIdx = menu.findIndex(n => n.name === 'Finance')
-  if (financeIdx === -1) return [...menu, module_('Finance', 'dollar', FINANCE_PAYMENT_SECTIONS)]
+  // Module genuinely absent from the real response (role has no Finance
+  // access at all) — leave it out rather than injecting a full-access
+  // module back in. See the note above mergeConfigSections for context.
+  if (financeIdx === -1) return menu
 
   let financeModule = menu[financeIdx]
 
@@ -384,14 +382,9 @@ function mergeFinanceSections(menu: MenuNode[]): MenuNode[] {
 // registers them for real.
 function mergeStudentSections(menu: MenuNode[]): MenuNode[] {
   const studentIdx = menu.findIndex(n => n.name === 'Student')
-  if (studentIdx === -1) {
-    return [...menu, module_('Student', 'user', [
-      section('Student Records', [
-        leaf('Student Statement', 'files', '/student/statement'),
-      ]),
-      ...STUDENT_OPERATIONS_SECTIONS,
-    ])]
-  }
+  // Module genuinely absent from the real response (role has no Student
+  // access at all) — leave it out. See the note above mergeConfigSections.
+  if (studentIdx === -1) return menu
 
   let studentModule = menu[studentIdx]
 
@@ -502,9 +495,12 @@ function mergeStudentSections(menu: MenuNode[]): MenuNode[] {
   return merged
 }
 
+// Module-absent fallbacks removed 2026-09-07 — see the note above
+// mergeFinanceSections/mergeStudentSections/getMenu() for why. A module
+// missing from the real response now just stays missing.
 function mergeConfigSections(menu: MenuNode[]): MenuNode[] {
   const configIdx = menu.findIndex(n => n.name === 'Config')
-  if (configIdx === -1) return [...menu, module_('Config', 'cog', CONFIG_SECTIONS)]
+  if (configIdx === -1) return menu
 
   const configModule = menu[configIdx]
   const children = [...configModule.children]
@@ -799,11 +795,12 @@ export function getMenu(): Promise<MenuResult> {
   return apiGet<MenuNode[] | null>('/api/v1/users/me/menu')
     .then(data => {
       const menu = data ?? []
-      const withEmployee = menu.some(n => n.name === 'Employee') ? menu : [...menu, HARDCODED_EMPLOYEE_MODULE]
-      const withApprovals = ensureEmployeeApprovals(withEmployee)
-      const withAssessment = withApprovals.some(n => n.name === 'Assessment') ? withApprovals : [...withApprovals, HARDCODED_ASSESSMENT_MODULE]
-      const withActivityLog = withAssessment.some(n => n.name === 'Activity Log') ? withAssessment : [...withAssessment, HARDCODED_ACTIVITY_LOG_MODULE]
-      const withFinance = mergeFinanceSections(withActivityLog)
+      // No more whole-module injection here — a module absent from the real
+      // response (Employee, Assessment, Activity Log, Finance, Student,
+      // Config) means this role genuinely doesn't have it, and is left out.
+      // Every step below only ever patches a module that IS present.
+      const withApprovals = ensureEmployeeApprovals(menu)
+      const withFinance = mergeFinanceSections(withApprovals)
       const withStudent = mergeStudentSections(withFinance)
       const withBulkEdit = ensureBulkIntakeEdit(withStudent)
       const withBatchSummary = ensureBatchSummary(withBulkEdit)

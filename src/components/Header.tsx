@@ -4,8 +4,10 @@ import { useRouter } from 'next/navigation'
 import { useQueryClient } from '@tanstack/react-query'
 import { logout } from '@/lib/auth'
 import { clearSessionIdentity } from '@/lib/session'
-import { useUnreadCount } from '@/hooks/useNotifications'
+import { useMarkNotificationRead, useNotificationsPreview, useUnreadCount } from '@/hooks/useNotifications'
+import { notificationHref, notificationVisual, NotificationItem } from '@/lib/api/notifications'
 import { endNotificationsSession } from '@/lib/notificationsHub'
+import { timeAgo } from '@/lib/date'
 
 interface HeaderProps {
   panelOpen: boolean
@@ -28,6 +30,22 @@ export function Header({ panelOpen, setPanelOpen, profileOpen, setProfileOpen, p
   const router = useRouter()
 
   const { data: unreadCount = 0 } = useUnreadCount()
+  const markRead = useMarkNotificationRead()
+
+  // Hover preview — clicking the bell itself always navigates straight to
+  // /notifications; hovering shows a quick preview instead. Backed by
+  // useNotificationsPreview, which is NOT fetched on hover — see that hook's
+  // comment for why (an earlier version fetched on every mouseenter, which
+  // showed up as an unwanted poll in the network tab).
+  const [bellOpen, setBellOpen] = useState(false)
+  const { data: previewResult, isLoading: previewLoading } = useNotificationsPreview()
+  const previewItems = previewResult?.items ?? []
+
+  function openNotification(n: NotificationItem) {
+    if (!n.isRead) markRead.mutate(n.notificationGuid)
+    setBellOpen(false)
+    router.push(notificationHref(n))
+  }
 
   async function handleSignOut(e: React.MouseEvent) {
     e.stopPropagation()
@@ -78,14 +96,11 @@ export function Header({ panelOpen, setPanelOpen, profileOpen, setProfileOpen, p
         <div className="hdr-right">
           <div className="hdr-module-pill acad"><i className="lni lni-graduation"></i> Academic</div>
           <div className="hdr-intake">Spring 2026 (20261)</div>
-          {/* No hover preview here anymore (removed per request, 2026-09-04)
-              — it fired a real /notifications list request on every single
-              hover-in, which read as an unwanted poll in the network tab
-              even though it was fetch-on-open rather than a timer. The bell
-              is now just the badge; clicking it still goes straight to
-              /notifications, which is the only place that list is fetched
-              from now. */}
-          <div className="hdr-bell-wrap">
+          <div
+            className="hdr-bell-wrap"
+            onMouseEnter={() => setBellOpen(true)}
+            onMouseLeave={() => setBellOpen(false)}
+          >
             <button
               className={`hdr-bell${unreadCount > 0 ? ' has-unread' : ''}`}
               onClick={() => router.push('/notifications')}
@@ -95,6 +110,44 @@ export function Header({ panelOpen, setPanelOpen, profileOpen, setProfileOpen, p
               <i className="lni lni-alarm"></i>
               {unreadCount > 0 && <span className="hdr-bell-badge">{unreadCount > 9 ? '9+' : unreadCount}</span>}
             </button>
+
+            {/* Fetch-free — reads whatever useNotificationsPreview already has
+                cached, no request fired on hover-in. No search box here
+                either (the per-keystroke version of the same problem); full
+                search lives on /notifications. */}
+            {bellOpen && (
+              <div className="hdr-bell-dropdown">
+                <div className="hdr-bell-dropdown-inner">
+                  <div className="hdr-bell-dropdown-hdr">
+                    <span>Notifications</span>
+                    {unreadCount > 0 && <span className="badge badge-blue">{unreadCount} new</span>}
+                  </div>
+                  <div className="hdr-bell-list">
+                    {previewLoading ? (
+                      <div className="hdr-bell-dropdown-empty">Loading…</div>
+                    ) : previewItems.length === 0 ? (
+                      <div className="hdr-bell-dropdown-empty">You&apos;re all caught up</div>
+                    ) : (
+                      previewItems.map(n => {
+                        const visual = notificationVisual(n.typeCode)
+                        return (
+                          <button key={n.notificationGuid} className={`hdr-bell-item${n.isRead ? '' : ' unread'}`} onClick={() => openNotification(n)}>
+                            <span className={`ntf-dot ${visual.tone}`} style={{ width: 30, height: 30, fontSize: 14 }}><i className={`lni ${visual.icon}`}></i></span>
+                            <span className="hdr-bell-item-content">
+                              <span className="hdr-bell-item-title">{n.title}</span>
+                              <span className="hdr-bell-item-time">{timeAgo(n.createdDate)}</span>
+                            </span>
+                          </button>
+                        )
+                      })
+                    )}
+                  </div>
+                  <button className="hdr-bell-dropdown-viewall" onClick={() => { setBellOpen(false); router.push('/notifications') }}>
+                    View all notifications <i className="lni lni-arrow-right"></i>
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
           <div className="hdr-user" ref={profileRef} onClick={() => setProfileOpen(p => !p)}>
             <div className="hdr-avatar">{initialsOf(displayName)}</div>

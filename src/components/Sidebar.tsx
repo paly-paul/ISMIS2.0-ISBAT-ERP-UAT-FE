@@ -117,8 +117,31 @@ function orderIndex(item: MenuNode): number {
 // own order was requested would silently reshuffle navigation nobody asked
 // to change. The hide-filter has no such collision risk (HIDDEN_ITEM_IDS is
 // currently Finance-only anyway) so it stays applied everywhere.
+// Defends against the backend permission model occasionally granting the
+// same page twice within one section's children (seen on the real /me/menu
+// response for Config > Access Control > Permission Master, where
+// mergeConfigSections' fallback leaf and the backend's own leaf land side by
+// side) — the mock menu never has duplicates, so this only ever bites with
+// NEXT_PUBLIC_RBAC_MOCK (or AUTH_MOCK) off. Compares resolveHref() output,
+// not the raw url — the fallback uses an absolute path ("/config/
+// permission-master") while the backend sends a bare slug
+// ("permission-master"), so the raw strings differ even though both resolve
+// to the identical href sbItem keys its <Link> on. Without deduping on the
+// resolved value, two leaves collide on that key, which React logs as a
+// duplicate-key error and can silently drop/duplicate the rendered item.
+function dedupeByHref(children: MenuNode[], railId: RailId): MenuNode[] {
+  const seen = new Set<string>()
+  return children.filter(c => {
+    if (!c.url) return true
+    const href = resolveHref(c.url, railId)
+    if (seen.has(href)) return false
+    seen.add(href)
+    return true
+  })
+}
+
 function visibleChildren(children: MenuNode[], railId: RailId): MenuNode[] {
-  const filtered = children.filter(c => !c.url || !HIDDEN_ITEM_IDS.has(idFromUrl(c.url)))
+  const filtered = dedupeByHref(children, railId).filter(c => !c.url || !HIDDEN_ITEM_IDS.has(idFromUrl(c.url)))
   if (railId !== 'finance') return filtered
   // Array.prototype.sort is a stable sort in every engine this app ships
   // to (spec-guaranteed since ES2019) — items tied on orderIndex (i.e.
