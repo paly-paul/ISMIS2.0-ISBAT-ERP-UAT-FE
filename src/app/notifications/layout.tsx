@@ -111,7 +111,7 @@ export default function NotificationsLayout({ children }: { children: React.Reac
         profileOpen={profileOpen}
         setProfileOpen={setProfileOpen}
         profileRef={profileRef}
-        onSignOut={() => router.push('/')}
+        onSignOut={() => router.push('/login/staff')}
         displayName={displayName ?? undefined}
       />
       <div className="layout">
