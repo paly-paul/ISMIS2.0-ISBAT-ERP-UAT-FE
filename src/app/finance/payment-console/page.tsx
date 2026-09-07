@@ -16,7 +16,8 @@ import { useProcBanks } from '@/hooks/finance/useProcBanks'
 import { useReceiptBooks } from '@/hooks/finance/useReceiptBooks'
 import { useFinanceCurrencies, getDefaultFinanceCurrencyGuid } from '@/hooks/finance/useFinanceCurrencies'
 import { useExchangeRatesByDate, useCreateExchangeRate, useUpdateExchangeRate, ExchangeRate } from '@/hooks/finance/useExchangeRates'
-import { PaymentAdvance, useAdvanceStatusByPayment, usePaymentAdvances } from '@/hooks/finance/usePayments'
+import { useAdvanceStatusByPayment } from '@/hooks/finance/usePayments'
+import { useAdvanceDeposits, AdvanceDepositSummary } from '@/hooks/finance/useAdvancePayment'
 import { useCampuses } from '@/hooks/config/useCampuses'
 import { useProgramMasters } from '@/hooks/academic/useProgramMaster'
 import { useBatches } from '@/hooks/academic/useBatches'
@@ -279,9 +280,12 @@ export default function PaymentConsolePage() {
   //
   // otherIsAdvance mirrors the legacy form's "Advance Payment" checkbox —
   // now wired for real (2026-09-01) via AdvanceDepositPickerModal +
-  // get-payment-advances.md's list endpoint (already backing the Advanced
-  // Payments console page, usePaymentAdvances). Checking the box opens the
-  // picker instead of flipping the flag directly; otherIsAdvance/
+  // get-advance-deposits.md's per-application list (useAdvanceDeposits,
+  // same hook Payment Console Adjustments' own Apply Advance dropdown
+  // uses — switched 2026-09-08 from the studentGuid-scoped
+  // get-payment-advances.md list, see AdvanceDepositPickerModal's own
+  // comment for why). Checking the box opens the picker instead of
+  // flipping the flag directly; otherIsAdvance/
   // selectedAdvance are only set once a deposit is actually confirmed there
   // (see toggleAdvancePayment/confirmAdvanceSelection below), and unchecking
   // clears both. No separate "Advance Payment Date" field any more — the
@@ -292,7 +296,7 @@ export default function PaymentConsolePage() {
   const [otherLedger, setOtherLedger] = useState('')
   const [otherPayDate, setOtherPayDate] = useState(todayYmd)
   const [otherIsAdvance, setOtherIsAdvance] = useState(false)
-  const [selectedAdvance, setSelectedAdvance] = useState<PaymentAdvance | null>(null)
+  const [selectedAdvance, setSelectedAdvance] = useState<AdvanceDepositSummary | null>(null)
   const [showAdvancePicker, setShowAdvancePicker] = useState(false)
   const [otherPayType, setOtherPayType] = useState('1')
   // Narrowed to only the category CreatePaymentOther will accept for the
@@ -402,15 +406,20 @@ export default function PaymentConsolePage() {
   const studentGuid = profile?.studentGuid ?? selectedStudentGuidHint ?? null
 
   // Re-added per request — hide the Other Payment tab's Advance Payment
-  // checkbox entirely when this student has zero advance deposits on record
-  // at all (matching AdvanceDepositPickerModal's own EmptyState condition,
-  // items.length === 0), rather than always showing it and letting the
-  // picker's empty state be the only place that says so. Fetched
-  // independently of the picker's own usePaymentAdvances call (that one only
-  // fires while the modal is open) so this gate is known before the
-  // checkbox even renders. pageSize: 1 is enough — only totalCount matters.
-  const { data: otherAdvancesCheck } = usePaymentAdvances(1, 1, !!studentGuid, studentGuid)
-  const hasAdvanceDeposits = (otherAdvancesCheck?.totalCount ?? 0) > 0
+  // checkbox entirely when this application has zero advance deposits on
+  // record at all (matching AdvanceDepositPickerModal's own EmptyState
+  // condition, rows.length === 0), rather than always showing it and
+  // letting the picker's empty state be the only place that says so.
+  // Scoped by applicationGuid, not studentGuid (2026-09-08 fix) — the
+  // earlier studentGuid-scoped check never fired at all for an applicant
+  // who hasn't been converted into an enrolled student yet, silently hiding
+  // the checkbox even when real deposits existed on their application (see
+  // AdvanceDepositPickerModal's own comment for the full story). Fetched
+  // independently of the picker's own useAdvanceDeposits call (that one
+  // only fires while the modal is open) so this gate is known before the
+  // checkbox even renders.
+  const { data: otherAdvancesCheck } = useAdvanceDeposits(selectedApplicationGuid, !!selectedApplicationGuid)
+  const hasAdvanceDeposits = (otherAdvancesCheck?.length ?? 0) > 0
 
   // Discount-aware replacement for the old useOutstandingLedgers — same
   // current-semester scoping, but each ledger also carries its applicable
@@ -635,8 +644,25 @@ export default function PaymentConsolePage() {
   // endpoint has no Tuition rows to filter out, so there's nothing this
   // cross-category list adds there any more; it used to be shown there
   // unfiltered, spanning every category, which is what this change fixes).
-  const { data: paymentHistory = [], isLoading: isHistoryLoading, isError: isHistoryError } = usePaymentHistory(selectedApplicationGuid, !!selectedApplicationGuid && activePayTab === 'tuition')
+  // Also fetched (regardless of active tab) whenever this application has
+  // advance deposits — get-advance-deposits.md's own response normalizes
+  // every deposit to the base currency (originalAmount/balance/currencyGuid
+  // all in USD terms, confirmed live: a deposit made in 3,000,000 UGX comes
+  // back as baseAmount 810.81), with no native-currency figure of its own.
+  // getPaymentHistory's category-5 rows are the one place that native
+  // amount/currency still exists (paymentGuid there is the same guid as
+  // paymentAdvanceGuid) — advanceNativeByGuid below cross-references it so
+  // the picker can show what the cashier actually deposited, not just its
+  // base-currency equivalent.
+  const { data: paymentHistory = [], isLoading: isHistoryLoading, isError: isHistoryError } = usePaymentHistory(selectedApplicationGuid, !!selectedApplicationGuid && (activePayTab === 'tuition' || hasAdvanceDeposits))
   const tuitionPaymentHistory = useMemo(() => paymentHistory.filter(h => h.category === 1), [paymentHistory])
+  const advanceNativeByGuid = useMemo(() => {
+    const map = new Map<string, { amount: number; currencyName: string }>()
+    paymentHistory.forEach(h => {
+      if (h.category === 5) map.set(h.paymentGuid, { amount: h.amount, currencyName: h.currencyName })
+    })
+    return map
+  }, [paymentHistory])
   const [historyPage, setHistoryPage] = useState(1)
   // Reset to page 1 on a new student so the view doesn't get stranded on a
   // now out-of-range page.
@@ -772,7 +798,7 @@ export default function PaymentConsolePage() {
     else { setOtherIsAdvance(false); setSelectedAdvance(null) }
   }
 
-  function confirmAdvanceSelection(advance: PaymentAdvance) {
+  function confirmAdvanceSelection(advance: AdvanceDepositSummary) {
     setSelectedAdvance(advance)
     setOtherIsAdvance(true)
     setShowAdvancePicker(false)
@@ -780,7 +806,7 @@ export default function PaymentConsolePage() {
     // normally stay as-is (CreatePaymentOther draws down in the deposit's
     // own currency), Amount defaults to the full undrawn balance but a
     // cashier may want a partial draw-down instead.
-    if (advance.currency) setOtherCurrencyGuid(advance.currency.currencyGuid)
+    setOtherCurrencyGuid(advance.currencyGuid)
     setOtherAmount(String(advance.balance))
   }
 
@@ -1411,7 +1437,7 @@ export default function PaymentConsolePage() {
                       <div className="flex items-center justify-between gap-2 mt-2 p-2.5 rounded-[var(--rsm)] bg-b50 border border-[1.5px] border-b100">
                         <div style={{ fontSize: 12 }}>
                           Drawing from <span className="font-mono text-blue font-bold">{selectedAdvance.advPaymentCode}</span>
-                          <span className="text-g500"> · Balance {selectedAdvance.balance.toLocaleString()} {selectedAdvance.currency?.currencyCode ?? ''}</span>
+                          <span className="text-g500"> · Balance {selectedAdvance.balance.toLocaleString()} {selectedAdvance.currencyCode}</span>
                         </div>
                         <button type="button" className="btn btn-neu btn-sm" onClick={() => setShowAdvancePicker(true)}>Change</button>
                       </div>
@@ -1985,13 +2011,16 @@ export default function PaymentConsolePage() {
         onClose={() => setShowAdvancePicker(false)}
         onConfirm={confirmAdvanceSelection}
         showToast={showToast}
-        // Scopes the picker to the currently-loaded student instead of
-        // every deposit in the system (get-payment-advances.md's now-
-        // confirmed studentGuid filter, 2026-09-01). Falls back to the
-        // unfiltered list if the applicant hasn't registered as a student
-        // yet (no studentGuid) — not worth an applicationGuid filter too.
-        studentGuid={studentGuid}
+        // Scopes the picker to this application's own deposits
+        // (get-advance-deposits.md) — applicationGuid, not studentGuid
+        // (2026-09-08 fix): the old studentGuid-scoped list came back empty
+        // for an applicant who hasn't been converted into an enrolled
+        // student yet, which hid this feature entirely for exactly the
+        // applicants who most need to draw down an advance before
+        // enrolling. See AdvanceDepositPickerModal's own comment.
+        applicationGuid={selectedApplicationGuid}
         studentDisplayName={profile ? applicantName(profile) : undefined}
+        nativeAmounts={advanceNativeByGuid}
       />
       <ViewPaymentModal isOpen={!!viewEntry} onClose={() => setViewEntry(null)} showToast={showToast} entry={viewEntry} />
       <EditPaymentModal isOpen={!!editTarget} onClose={() => setEditTarget(null)} showToast={showToast} target={editTarget} applicationGuid={selectedApplicationGuid ?? undefined} />
