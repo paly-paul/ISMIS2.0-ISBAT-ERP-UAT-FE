@@ -1,116 +1,100 @@
 'use client'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Toast } from '@/components/Toast'
 import { ScrollTable } from '@/components/ScrollTable'
-import { SearchSelect } from '@/components/SearchSelect'
+import { PaymentSuccessModal } from '@/components/modals/finance/PaymentSuccessModal'
 import DatePicker from '@/components/DatePicker'
+import { SearchSelect } from '@/components/SearchSelect'
+import { useCampuses } from '@/hooks/config/useCampuses'
+import { useProgramMasters } from '@/hooks/academic/useProgramMaster'
+import { useBatches } from '@/hooks/academic/useBatches'
+import { useSemestersForProgram } from '@/hooks/academic/useSemesters'
+import {
+  useSearchStudentsInfinite,
+  useStudentProfile,
+  useOutstandingLedgers,
+} from '@/hooks/finance/usePaymentConsole'
+import {
+  useAdvanceDeposits,
+  useAdvanceBalance,
+  useAdjustmentsByAdvance,
+  useAdjustmentLedgerBreakdown,
+  useCreateAdjustment,
+} from '@/hooks/finance/useAdvancePayment'
+import { useFinanceCurrencies, getDefaultFinanceCurrencyGuid } from '@/hooks/finance/useFinanceCurrencies'
+import { useExchangeRatesByDate } from '@/hooks/finance/useExchangeRates'
+import { formatDate } from '@/lib/date'
+import { AuthError } from '@/lib/api/client'
 
-// Reference: a legacy ISMS screen ("Payment Console Adjustments" —
-// frmPaymentConsoleAdjustments.aspx-style) for correcting a payment already
-// on record — its date, method, bank, and remarks — as opposed to Payment
-// Console itself, which only ever records a brand-new payment.
-//
-// UI-first per request (2026-09-02) — nothing on this page is wired to any
-// real API yet, including student search/profile. Everything below (demo
-// students, their ledgers, their payment history) is local mock data, same
-// "no backing endpoint, log a toast instead of a real save" treatment
-// Ledger Adjustments' own AdjustLedgerModal already uses on this same
-// page's neighbour. Swap the mock arrays/handlers for real hooks once
-// there's something to call — the layout/markup is meant to carry over
-// as-is (it already matches Payment Console/Discount Allocation's own
-// pc-hero/pc-ledger-item/pc-body conventions).
+// Reference: the legacy ISMS "Payment Console Adjustments" screen
+// (frmTrnPaymentAdjustment.aspx) for applying an advance deposit against a
+// student's outstanding TUITION ledgers — not for correcting an already
+// recorded payment's own fields (there's no backing endpoint for that
+// anywhere in this API; the previous version of this page was a UI-only
+// mock built around that premise). Rebuilt 2026-09-05 against the
+// payment-adjust/ doc set (repo root) — port of the legacy
+// T_InsertPaymentAdjustments_Advance procedure: pick one of this
+// application's own advance deposits, choose how much of it to apply, and
+// the payment-console allocation engine (currency conversion, discount,
+// lump-sum, round-off) settles outstanding tuition ledgers exactly as a
+// real tuition payment would. Student search and the profile summary reuse
+// Payment Console's own real hooks/components, same 50/50 pc-body split
+// Payment Refund/Discount Allocation already use.
 
-interface DemoStudent {
-  name: string
-  number: string
-  programme: string
-  semester: string
-  campus: string
-  batch: string
-  phone: string
+function fmtAmt(n: number) {
+  return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
-interface DemoLedgerLine {
-  name: string
-  currency: string
-  outstanding: number
-  paid: number
+function applicantName(a: { firstName: string | null; lastName: string | null }) {
+  return `${a.firstName ?? ''}${a.lastName ? ` ${a.lastName}` : ''}`.trim() || '—'
 }
 
-interface DemoPayment {
-  guid: string
-  code: string
-  amount: number
-  currency: string
-  bookCode: string
-  receipt: string
-  date: string
-  type: string
-  scope: 'current' | 'previous'
+function searchResultName(a: { studentName: string | null; firstName: string | null }) {
+  return a.studentName || a.firstName || '—'
 }
-
-const DEMO_STUDENTS: DemoStudent[] = [
-  {
-    name: 'Meghraj Rathod', number: '022200938',
-    programme: 'Diploma in Networking and Cyber Security', semester: 'Year Two - Semester Two',
-    campus: 'ISBAT University - Main Campus', batch: 'DPNCS23DA', phone: '256701234567',
-  },
-  {
-    name: 'Tumukunde Alice Grace', number: '022200921',
-    programme: 'Bachelor of Business Administration', semester: 'Year One - Semester One',
-    campus: 'ISBAT University - Main Campus', batch: 'BBA26DA', phone: '256701234568',
-  },
-  {
-    name: 'Okello James Patrick', number: '022200922',
-    programme: 'Bachelor of Science in Accounting and Finance', semester: 'Year Three - Semester Two',
-    campus: 'ISBAT University - Main Campus', batch: 'BSCAF24DA', phone: '256701234569',
-  },
-]
-
-const DEMO_LEDGERS: Record<string, DemoLedgerLine[]> = {
-  '022200938': [
-    { name: 'Tuition Fee', currency: 'UGX', outstanding: 450000, paid: 0 },
-    { name: 'Library Deposit', currency: 'UGX', outstanding: 0, paid: 50000 },
-  ],
-  '022200921': [
-    { name: 'Tuition Fee', currency: 'UGX', outstanding: 1200000, paid: 800000 },
-  ],
-  '022200922': [],
-}
-
-const DEMO_PAYMENTS: Record<string, DemoPayment[]> = {
-  '022200938': [
-    { guid: 'p1', code: 'PAY2023211611', amount: 150000, currency: 'Uganda Shillings', bookCode: 'CO39', receipt: '1493', date: '2023-07-20', type: 'Cash', scope: 'current' },
-    { guid: 'p2', code: 'PAY2023211991', amount: 150000, currency: 'Uganda Shillings', bookCode: 'CO39', receipt: '1741', date: '2023-07-31', type: 'Cash', scope: 'current' },
-    { guid: 'p3', code: 'PAY2023211593', amount: 150000, currency: 'Uganda Shillings', bookCode: 'CO39', receipt: '1315', date: '2023-06-19', type: 'Cheque', scope: 'current' },
-    { guid: 'p4', code: 'PAY2023211508', amount: 1800000, currency: 'Uganda Shillings', bookCode: 'CO39', receipt: '1233', date: '2023-05-24', type: 'Bank Transfer', scope: 'current' },
-    { guid: 'p5', code: 'PAY2022200843', amount: 800000, currency: 'Uganda Shillings', bookCode: 'CO40', receipt: '789', date: '2022-11-15', type: 'Cash', scope: 'previous' },
-    { guid: 'p6', code: 'PAY2022200712', amount: 900000, currency: 'Uganda Shillings', bookCode: 'CO40', receipt: '664', date: '2022-08-02', type: 'Cheque', scope: 'previous' },
-    { guid: 'p7', code: 'PAY2022200558', amount: 300000, currency: 'Uganda Shillings', bookCode: 'CO40', receipt: '512', date: '2022-05-18', type: 'Card', scope: 'previous' },
-    { guid: 'p8', code: 'PAY2022200410', amount: 950000, currency: 'Uganda Shillings', bookCode: 'CO40', receipt: '388', date: '2022-02-09', type: 'Bank Transfer', scope: 'previous' },
-    { guid: 'p9', code: 'PAY2021900312', amount: 400000, currency: 'Uganda Shillings', bookCode: 'CO38', receipt: '277', date: '2021-11-27', type: 'Cash', scope: 'previous' },
-    { guid: 'p10', code: 'PAY2021900201', amount: 1100000, currency: 'Uganda Shillings', bookCode: 'CO38', receipt: '150', date: '2021-08-14', type: 'Cash', scope: 'previous' },
-  ],
-  '022200921': [
-    { guid: 'p11', code: 'PAY2024300112', amount: 800000, currency: 'Uganda Shillings', bookCode: 'CO41', receipt: '2210', date: '2026-01-14', type: 'Cash', scope: 'current' },
-  ],
-  '022200922': [
-    { guid: 'p12', code: 'PAY2023450220', amount: 500000, currency: 'US Dollars', bookCode: 'CO42', receipt: '3105', date: '2025-09-02', type: 'Card', scope: 'current' },
-    { guid: 'p13', code: 'PAY2022400119', amount: 600000, currency: 'US Dollars', bookCode: 'CO37', receipt: '1980', date: '2023-06-30', type: 'Bank Transfer', scope: 'previous' },
-  ],
-}
-
-const MOCK_PAY_TYPES = ['Cash', 'Cheque', 'Bank Transfer', 'Card']
-const MOCK_BANKS = ['Stanbic Bank — Main Branch', 'Centenary Bank — Kampala Branch', 'DFCU Bank — Nakawa Branch']
 
 function initialsFor(name: string) {
   const parts = name.trim().split(/\s+/)
   return ((parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? '')).toUpperCase() || '—'
 }
 
-function fmtAmt(n: number) {
-  return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+function todayYmd() {
+  const now = new Date()
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+}
+
+// Same currency-conversion helper as Payment Console's own page.tsx (kept
+// as an identical copy rather than a shared import — the two pages don't
+// currently share a module for page-local helpers like this one, matching
+// fmtAmt/applicantName/etc. above already being duplicated the same way).
+// exRate is base-currency units per 1 unit of the given currency (Currency
+// Master's isDefault=1 row is the base) — confirmed via a real
+// get-exchange-rate-exists response: USD came back as exRate: 3774.90 and
+// KSH as exRate: 29.16, i.e. exactly "1 {currency} = {exRate} {base}" (real
+// UGX/USD, UGX/KSH rates), not the tiny fraction ("this currency's units
+// per 1 base") this used to assume — see Payment Console's own page.tsx for
+// the same fix and the full story. Converting A→B always routes through the
+// base: amountInBase = amount * rateA, amountInB = amountInBase / rateB.
+// Returns null (not a fallback guess) when either currency's rate can't be
+// resolved, INCLUDING a rate of exactly 0 — that's never a real "no rate
+// available" (no currency trades at 0 units per 1 base), it's what the
+// by-date board can return for a currency nobody has entered today's rate
+// for yet, and dividing by a 0 toRate would otherwise produce Infinity
+// (then NaN once totalled) instead of a clean "can't convert".
+function convertAmount(
+  amount: number,
+  fromGuid: string | null | undefined,
+  toGuid: string | null,
+  baseGuid: string | null,
+  ratesByGuid: Map<string, number>,
+): number | null {
+  if (!fromGuid || !toGuid) return null
+  if (fromGuid === toGuid) return amount
+  const fromRate = fromGuid === baseGuid ? 1 : ratesByGuid.get(fromGuid)
+  const toRate = toGuid === baseGuid ? 1 : ratesByGuid.get(toGuid)
+  if (fromRate == null || toRate == null || fromRate <= 0 || toRate <= 0) return null
+  return (amount * fromRate) / toRate
 }
 
 export default function PaymentConsoleAdjustmentsPage() {
@@ -118,87 +102,205 @@ export default function PaymentConsoleAdjustmentsPage() {
   const [toast, setToast] = useState<{ msg: string; type: string } | null>(null)
   function showToast(msg: string, type = '') { setToast({ msg, type }); setTimeout(() => setToast(null), 3500) }
 
-  // ── Student search — local mock lookup (no API), same UI shell as the
-  // rest of Finance's search bars. ──
+  // Success confirmation for a submitted adjustment — same PaymentSuccessModal
+  // Payment Console/Payment Refund use for their own submits.
+  const [successModal, setSuccessModal] = useState<{ title: string; rows: [string, string][]; notices?: string[] } | null>(null)
+
+  // ── Student search — same live-typing infinite-scroll dropdown Payment
+  // Console/Payment Refund use. ──
   const [search, setSearch] = useState('')
+  const [committedSearch, setCommittedSearch] = useState('')
   const [searchFocused, setSearchFocused] = useState(false)
-  const [student, setStudent] = useState<DemoStudent | null>(null)
+  const searchBoxRef = useRef<HTMLDivElement>(null)
+  const [selectedApplicationGuid, setSelectedApplicationGuid] = useState<string | null>(null)
+  const [selectedStudentGuidHint, setSelectedStudentGuidHint] = useState<string | null>(null)
 
-  const searchTrimmed = search.trim().toLowerCase()
-  const matches = searchTrimmed.length >= 2
-    ? DEMO_STUDENTS.filter(s => `${s.name} ${s.number}`.toLowerCase().includes(searchTrimmed)).slice(0, 8)
-    : searchFocused ? DEMO_STUDENTS : []
+  useEffect(() => {
+    const t = setTimeout(() => setCommittedSearch(search.trim()), 400)
+    return () => clearTimeout(t)
+  }, [search])
 
-  const ledgers = student ? (DEMO_LEDGERS[student.number] ?? []) : []
-  const payments = student ? (DEMO_PAYMENTS[student.number] ?? []) : []
+  useEffect(() => {
+    if (!searchFocused) return
+    function handle(e: MouseEvent) {
+      if (!searchBoxRef.current?.contains(e.target as Node)) setSearchFocused(false)
+    }
+    document.addEventListener('mousedown', handle)
+    return () => document.removeEventListener('mousedown', handle)
+  }, [searchFocused])
 
-  const [editPreviousSemester, setEditPreviousSemester] = useState(false)
-  const adjustablePayments = editPreviousSemester ? payments : payments.filter(p => p.scope === 'current')
+  const searchTermLen = committedSearch.trim().length
+  const {
+    data: searchPages, fetchNextPage, hasNextPage, isFetchingNextPage,
+    isFetching: isSearching, isError: isSearchError,
+  } = useSearchStudentsInfinite(
+    committedSearch, 20,
+    searchFocused && (searchTermLen === 0 || searchTermLen >= 2),
+  )
+  const matches = searchPages?.pages.flatMap(p => p.items) ?? []
 
-  // The reference screen picks a payment from a popup table (Payment Code/
-  // Amount/Currency/Book Code/Receipt/Payment Date columns), not a plain
-  // dropdown — same picker-modal convention as AdvanceDepositPickerModal
-  // elsewhere in Finance, built inline here since it's specific to this page.
-  const [showPaymentPicker, setShowPaymentPicker] = useState(false)
-  const [paymentGuid, setPaymentGuid] = useState('')
-  const [payDate, setPayDate] = useState('')
-  const [payType, setPayType] = useState('')
-  const [range, setRange] = useState('')
-  const [bankAccount, setBankAccount] = useState('')
+  function handleSearchResultsScroll(e: React.UIEvent<HTMLDivElement>) {
+    if (!hasNextPage || isFetchingNextPage) return
+    const el = e.currentTarget
+    if (el.scrollTop > 0 && el.scrollHeight - el.scrollTop - el.clientHeight < 48) fetchNextPage()
+  }
+
+  const { data: profile, isLoading: isProfileLoading, isError: isProfileError } = useStudentProfile(selectedApplicationGuid, !!selectedApplicationGuid, selectedStudentGuidHint)
+  const studentGuid = profile?.studentGuid ?? selectedStudentGuidHint ?? null
+
+  // Client-side name resolution for the profile's guid FKs — same fallback
+  // pattern Payment Console/Payment Refund use.
+  const { data: campuses = [] } = useCampuses()
+  const { data: programs = [] } = useProgramMasters()
+  const { data: allBatchesData } = useBatches(1, 1000)
+  const batches = allBatchesData?.items ?? []
+  const { data: semesters = [] } = useSemestersForProgram(profile?.programGuid ?? '', !!profile?.programGuid)
+
+  const campusName = campuses.find(c => c.campusGuid === profile?.campusGuid)?.campusName
+  const programName = profile?.programName ?? programs.find(p => p.programGuid === profile?.programGuid)?.programName
+  const batchCode = profile?.batchCode ?? batches.find(b => b.batchGuid === profile?.batchGuid)?.batchCode
+  const semName = profile?.semesterName ?? semesters.find(s => s.semesterGuid === profile?.semesterGuid)?.semName
+
+  // Outstanding Balance — this application's own tuition ledgers, same
+  // endpoint/rendering Payment Console's Tuition tab uses. An adjustment
+  // only ever settles tuition (per post-adjustment.md), so this is the
+  // right "what's owed" view here, not the cross-category outstanding-all.
+  const { data: outstandingLedgers = [], isLoading: isLedgersLoading, isError: isLedgersError } = useOutstandingLedgers(selectedApplicationGuid, !!selectedApplicationGuid, studentGuid)
+
+  // Advance balance strip — per-currency undrawn total (get-advance-balance.md),
+  // informational only; the picker below is what actually drives a draw.
+  const { data: advanceBalances = [] } = useAdvanceBalance(selectedApplicationGuid, !!selectedApplicationGuid)
+
+  // Deposit picker — this application's own drawable deposits (get-advance-deposits.md).
+  const { data: deposits = [], isLoading: isDepositsLoading, isError: isDepositsError } = useAdvanceDeposits(selectedApplicationGuid, !!selectedApplicationGuid)
+  const [paymentAdvanceGuid, setPaymentAdvanceGuid] = useState('')
+  const selectedDeposit = deposits.find(d => d.paymentAdvanceGuid === paymentAdvanceGuid)
+
+  const { data: currencies = [] } = useFinanceCurrencies()
+  const [currencyGuid, setCurrencyGuid] = useState('')
+  const [amount, setAmount] = useState('')
+  const [adjustmentDate, setAdjustmentDate] = useState(todayYmd)
   const [remarks, setRemarks] = useState('')
 
-  const selectedPayment = adjustablePayments.find(p => p.guid === paymentGuid)
+  // Default the currency picker to the deposit's own currency as soon as
+  // it's picked — the common case is applying it in the currency it was
+  // deposited in; still freely changeable (the endpoint converts amount
+  // into the deposit's currency before checking it against the balance).
+  // Before a deposit is picked, falls back to Finance's own default (UGX)
+  // rather than sitting blank.
+  useEffect(() => {
+    if (selectedDeposit?.currencyGuid) setCurrencyGuid(selectedDeposit.currencyGuid)
+    else if (!currencyGuid && currencies.length > 0) setCurrencyGuid(getDefaultFinanceCurrencyGuid(currencies))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDeposit?.currencyGuid, currencies])
 
-  function resetAdjustmentFields() {
-    setPayDate('')
-    setPayType('')
-    setRange('')
-    setBankAccount('')
+  // Outstanding Balance conversion — same approach as Payment Console's own
+  // page.tsx: convert every ledger's Scheduled Bill/Outstanding into
+  // whichever currency is picked below, using today's exchange-rate board.
+  // The "Currency" field in Apply Advance does double duty as the
+  // conversion target here too (same reasoning as Payment Console's
+  // Currency Received field) — there's no separate picker to keep in sync.
+  const { data: todayRates = [] } = useExchangeRatesByDate(todayYmd())
+  const ratesByGuid = new Map(todayRates.map(r => [r.currencyGuid, r.exRate]))
+  const baseCurrency = currencies.find(c => c.isDefault === 1)
+  const targetCurrency = currencies.find(c => c.currencyGuid === currencyGuid)
+  const targetCurrencyGuid = targetCurrency?.currencyGuid ?? null
+  const targetCurrencyName = targetCurrency?.currencyName ?? ''
+  // null on a given ledger means its own currency (or the target's) has no
+  // resolvable rate for today — shown as "—" rather than silently defaulting
+  // to the original, unconverted figure.
+  const convertedLedgers = outstandingLedgers.map(l => ({
+    ...l,
+    convScheduled: convertAmount(l.ledgerAmount, l.currencyGuid, targetCurrencyGuid, baseCurrency?.currencyGuid ?? null, ratesByGuid),
+    convOutstanding: convertAmount(l.outstanding, l.currencyGuid, targetCurrencyGuid, baseCurrency?.currencyGuid ?? null, ratesByGuid),
+  }))
+  const convertedTotalOutstanding = convertedLedgers.reduce((sum, l) => sum + (l.convOutstanding ?? 0), 0)
+  const hasUnconvertibleLedger = convertedLedgers.some(l => l.outstanding > 0 && l.convOutstanding === null)
+
+  function resetForm() {
+    setPaymentAdvanceGuid('')
+    setCurrencyGuid(getDefaultFinanceCurrencyGuid(currencies))
+    setAmount('')
+    setAdjustmentDate(todayYmd())
     setRemarks('')
   }
 
-  function resetAll() {
-    setPaymentGuid('')
-    setEditPreviousSemester(false)
-    resetAdjustmentFields()
-  }
+  // Adjustment history for the currently-picked deposit
+  // (get-adjustments-by-advance.md) — unpaged.
+  const {
+    data: adjustmentHistory = [], isLoading: isHistoryLoading, isError: isHistoryError,
+  } = useAdjustmentsByAdvance(paymentAdvanceGuid || null, !!paymentAdvanceGuid)
 
-  // Seeds the editable fields from whichever payment is picked — same
-  // trigger-on-select pattern the rest of this module uses (e.g. Discount
-  // Allocation's startEdit).
-  function selectPayment(guid: string) {
-    setPaymentGuid(guid)
-    const p = adjustablePayments.find(x => x.guid === guid)
-    setPayDate(p?.date ?? '')
-    setPayType(p?.type ?? '')
-    setRange('')
-    setBankAccount('')
-    setRemarks('')
-    setShowPaymentPicker(false)
-  }
+  // Ledger breakdown for one adjustment row, shown in a small modal on
+  // click (get-adjustment-ledger-breakdown.md) — fetched on demand rather
+  // than for every row up front.
+  const [breakdownGuid, setBreakdownGuid] = useState<string | null>(null)
+  const { data: breakdown = [], isLoading: isBreakdownLoading, isError: isBreakdownError } = useAdjustmentLedgerBreakdown(breakdownGuid, !!breakdownGuid)
 
-  function selectStudent(found: DemoStudent) {
-    setStudent(found)
-    setSearch(found.name)
+  const createAdjustment = useCreateAdjustment()
+
+  function selectStudent(applicationGuid: string, name: string, studentGuidHint: string | null) {
+    setSelectedApplicationGuid(applicationGuid)
+    setSelectedStudentGuidHint(studentGuidHint)
+    setSearch(name)
+    setCommittedSearch('')
     setSearchFocused(false)
-    resetAll()
-    showToast(`Loaded: ${found.name}`, 'success')
+    resetForm()
+    setSuccessModal(null)
+    showToast(`Loaded: ${name}`, 'success')
+  }
+
+  function handleCancel() {
+    resetForm()
   }
 
   function handleClear() {
-    setStudent(null)
+    setSelectedApplicationGuid(null)
+    setSelectedStudentGuidHint(null)
     setSearch('')
-    resetAll()
+    setCommittedSearch('')
+    resetForm()
+    setSuccessModal(null)
     showToast('Form cleared.', 'warn')
   }
 
-  // No backing "update payment" endpoint — UI-first per request, same
-  // mock-save convention as Ledger Adjustments' AdjustLedgerModal.
-  function handleSave() {
-    if (!selectedPayment) { showToast('Please select a payment to adjust.', 'warn'); return }
-    if (!payDate) { showToast('Please select a payment date.', 'warn'); return }
-    if (!payType) { showToast('Please select a payment type.', 'warn'); return }
-    showToast(`Adjustment saved for ${selectedPayment.code}.`, 'warn')
+  function handleSubmit() {
+    if (!profile || !selectedApplicationGuid) { showToast('Please select a student first.', 'warn'); return }
+    if (!selectedDeposit) { showToast('Please select an advance deposit to draw from.', 'warn'); return }
+    if (!currencyGuid) { showToast('Please select a currency.', 'warn'); return }
+    const amt = parseFloat(amount)
+    if (!amount.trim() || isNaN(amt) || amt <= 0) { showToast('Amount must be greater than 0.', 'warn'); return }
+    if (!adjustmentDate) { showToast('Please select an adjustment date.', 'warn'); return }
+
+    createAdjustment.mutate(
+      {
+        paymentAdvanceGuid: selectedDeposit.paymentAdvanceGuid,
+        applicationGuid: selectedApplicationGuid,
+        input: { amount: amt, currencyGuid, adjustmentDate, remarks: remarks.trim() || null },
+      },
+      {
+        onSuccess: result => {
+          setSuccessModal({
+            title: 'Adjustment Recorded',
+            rows: [
+              ['Adjustment Code', result.adjustmentCode ?? '—'],
+              ['Applied', `${currencies.find(c => c.currencyGuid === currencyGuid)?.currencyName ?? ''} ${fmtAmt(result.adjustedAmount)}`.trim()],
+              ['Receipt', result.receipt],
+              ['Remaining Deposit Balance', `${selectedDeposit.currencyCode} ${fmtAmt(result.remainingAdvanceBalance)}`],
+            ],
+            notices: result.newAdvanceMessage ? [result.newAdvanceMessage] : undefined,
+          })
+          resetForm()
+        },
+        onError: (error: Error) => {
+          // Business-rule rejections (exhausted balance, missing exchange
+          // rate, nothing outstanding, concurrent settlement, …) all come
+          // back as a plain message on the generic-failure branch — surface
+          // it as-is rather than a generic "failed" toast.
+          showToast(error instanceof AuthError ? error.message : (error.message || 'Failed to record adjustment. Please try again.'), 'error')
+        },
+      },
+    )
   }
 
   return (
@@ -207,38 +309,38 @@ export default function PaymentConsoleAdjustmentsPage() {
         <div className="pg-hdr">
           <div>
             <div className="pg-title">Payment Console Adjustments</div>
-            <div className="pg-sub">Search student → pick a recorded payment → correct its date, method, bank, or remarks</div>
+            <div className="pg-sub">Search student → pick an advance deposit → apply it to outstanding tuition</div>
           </div>
           <button className="btn btn-neu" onClick={() => router.push('/finance/dashboard')}><i className="lni lni-arrow-left"></i> Back</button>
         </div>
 
-        {/* Student Search — same bar/dropdown shell as Payment Console, backed
-            by the local demo list above instead of a live search. */}
+        {/* Student Search — same bar/dropdown shell as Payment Console/Payment
+            Refund's own Student Search card. */}
         <div className="card">
           <div className="card-hdr">
             <div className="card-title"><span className="ctitle-icon"><i className="lni lni-search-alt"></i></span> Student Search</div>
           </div>
-          <div className="fg" style={{ marginBottom: 0, position: 'relative' }}>
-            <div className="lbl">Search by Student Name or Number <span className="req">*</span></div>
+          <div className="fg" style={{ marginBottom: 0, position: 'relative' }} ref={searchBoxRef}>
+            <div className="lbl">Search by Applicant Name, Ref No, Phone, or Email <span className="req">*</span></div>
             <div className="flex gap-2 flex-wrap">
               <div className="inp-wrap" style={{ flex: 1, minWidth: 180 }}>
                 <span className="inp-icon"><i className="lni lni-search-alt"></i></span>
                 <input
                   className="ctrl"
                   type="text"
-                  placeholder="e.g. 022200938 or Meghraj Rathod"
+                  placeholder="e.g. APP20222/667 or Tumukunde Alice"
                   value={search}
                   onChange={e => setSearch(e.target.value)}
                   onFocus={() => setSearchFocused(true)}
-                  onBlur={() => setTimeout(() => setSearchFocused(false), 150)}
+                  onKeyDown={e => { if (e.key === 'Enter') setCommittedSearch(search.trim()) }}
                 />
               </div>
-              {student && (
+              {selectedApplicationGuid && (
                 <button className="btn btn-neu" onClick={handleClear}><i className="lni lni-close"></i> Clear</button>
               )}
             </div>
 
-            {searchFocused && matches.length > 0 && (
+            {searchFocused && (
               <div
                 className="mt-1"
                 style={{
@@ -246,67 +348,95 @@ export default function PaymentConsoleAdjustmentsPage() {
                   background: 'var(--white)', border: '1.5px solid var(--b200)', borderRadius: 'var(--rsm)',
                   boxShadow: 'var(--neu-out)', maxHeight: 260, overflowY: 'auto',
                 }}
+                onScroll={handleSearchResultsScroll}
               >
-                {matches.map(s => (
-                  <div
-                    key={s.number}
-                    className="cursor-pointer px-3 py-2 hover:bg-b50 border-b border-g100 last:border-b-0"
-                    onMouseDown={() => selectStudent(s)}
-                  >
-                    <div className="font-bold">{s.name}</div>
-                    <div className="text-g500" style={{ fontSize: 11 }}>{s.number} · {s.programme}</div>
-                  </div>
-                ))}
+                {isSearching && matches.length === 0 ? (
+                  <div className="text-g400 text-center" style={{ padding: 16, fontSize: 12.5 }}>Searching…</div>
+                ) : isSearchError ? (
+                  <div className="text-clr-red text-center" style={{ padding: 16, fontSize: 12.5 }}><i className="lni lni-warning"></i> Search failed. Please try again.</div>
+                ) : matches.length === 0 ? (
+                  <div className="text-g400 text-center" style={{ padding: 16, fontSize: 12.5 }}>No matching applications found.</div>
+                ) : (
+                  <>
+                    {matches.map(a => (
+                      <div
+                        key={a.applicationGuid}
+                        className="cursor-pointer px-3 py-2 hover:bg-b50 border-b border-g100 last:border-b-0"
+                        onMouseDown={() => selectStudent(a.applicationGuid, searchResultName(a), a.studentGuid)}
+                      >
+                        <div className="font-bold">{searchResultName(a)}</div>
+                        <div className="text-g500" style={{ fontSize: 11 }}>{a.appRefNo}{a.phone ? ` · ${a.phone}` : ''}{a.emailId ? ` · ${a.emailId}` : ''}</div>
+                      </div>
+                    ))}
+                    {isFetchingNextPage && (
+                      <div className="text-g400 text-center" style={{ padding: 10, fontSize: 11.5 }}>Loading more…</div>
+                    )}
+                  </>
+                )}
               </div>
             )}
           </div>
         </div>
 
-        {student && (
+        {/* LEFT: Profile Details (pc-hero) · RIGHT: Outstanding Balance +
+            Adjustment form — same 50/50 pc-body split as Payment Console/
+            Payment Refund. */}
+        {selectedApplicationGuid && (
           <div className="pc-body">
-            {/* LEFT: profile hero on its own — matches Payment Console's own
-                column split, where Outstanding Balance travels with the
-                Payment Detail form on the right, not with the profile
-                card. */}
             <div className="flex flex-col gap-5 min-w-0">
-              <div className="card p-0 overflow-hidden">
-                <div className="pc-hero">
-                  <div className="pc-hero-top">
-                    <div className="pc-hero-avatar">{initialsFor(student.name)}</div>
-                    <div className="flex-1 min-w-0">
-                      <div className="pc-hero-name truncate">{student.name}</div>
-                      <div className="pc-hero-sub truncate">{student.programme}</div>
-                      <span className="pc-hero-badge"><i className="lni lni-bookmark"></i> {student.number}</span>
+              {isProfileLoading ? (
+                <div className="card text-g400 text-center" style={{ padding: 24, fontSize: 12.5 }}>Loading profile…</div>
+              ) : isProfileError || !profile ? (
+                <div className="card text-clr-red text-center" style={{ padding: 24, fontSize: 12.5 }}><i className="lni lni-warning"></i> Couldn&apos;t load this student&apos;s profile.</div>
+              ) : (
+                <div className="card p-0 overflow-hidden">
+                  <div className="pc-hero">
+                    <div className="pc-hero-top">
+                      <div className="pc-hero-avatar">{initialsFor(applicantName(profile))}</div>
+                      <div className="flex-1 min-w-0">
+                        <div className="pc-hero-name truncate">{applicantName(profile)}</div>
+                        <div className="pc-hero-sub truncate">{programName ?? '—'}</div>
+                        <span className="pc-hero-badge"><i className="lni lni-bookmark"></i> {profile.appRefNo}</span>
+                      </div>
+                    </div>
+                    <div className="pc-hero-facts">
+                      <div className="pc-hero-fact"><span className="pc-hero-fact-lbl">Campus</span><span className="pc-hero-fact-val" title={campusName ?? '—'}>{campusName ?? '—'}</span></div>
+                      <div className="pc-hero-fact"><span className="pc-hero-fact-lbl">Semester</span><span className="pc-hero-fact-val" title={semName ?? '—'}>{semName ?? '—'}</span></div>
+                      <div className="pc-hero-fact"><span className="pc-hero-fact-lbl">Fee Code</span><span className="pc-hero-fact-val" title={profile.feeCode ?? '—'}>{profile.feeCode ?? '—'}</span></div>
+                      <div className="pc-hero-fact"><span className="pc-hero-fact-lbl">Batch</span><span className="pc-hero-fact-val" title={batchCode ?? '—'}>{batchCode ?? '—'}</span></div>
                     </div>
                   </div>
-                  <div className="pc-hero-facts">
-                    <div className="pc-hero-fact"><span className="pc-hero-fact-lbl">Campus</span><span className="pc-hero-fact-val" title={student.campus}>{student.campus}</span></div>
-                    <div className="pc-hero-fact"><span className="pc-hero-fact-lbl">Semester</span><span className="pc-hero-fact-val" title={student.semester}>{student.semester}</span></div>
-                    <div className="pc-hero-fact"><span className="pc-hero-fact-lbl">Batch</span><span className="pc-hero-fact-val" title={student.batch}>{student.batch}</span></div>
-                    <div className="pc-hero-fact"><span className="pc-hero-fact-lbl">Phone</span><span className="pc-hero-fact-val" title={student.phone}>{student.phone}</span></div>
-                  </div>
                 </div>
-              </div>
+              )}
+
+              {/* Advance balance strip — per-currency undrawn total
+                  (get-advance-balance.md). Informational: the deposit
+                  picker on the right is what actually drives a draw. */}
+              {advanceBalances.length > 0 && (
+                <div className="card">
+                  <div className="card-hdr">
+                    <div className="card-title"><span className="ctitle-icon"><i className="lni lni-wallet"></i></span> Undrawn Advance Balance</div>
+                  </div>
+                  {advanceBalances.map(b => (
+                    <div className="pc-total-due" key={b.currencyGuid}>
+                      <span className="text-muted" style={{ fontSize: 12 }}>{b.currencyName}</span>
+                      <span className="font-bold text-blue" style={{ fontSize: 15 }}>{fmtAmt(b.balance)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
-            {/* RIGHT: Outstanding Balance + Payment Details merged into one
-                card, same as Payment Console's own Outstanding Balance +
-                Payment Detail card — a plain sec-divider between them, not
-                a second card-hdr. Paid Fee Details stays its own full-width
-                card below (see that card's own comment on why). */}
             <div className="flex flex-col gap-5 min-w-0">
               <div className="card">
                 <div className="card-hdr">
-                  <div className="card-title"><span className="ctitle-icon"><i className="lni lni-dollar"></i></span> Outstanding Balance</div>
+                  <div className="card-title"><span className="ctitle-icon"><i className="lni lni-dollar"></i></span> Outstanding Balance (Tuition)</div>
                 </div>
-                {/* Same gating as Payment Console's own Outstanding
-                    Balance: "fully settled" means the ledger list itself
-                    is empty (nothing to bill this semester at all), not
-                    "every line happens to already be paid" — an
-                    already-paid line (Library Deposit here) still lists
-                    with its green checkmark/"Paid" treatment rather than
-                    collapsing the whole card to the empty state. */}
-                {ledgers.length === 0 ? (
+                {isLedgersLoading ? (
+                  <div className="text-g400 text-center" style={{ padding: 16, fontSize: 12.5 }}>Loading outstanding ledgers…</div>
+                ) : isLedgersError ? (
+                  <div className="text-clr-red text-center" style={{ padding: 16, fontSize: 12.5 }}><i className="lni lni-warning"></i> Couldn&apos;t load outstanding ledgers.</div>
+                ) : outstandingLedgers.length === 0 ? (
                   <div className="text-center" style={{ padding: 24 }}>
                     <div className="pc-receipt-check" style={{ fontSize: 22 }}><i className="lni lni-checkmark-circle"></i></div>
                     <div className="font-bold text-g700" style={{ fontSize: 13.5 }}>Fully settled</div>
@@ -314,133 +444,151 @@ export default function PaymentConsoleAdjustmentsPage() {
                   </div>
                 ) : (
                   <div>
-                    {ledgers.map((l, i) => {
-                      const isPaid = l.outstanding === 0
-                      return (
-                        <div className={`pc-ledger-item${isPaid ? ' paid' : ''}`} key={`${l.name}-${i}`}>
-                          <span className="pc-ledger-icon"><i className={isPaid ? 'lni lni-checkmark-circle' : 'lni lni-invoice'}></i></span>
-                          <div className="flex-1 min-w-0">
-                            <div className="pc-ledger-name truncate">{l.name}</div>
-                            {isPaid && <div className="pc-ledger-sub">Paid</div>}
-                          </div>
-                          <span className="flex items-baseline gap-1.5 justify-end flex-shrink-0">
-                            <span className="text-g400 font-semibold" style={{ fontSize: 11 }}>{l.currency}</span>
-                            <span className={isPaid ? 'font-bold text-green' : 'font-bold text-amber'}>
-                              {fmtAmt(isPaid ? l.paid : l.outstanding)}
-                            </span>
-                          </span>
-                        </div>
-                      )
-                    })}
-                    {/* Grouped per currency, same as Payment Console's own
-                        ledgerTotals — matters once a student carries
-                        ledgers in more than one currency. */}
-                    {Object.entries(
-                      ledgers.reduce<Record<string, number>>((acc, l) => {
-                        if (l.outstanding > 0) acc[l.currency] = (acc[l.currency] ?? 0) + l.outstanding
-                        return acc
-                      }, {}),
-                    ).map(([currency, total]) => (
-                      <div className="pc-total-due" key={currency}>
-                        <span className="text-muted" style={{ fontSize: 12 }}>Total Due ({currency})</span>
-                        <span className="font-bold text-amber" style={{ fontSize: 15 }}>{fmtAmt(total)}</span>
+                    {/* Same conversion presentation as Payment Console's own
+                        Outstanding Balance table — Scheduled Bill/Outstanding
+                        converted into whichever currency is picked in Apply
+                        Advance below (that field does double duty as the
+                        conversion target, same as Payment Console's Currency
+                        Received), while Scheduled Amt/Paid stay native to
+                        each ledger's own currency. convertAmount now treats
+                        a 0 rate the same as a missing one, so an
+                        unconvertible ledger cleanly shows "—" instead of the
+                        ∞/NaN this used to produce when today's rate for a
+                        currency hadn't been entered yet. */}
+                    <div className="text-g400 mb-2" style={{ fontSize: 11.5 }}>
+                      Converted to {targetCurrencyName || 'the currency picked below'} — set via <b>Currency</b> in Apply Advance.
+                    </div>
+                    {hasUnconvertibleLedger && (
+                      <div className="warn-box mb-3">
+                        <i className="lni lni-warning" style={{ color: 'var(--amber)', fontSize: 15, flexShrink: 0, marginTop: 1 }}></i>
+                        <div>Some ledgers couldn&apos;t be converted to {targetCurrencyName || 'the selected currency'} — no exchange rate is on file for today for that currency. Those rows show <span className="font-mono">—</span> below; the total only includes what could be converted.</div>
                       </div>
-                    ))}
+                    )}
+                    <div className="recgrid">
+                      <div className="recgrid-row recgrid-hdr">
+                        <span>Ledger</span>
+                        <span>Scheduled Amt</span>
+                        <span>Scheduled Bill</span>
+                        <span>Paid</span>
+                        <span>Outstanding</span>
+                      </div>
+                      {convertedLedgers.map((l, i) => {
+                        const isPaid = l.outstanding === 0
+                        return (
+                          <div className="recgrid-row recgrid-body" key={`${l.ledgerGuid ?? l.ledgerName}-${i}`}>
+                            <span>
+                              {l.ledgerName}{l.ledgerNum ? ` (${l.ledgerNum})` : ''}
+                              {isPaid && <span className="text-green" style={{ fontSize: 11, fontWeight: 600, marginLeft: 6 }}>Paid</span>}
+                              {l.semesterName && <span className="pc-ledger-sub" style={{ display: 'block' }}>{l.semesterName}</span>}
+                            </span>
+                            <span data-label="Scheduled Amt">
+                              <span>
+                                {fmtAmt(l.ledgerAmount)}
+                                <span className="text-g400" style={{ display: 'block', fontSize: 11, fontWeight: 600 }}>({l.currencyName})</span>
+                              </span>
+                            </span>
+                            <span data-label="Scheduled Bill">{l.convScheduled != null ? fmtAmt(l.convScheduled) : '—'}</span>
+                            <span data-label="Paid" className="font-bold text-green">
+                              <span>
+                                {fmtAmt(l.paidAmount)}
+                                <span className="text-g400" style={{ display: 'block', fontSize: 11, fontWeight: 600 }}>({l.currencyName})</span>
+                              </span>
+                            </span>
+                            <span data-label="Outstanding" className={isPaid ? 'font-bold text-green' : 'font-bold text-amber'}>{l.convOutstanding != null ? fmtAmt(l.convOutstanding) : '—'}</span>
+                          </div>
+                        )
+                      })}
+                      <div className="recgrid-foot recgrid-total">
+                        <span>Total Outstanding {targetCurrencyName && `(${targetCurrencyName})`}</span>
+                        <span style={{ color: 'var(--amber)' }}>{fmtAmt(convertedTotalOutstanding)}</span>
+                      </div>
+                    </div>
                   </div>
                 )}
 
-                {/* Text/icon color matched to the Outstanding Balance
-                    card-title above (var(--g900), the same ctitle-icon
-                    wrapper) instead of .sec-divider's own default blue —
-                    per request, so the two section headers stacked in this
-                    one card read as the same color language. */}
                 <div className="sec-divider" style={{ color: 'var(--g900)' }}>
-                  <span className="ctitle-icon"><i className="lni lni-pencil-alt"></i></span> Payment Detail
+                  <span className="ctitle-icon"><i className="lni lni-reload"></i></span> Apply Advance
                 </div>
 
-                <div className="fg mb-[14px]">
-                  <label className="flex items-center gap-2" style={{ fontSize: 'var(--fs-sm)', cursor: 'pointer' }}>
-                    <input type="checkbox" checked={editPreviousSemester} onChange={e => { setEditPreviousSemester(e.target.checked); resetAll() }} />
-                    Edit Previous Semester Payments
-                  </label>
-                  <div className="text-g400 mt-1" style={{ fontSize: 11 }}>
-                    {editPreviousSemester ? 'Showing every recorded payment.' : 'Showing this semester’s payments only.'}
+                {/* Nothing to apply without a drawable deposit — an empty
+                    picker plus a stack of disabled fields underneath it
+                    just repeats the same "nothing here" message four times
+                    over, so the whole form is gated on there being at least
+                    one option instead. */}
+                {isDepositsLoading ? (
+                  <div className="text-g400 text-center" style={{ padding: '12px 0', fontSize: 12.5 }}>Loading advance deposits…</div>
+                ) : isDepositsError ? (
+                  <div className="text-clr-red text-center" style={{ padding: '12px 0', fontSize: 12.5 }}><i className="lni lni-warning"></i> Couldn&apos;t load advance deposits.</div>
+                ) : deposits.length === 0 ? (
+                  <div className="text-g400 text-center" style={{ padding: '12px 0', fontSize: 12.5 }}>
+                    No drawable advance deposits for this application — nothing to apply until one exists.
                   </div>
-                </div>
-
-                <div className="fg mb-[14px]">
-                  <div className="lbl">Payment Code <span className="req">*</span></div>
-                  <div
-                    className="inp-wrap"
-                    style={{ cursor: adjustablePayments.length === 0 ? 'not-allowed' : 'pointer' }}
-                    onClick={() => adjustablePayments.length > 0 && setShowPaymentPicker(true)}
-                  >
-                    <span className="inp-icon"><i className="lni lni-search-alt"></i></span>
-                    <input
-                      className="ctrl"
-                      readOnly
-                      style={{ cursor: 'inherit' }}
-                      placeholder="— Click to select a payment —"
-                      value={selectedPayment ? `${selectedPayment.code} — ${selectedPayment.currency} ${fmtAmt(selectedPayment.amount)}` : ''}
-                    />
-                  </div>
-                  {adjustablePayments.length === 0 && (
-                    <div className="text-g400 mt-1" style={{ fontSize: 11 }}>No payments recorded for this scope yet.</div>
-                  )}
-                </div>
-
-                {selectedPayment && (
+                ) : (
                   <>
-                    {/* Live summary strip — same gradient "billing app"
-                        card-mockup treatment Payment Console uses for its
-                        own Amount to Collect preview, adapted here to show
-                        what's actually being adjusted. */}
-                    <div className="pc-pay-summary">
-                      <div>
-                        <div className="pc-pay-lbl">Adjusting Payment</div>
-                        <div className="pc-pay-amt" style={{ fontSize: 18 }}>{selectedPayment.code}</div>
-                      </div>
-                      <div className="pc-pay-meta">
-                        <div><span>Amount</span><b>{selectedPayment.currency} {fmtAmt(selectedPayment.amount)}</b></div>
-                        <div><span>Original Date</span><b>{selectedPayment.date}</b></div>
-                      </div>
-                    </div>
                     <div className="g2 mb-[14px]">
                       <div className="fg">
-                        <div className="lbl">Payment Date <span className="req">*</span></div>
-                        <DatePicker value={payDate} onChange={setPayDate} />
+                        <div className="lbl">Advance Deposit <span className="req">*</span></div>
+                        <SearchSelect
+                          placeholder="— Select a deposit —"
+                          options={deposits.map(d => ({
+                            value: d.paymentAdvanceGuid,
+                            label: `${d.advPaymentCode} — ${d.currencyCode} ${fmtAmt(d.balance)} available`,
+                          }))}
+                          value={paymentAdvanceGuid}
+                          onChange={setPaymentAdvanceGuid}
+                        />
                       </div>
                       <div className="fg">
-                        <div className="lbl">Payment Type <span className="req">*</span></div>
-                        <SearchSelect options={MOCK_PAY_TYPES} value={payType} onChange={setPayType} />
+                        <div className="lbl">Deposit Balance</div>
+                        <input
+                          className="ctrl"
+                          readOnly
+                          value={selectedDeposit ? `${selectedDeposit.currencyName} ${fmtAmt(selectedDeposit.balance)}` : ''}
+                          placeholder="—"
+                        />
                       </div>
                     </div>
+
                     <div className="g2 mb-[14px]">
                       <div className="fg">
-                        <div className="lbl">Range <span className="text-g400" style={{ fontWeight: 500 }}>(optional)</span></div>
-                        <input className="ctrl" type="text" placeholder="e.g. Receipt range" value={range} onChange={e => setRange(e.target.value)} />
+                        <div className="lbl">Amount to Apply <span className="req">*</span></div>
+                        <input
+                          className="ctrl"
+                          type="number"
+                          placeholder="0.00"
+                          value={amount}
+                          onChange={e => setAmount(e.target.value)}
+                          disabled={!selectedDeposit}
+                        />
                       </div>
-                      {payType !== 'Cash' && (
-                        <div className="fg">
-                          <div className="lbl">Bank Account</div>
-                          <SearchSelect
-                            placeholder="— Select Bank —"
-                            options={MOCK_BANKS}
-                            value={bankAccount}
-                            onChange={setBankAccount}
-                          />
-                        </div>
-                      )}
+                      <div className="fg">
+                        <div className="lbl">Currency <span className="req">*</span></div>
+                        <SearchSelect
+                          placeholder="— Select currency —"
+                          options={currencies.map(c => ({ value: c.currencyGuid, label: `${c.currencyCode} — ${c.currencyName}` }))}
+                          value={currencyGuid}
+                          onChange={setCurrencyGuid}
+                          disabled={!selectedDeposit}
+                        />
+                      </div>
                     </div>
-                    <div className="fg mb-4">
-                      <div className="lbl">Remarks</div>
-                      <textarea className="ctrl" rows={2} placeholder="Reason for this adjustment" value={remarks} onChange={e => setRemarks(e.target.value)} />
+
+                    <div className="g2 mb-[14px]">
+                      <div className="fg">
+                        <div className="lbl">Adjustment Date <span className="req">*</span></div>
+                        <DatePicker value={adjustmentDate} onChange={setAdjustmentDate} />
+                      </div>
+                      <div className="fg">
+                        <div className="lbl">Remarks <span className="text-g400" style={{ fontWeight: 500 }}>(optional)</span></div>
+                        <textarea className="ctrl" rows={1} placeholder="Defaults to “Advance Adjustment”" value={remarks} onChange={e => setRemarks(e.target.value)} disabled={!selectedDeposit} />
+                      </div>
                     </div>
 
                     <div className="flex gap-[10px] justify-end flex-wrap">
-                      <button className="btn btn-neu" onClick={() => selectPayment(paymentGuid)}><i className="lni lni-reload"></i> Refresh</button>
-                      <button className="btn btn-neu" onClick={resetAll}><i className="lni lni-close"></i> Cancel</button>
-                      <button className="btn btn-primary btn-lg" onClick={handleSave}><i className="lni lni-checkmark"></i> OK</button>
+                      <button className="btn btn-neu" onClick={handleCancel}><i className="lni lni-close"></i> Cancel</button>
+                      <button className="btn btn-primary btn-lg" disabled={createAdjustment.isPending} onClick={handleSubmit}>
+                        <i className="lni lni-checkmark"></i> {createAdjustment.isPending ? 'Submitting…' : 'Apply Advance'}
+                      </button>
                     </div>
                   </>
                 )}
@@ -449,32 +597,33 @@ export default function PaymentConsoleAdjustmentsPage() {
           </div>
         )}
 
-        {/* Paid Fee Details — full width below the 2-column body rather than
-            squeezed into the (narrower) right column: a 6-column table next
-            to a much shorter left column (hero + a handful of ledger rows)
-            left an awkward empty gap under the left column once this table
-            ran on past it. Full width also just gives a wide table more
-            room. */}
-        {student && (
+        {/* Adjustment history for the currently-picked deposit
+            (get-adjustments-by-advance.md) — full width, same convention as
+            Payment Refund's own Refund Details table. Click a row for its
+            ledger breakdown. */}
+        {selectedApplicationGuid && paymentAdvanceGuid && (
           <div className="card">
             <div className="card-hdr">
-              <div className="card-title"><span className="ctitle-icon"><i className="lni lni-folder"></i></span> Paid Fee Details</div>
+              <div className="card-title"><span className="ctitle-icon"><i className="lni lni-folder"></i></span> Adjustment History — {selectedDeposit?.advPaymentCode}</div>
             </div>
-            {payments.length === 0 ? (
-              <div className="text-g400 text-center" style={{ padding: 16, fontSize: 12.5 }}>No payment history for this application.</div>
+            {isHistoryLoading ? (
+              <div className="text-g400 text-center" style={{ padding: 16, fontSize: 12.5 }}>Loading adjustment history…</div>
+            ) : isHistoryError ? (
+              <div className="text-clr-red text-center" style={{ padding: 16, fontSize: 12.5 }}><i className="lni lni-warning"></i> Couldn&apos;t load adjustment history.</div>
+            ) : adjustmentHistory.length === 0 ? (
+              <div className="text-g400 text-center" style={{ padding: 16, fontSize: 12.5 }}>No adjustments recorded against this deposit yet.</div>
             ) : (
               <ScrollTable className="no-sticky-col">
                 <table>
-                  <thead><tr><th>Payment Code</th><th>Amount</th><th>Currency</th><th>Book Code</th><th>Receipt</th><th>Payment Date</th></tr></thead>
+                  <thead><tr><th>Adjustment Code</th><th>Amount</th><th>Currency</th><th>Date</th><th>Receipt</th></tr></thead>
                   <tbody>
-                    {payments.map(p => (
-                      <tr key={p.guid} className={p.guid === paymentGuid ? 'bg-b50' : undefined}>
-                        <td className="font-mono">{p.code}</td>
-                        <td className="text-green font-bold">{fmtAmt(p.amount)}</td>
-                        <td>{p.currency}</td>
-                        <td>{p.bookCode}</td>
-                        <td className="font-mono text-blue">{p.receipt}</td>
-                        <td>{p.date}</td>
+                    {adjustmentHistory.map(a => (
+                      <tr key={a.adjustmentGuid} className="cursor-pointer hover:bg-b50" onClick={() => setBreakdownGuid(a.adjustmentGuid)}>
+                        <td className="font-mono text-blue">{a.adjustmentCode ?? '—'}</td>
+                        <td className="text-green font-bold">{fmtAmt(a.adjustedAmount)}</td>
+                        <td>{a.currencyName ?? '—'}</td>
+                        <td>{formatDate(a.adjustmentDate)}</td>
+                        <td className="font-mono">{a.receipt}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -485,45 +634,56 @@ export default function PaymentConsoleAdjustmentsPage() {
         )}
       </div>
 
-      {/* Payment Code picker — matches the reference screen's own popup
-          table (Payment Code/Amount/Currency/Book Code/Receipt/Payment
-          Date columns), scoped by the same Edit Previous Semester Payments
-          toggle as the field it backs. */}
-      {showPaymentPicker && (
-        <div className="modal-overlay open" onClick={() => setShowPaymentPicker(false)}>
+      {/* Ledger breakdown for one adjustment row
+          (get-adjustment-ledger-breakdown.md) — what the applied money
+          actually settled, ledger by ledger. */}
+      {breakdownGuid && (
+        <div className="modal-overlay open" onClick={() => setBreakdownGuid(null)}>
           <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
             <div className="modal-hdr modal-hdr-blue">
-              <div className="modal-title"><i className="lni lni-search-alt"></i> Select Payment</div>
-              <button className="modal-close" onClick={() => setShowPaymentPicker(false)}>✕</button>
+              <div className="modal-title"><i className="lni lni-list"></i> Adjustment Ledger Breakdown</div>
+              <button className="modal-close" onClick={() => setBreakdownGuid(null)}><i className="lni lni-close"></i></button>
             </div>
-            <ScrollTable className="no-sticky-col">
-              <table>
-                <thead><tr><th>Payment Code</th><th>Amount</th><th>Currency</th><th>Book Code</th><th>Receipt</th><th>Payment Date</th></tr></thead>
-                <tbody>
-                  {adjustablePayments.map(p => (
-                    <tr
-                      key={p.guid}
-                      className="cursor-pointer hover:bg-b50"
-                      style={{ background: p.guid === paymentGuid ? 'var(--b50)' : undefined }}
-                      onClick={() => selectPayment(p.guid)}
-                    >
-                      <td className="font-mono text-blue">{p.code}</td>
-                      <td className="font-bold">{fmtAmt(p.amount)}</td>
-                      <td>{p.currency}</td>
-                      <td>{p.bookCode}</td>
-                      <td className="font-mono">{p.receipt}</td>
-                      <td>{p.date}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </ScrollTable>
+            {isBreakdownLoading ? (
+              <div className="text-g400 text-center" style={{ padding: 16, fontSize: 12.5 }}>Loading breakdown…</div>
+            ) : isBreakdownError ? (
+              <div className="text-clr-red text-center" style={{ padding: 16, fontSize: 12.5 }}><i className="lni lni-warning"></i> Couldn&apos;t load this adjustment&apos;s breakdown.</div>
+            ) : breakdown.length === 0 ? (
+              <div className="text-g400 text-center" style={{ padding: 16, fontSize: 12.5 }}>No ledger lines found for this adjustment.</div>
+            ) : (
+              <ScrollTable className="no-sticky-col">
+                <table>
+                  <thead><tr><th>Ledger</th><th>Semester</th><th>Amount</th><th>Currency</th></tr></thead>
+                  <tbody>
+                    {breakdown.map((l, i) => (
+                      <tr key={`${l.ledgerGuid}-${i}`}>
+                        <td>
+                          {l.isDiscountLine ? `${l.ledgerName} (Discount${l.discountName ? `: ${l.discountName}` : ''})` : l.isRoundingLine ? `${l.ledgerName} (Round-off)` : l.ledgerName}
+                        </td>
+                        <td>{l.semName ?? '—'}</td>
+                        <td className={l.isDiscountLine ? 'text-red font-bold' : 'font-bold'}>{fmtAmt(l.amount)}</td>
+                        <td>{l.currencyName}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </ScrollTable>
+            )}
             <div className="modal-footer">
-              <button className="btn btn-neu" onClick={() => setShowPaymentPicker(false)}>Close</button>
+              <button className="btn btn-neu" onClick={() => setBreakdownGuid(null)}>Close</button>
             </div>
           </div>
         </div>
       )}
+
+      <PaymentSuccessModal
+        isOpen={!!successModal}
+        onClose={() => setSuccessModal(null)}
+        showToast={showToast}
+        title={successModal?.title ?? ''}
+        rows={successModal?.rows ?? []}
+        notices={successModal?.notices}
+      />
       <Toast toast={toast} />
     </>
   )

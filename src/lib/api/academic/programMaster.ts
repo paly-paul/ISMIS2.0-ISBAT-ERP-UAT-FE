@@ -76,7 +76,12 @@ export interface ProgramMasterInput {
   // the key entirely when unset rather than sending "T00:00:00" with no
   // actual date, which the backend was silently accepting as a bogus date.
   dateAcc: string | null
-  streamGuid: string
+  // Backend confirmed create/update now accept the full multi-select as an
+  // array (was a single streamGuid — the old contract only ever took the
+  // first pick, silently dropping the rest). Empty array omits the field
+  // entirely, same "omit rather than send blank" convention as elsewhere on
+  // this DTO.
+  streamGuids: string[]
   intakeGuid: string
   programUnits: ProgramUnitInput[]
   feeStructures: FeeStructureInput[]
@@ -159,6 +164,14 @@ function appendProgramUnits(formData: FormData, units: ProgramUnitInput[]) {
   })
 }
 
+// Header-level Specializations — indexed bracket notation, same convention
+// as ProgramUnits[]/FeeStructures[] above (StreamGuids[0], StreamGuids[1], …)
+// rather than a repeated bare key, so the same form parser that already
+// handles the nested collections binds this one the same way.
+function appendStreamGuids(formData: FormData, streamGuids: string[]) {
+  streamGuids.forEach((guid, i) => formData.append(`StreamGuids[${i}]`, guid))
+}
+
 function appendFeeStructures(formData: FormData, structures: FeeStructureInput[]) {
   structures.forEach((s, i) => {
     formData.append(`FeeStructures[${i}][FeeCode]`, s.feeCode)
@@ -215,7 +228,7 @@ export function createProgramMaster(input: ProgramMasterInput): Promise<ProgramM
       lateFee: input.lateFee,
       currencyGuid: input.currencyGuid || null,
       intakeGuid: input.intakeGuid,
-      streamGuids: [input.streamGuid],
+      streamGuids: input.streamGuids,
       semesters: [],
     }
     mockProgramMasters.push(program)
@@ -241,10 +254,11 @@ export function createProgramMaster(input: ProgramMasterInput): Promise<ProgramM
   // unset is safe — same "omit rather than send a bogus value" convention
   // as streamGuid/intakeGuid below.
   if (input.dateAcc) formData.append('dateAcc', input.dateAcc)
-  // Specialization is optional now — this can legitimately be empty. Omit
-  // the key rather than send an empty string (see the note on
-  // ProgramUnits[].StreamGuid above — confirmed with the backend team).
-  if (input.streamGuid) formData.append('streamGuid', input.streamGuid)
+  // Specializations are optional now — this can legitimately be empty. Omit
+  // the field rather than send anything when nothing's selected (see the
+  // note on ProgramUnits[].StreamGuid above — confirmed with the backend
+  // team).
+  appendStreamGuids(formData, input.streamGuids)
   // intakeGuid is meant to always be auto-filled from the Current Academic
   // Intake before this ever fires, but guard the same way in case that
   // hasn't resolved yet — an omitted key fails as a clear "required field
@@ -310,7 +324,7 @@ export function createProgramMasterStep1(input: ProgramMasterCreateInput): Promi
       lateFee: input.lateFee,
       currencyGuid: input.currencyGuid || null,
       intakeGuid: input.intakeGuid,
-      streamGuids: [input.streamGuid],
+      streamGuids: input.streamGuids,
       semesters: [
         { semesterGuid: `mock-sem-${mockProgramSeq}-1`, semCode: 1, semName: 'Year One - Semester One' },
         { semesterGuid: `mock-sem-${mockProgramSeq}-2`, semCode: 2, semName: 'Year One - Semester Two' },
@@ -335,7 +349,7 @@ export function createProgramMasterStep1(input: ProgramMasterCreateInput): Promi
   // Same "omit rather than send a bogus/empty value" conventions as
   // createProgramMaster above — see its comments on these same fields.
   if (input.dateAcc) formData.append('dateAcc', input.dateAcc)
-  if (input.streamGuid) formData.append('streamGuid', input.streamGuid)
+  appendStreamGuids(formData, input.streamGuids)
   if (input.intakeGuid) formData.append('intakeGuid', input.intakeGuid)
   if (input.accLetterFile) formData.append('accLetterFile', input.accLetterFile)
   return apiPostForm<ProgramMasterCreated>('/api/v1/academic/program-master', formData)
@@ -521,7 +535,9 @@ export interface ProgramMasterUpdateInput {
   currencyGuid: string
   // Optional, same as Create's — see the note on ProgramMasterInput.dateAcc.
   dateAcc: string | null
-  streamGuid: string
+  // Same array-not-singular fix as ProgramMasterInput.streamGuids above —
+  // backend confirmed update takes the full multi-select too.
+  streamGuids: string[]
   intakeGuid: string
   programUnits: ProgramUnitUpdateInput[]
   feeStructures: FeeStructureUpdateInput[]
@@ -596,7 +612,7 @@ export function updateProgramMasterComplete(programGuid: string, input: ProgramM
       facultyGuid: input.facultyGuid,
       currencyGuid: input.currencyGuid,
       dateAcc: input.dateAcc ?? existing.dateAcc,
-      streamGuids: [input.streamGuid],
+      streamGuids: input.streamGuids,
       intakeGuid: input.intakeGuid,
     })
     return Promise.resolve(existing)
@@ -617,10 +633,11 @@ export function updateProgramMasterComplete(programGuid: string, input: ProgramM
   // Same "omit rather than send a bogus date" fix as Create — see the note
   // on ProgramMasterInput.dateAcc.
   if (input.dateAcc) formData.append('dateAcc', input.dateAcc)
-  // Specialization is optional now — this can legitimately be empty. Omit
-  // the key rather than send an empty string (see the note on
-  // ProgramUnits[].StreamGuid above — confirmed with the backend team).
-  if (input.streamGuid) formData.append('streamGuid', input.streamGuid)
+  // Specializations are optional now — this can legitimately be empty. Omit
+  // the field rather than send anything when nothing's selected (see the
+  // note on ProgramUnits[].StreamGuid above — confirmed with the backend
+  // team).
+  appendStreamGuids(formData, input.streamGuids)
   // Same guard as Create — intakeGuid should always be auto-filled by this
   // point, but omit rather than send empty if it somehow isn't.
   if (input.intakeGuid) formData.append('intakeGuid', input.intakeGuid)

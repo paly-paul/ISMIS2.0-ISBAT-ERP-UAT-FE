@@ -31,3 +31,18 @@ export function getFinanceCurrencies(): Promise<FinanceCurrency[]> {
   if (MOCK_AUTH) return Promise.resolve(mockFinanceCurrencies)
   return apiGet<FinanceCurrencyListResponse | null>('/api/v1/finance/currencies').then(data => data?.items ?? [])
 }
+
+// Shared "what should a blank currency picker start on" default across
+// Finance's transactional forms (Payment Console's Other Payment tab,
+// Payment Refund, Payment Console Adjustments, New Advance Deposit) —
+// ISBAT is a Uganda-based institution, so UGX is the overwhelmingly common
+// case; per request, default to it rather than leaving the picker empty.
+// Prefers the backend's own `isDefault` flag first (so this stays correct
+// if that ever gets configured to something else) and only falls back to
+// matching the `UGX` code directly when no row is flagged, then to the
+// first currency in the list as a last resort so the picker is never left
+// on a value that isn't actually one of the options.
+export function getDefaultFinanceCurrencyGuid(currencies: FinanceCurrency[]): string {
+  const preferred = currencies.find(c => c.isDefault === 1) ?? currencies.find(c => c.currencyCode === 'UGX')
+  return preferred?.currencyGuid ?? currencies[0]?.currencyGuid ?? ''
+}

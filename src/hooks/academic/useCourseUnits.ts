@@ -1,6 +1,6 @@
-import { useMutation, useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
+import { useInfiniteQuery, useMutation, useQueries, useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import {
-  createCourseUnit, deleteCourseUnit, getCourseUnits, getCourseUnitWithDetails, updateCourseUnit,
+  createCourseUnit, deleteCourseUnit, getCourseUnitById, getCourseUnits, getCourseUnitWithDetails, updateCourseUnit,
   CourseUnit, CourseUnitInput, CourseUnitListResponse, CourseUnitWithDetails, CourseUnitOutlineDetail, CourseUnitTopicDetail,
 } from '@/lib/api/academic/courseUnit'
 import { upsertCourseUnitOutlines, UpsertCourseUnitOutlineInput } from '@/lib/api/academic/courseUnitOutlines'
@@ -47,6 +47,58 @@ export function useAllCourseUnits(enabled = true) {
     gcTime: Infinity,
     enabled,
   })
+}
+
+// Search-as-you-type/scroll picker, backing ProgrammeModal's Course Unit
+// Allocation dropdown — same useInfiniteQuery + fetch-next-on-scroll pattern
+// Payment Console's useSearchStudentsInfinite (usePaymentConsole.ts) uses
+// for its own student search box. Was useAllCourseUnits() (a flat
+// SearchSelect over a capped 1000-row snapshot) until a confirmed live
+// example of 1,500 real course units proved that cap silently drops
+// anything past it — see getCourseUnits' own comment above documenting
+// that exact case for the (already-fixed) course-units table page. Reuses
+// getCourseUnits' real ?search= server-side filter (get-courseunits.md)
+// rather than filtering client-side, so results stay correct no matter how
+// large the real table gets.
+export function useSearchCourseUnitsInfinite(search: string, pageSize: number, enabled: boolean) {
+  return useInfiniteQuery({
+    queryKey: [...COURSE_UNITS_KEY, 'search-infinite', search, pageSize],
+    queryFn: ({ pageParam }) => getCourseUnits(pageParam, pageSize, search),
+    initialPageParam: 1,
+    getNextPageParam: (lastPage, allPages) => {
+      const fetched = allPages.reduce((sum, p) => sum + p.items.length, 0)
+      return fetched < lastPage.totalCount ? allPages.length + 1 : undefined
+    },
+    enabled,
+    staleTime: Infinity,
+    gcTime: Infinity,
+  })
+}
+
+// Batched-by-guid lookup — used by ProgrammeModal's Edit-mode prefill to
+// resolve maxCredits for a bounded set of specific course units (the ones
+// already on the programme being edited), NOT a substitute for browsing the
+// full table. Deliberately narrow: one cached query per guid via the plain
+// getCourseUnitById (not the heavier getCourseUnitWithDetails useCourseUnit
+// uses, which also pulls outlines this doesn't need) — a programme's own
+// course units are a small, bounded set regardless of how large the
+// university's full course-unit table gets, which is exactly why the old
+// useAllCourseUnits() 1000-row snapshot this replaces was the wrong tool
+// for this (see useSearchCourseUnitsInfinite's own comment for the bug that
+// caused).
+export function useCourseUnitsByGuids(guids: string[]) {
+  const unique = Array.from(new Set(guids.filter(Boolean)))
+  const results = useQueries({
+    queries: unique.map(guid => ({
+      queryKey: [...COURSE_UNITS_KEY, guid, 'by-id'],
+      queryFn: () => getCourseUnitById(guid),
+      staleTime: Infinity,
+      gcTime: Infinity,
+    })),
+  })
+  const byGuid = new Map<string, CourseUnit>()
+  results.forEach((r, i) => { if (r.data) byGuid.set(unique[i], r.data) })
+  return byGuid
 }
 
 export function useCreateCourseUnit() {

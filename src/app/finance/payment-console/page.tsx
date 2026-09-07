@@ -3,16 +3,19 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Toast } from '@/components/Toast'
 import { ScrollTable } from '@/components/ScrollTable'
+import { ActionMenu } from '@/components/ActionMenu'
 import { Pagination } from '@/components/Pagination'
 import { PaymentSuccessModal } from '@/components/modals/finance/PaymentSuccessModal'
 import { AdvanceDepositPickerModal } from '@/components/modals/finance/AdvanceDepositPickerModal'
+import { ViewPaymentModal } from '@/components/modals/finance/ViewPaymentModal'
+import { EditPaymentModal, EditablePaymentTarget } from '@/components/modals/finance/EditPaymentModal'
 import DatePicker from '@/components/DatePicker'
 import { SearchSelect } from '@/components/SearchSelect'
 import { useProcBanks } from '@/hooks/finance/useProcBanks'
 import { useReceiptBooks } from '@/hooks/finance/useReceiptBooks'
-import { useFinanceCurrencies } from '@/hooks/finance/useFinanceCurrencies'
-import { useExchangeRatesByDate, useCreateExchangeRate, useUpdateExchangeRate } from '@/hooks/finance/useExchangeRates'
-import { PaymentAdvance } from '@/hooks/finance/usePayments'
+import { useFinanceCurrencies, getDefaultFinanceCurrencyGuid } from '@/hooks/finance/useFinanceCurrencies'
+import { useExchangeRatesByDate, useCreateExchangeRate, useUpdateExchangeRate, ExchangeRate } from '@/hooks/finance/useExchangeRates'
+import { PaymentAdvance, useAdvanceStatusByPayment } from '@/hooks/finance/usePayments'
 import { useCampuses } from '@/hooks/config/useCampuses'
 import { useProgramMasters } from '@/hooks/academic/useProgramMaster'
 import { useBatches } from '@/hooks/academic/useBatches'
@@ -32,7 +35,9 @@ import {
   PAY_TYPE_TO_RECEIPT_CATEGORY,
   AllOutstandingItem,
   CurrentSemesterPayableTotal,
+  PaymentHistoryEntry,
 } from '@/hooks/finance/usePaymentConsole'
+import { usePaymentOthersList } from '@/hooks/finance/usePaymentOthers'
 import { formatDateTime } from '@/lib/date'
 import { AuthError } from '@/lib/api/client'
 
@@ -89,18 +94,35 @@ function fmtAmt(n: number) {
   return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
+// Stable reference for todayRates' "no data yet" case — `data = []` as a
+// destructuring default creates a NEW array literal every render while
+// `data` is undefined (loading, or between an invalidation and its refetch
+// resolving), not just once per actual fetch. That new reference fed
+// straight into the rateBarInputs effect's dependency array below, so the
+// effect fired every render, called setRateBarInputs, triggered a
+// re-render, got a new [] again, and looped forever ("Maximum update depth
+// exceeded", confirmed live) — same bug, same fix as exchange-rates/
+// page.tsx's own EMPTY_RATES. A module-level constant has one identity for
+// the app's whole lifetime.
+const EMPTY_RATES: ExchangeRate[] = []
+
 // Currency conversion for Outstanding Balance's Scheduled Bill/Outstanding
-// figures (per request, 2026-09-04) — exRate (exchange-rates/get-exchange-
-// rate-by-guid.md, confirmed via the Exchange Rates page's own "{currency}
-// per 1 {base}" label) is "this currency's units per 1 unit of the base
-// currency" (Currency Master's isDefault=1 row), never a direct rate
-// between two arbitrary currencies. Converting A→B always routes through
-// the base: amountInBase = amount / rateA, amountInB = amountInBase * rateB.
-// The base currency itself has an implicit rate of 1 against itself — it
-// has no row in the exchange-rates board at all. Returns null (not a
-// fallback guess) when either currency's rate can't be resolved — a ledger
-// with no currencyGuid, or a currency with no rate on file for today — so
-// callers can show "no rate available" instead of silently wrong math.
+// figures (per request, 2026-09-04). exRate was previously assumed to be
+// "this currency's units per 1 unit of the base currency" (a small fraction
+// for anything stronger than the base, e.g. USD ≈ 0.00026) — confirmed
+// WRONG against a real get-exchange-rate-exists response: USD came back as
+// exRate: 3774.90 and KSH as exRate: 29.16, both of which are exactly
+// "1 {currency} = {exRate} {base}" (real UGX/USD and UGX/KSH rates), not a
+// tiny fraction. exRate is actually base-currency units per 1 unit of the
+// given currency, the reverse of what this used to assume. Converting A→B
+// always routes through the base: amountInBase = amount * rateA (rateA
+// units of base per unit of A), amountInB = amountInBase / rateB. The base
+// currency itself has an implicit rate of 1 against itself (unaffected by
+// which direction that identity multiplication/division goes) — it has no
+// row in the exchange-rates board at all. Returns null (not a fallback
+// guess) when either currency's rate can't be resolved — a ledger with no
+// currencyGuid, or a currency with no rate on file for today — so callers
+// can show "no rate available" instead of silently wrong math.
 function convertAmount(
   amount: number,
   fromGuid: string | null,
@@ -112,8 +134,17 @@ function convertAmount(
   if (fromGuid === toGuid) return amount
   const fromRate = fromGuid === baseGuid ? 1 : ratesByGuid.get(fromGuid)
   const toRate = toGuid === baseGuid ? 1 : ratesByGuid.get(toGuid)
-  if (fromRate == null || toRate == null) return null
-  return (amount / fromRate) * toRate
+  // A rate of exactly 0 is never a real "no rate available" — no currency
+  // trades at 0 units per 1 base — but it slips past the `== null` check
+  // above (0 isn't null), and amount / 0 produces Infinity, which then
+  // propagates into NaN once anything downstream multiplies/subtracts it.
+  // Confirmed root cause of the "∞ Total Payable / NaN Discount" bug: a
+  // currency the cashier hasn't entered today's rate for yet (e.g. USD/KSH
+  // before the Exchange Rates bar is filled in) can come back from the
+  // by-date board as an exRate: 0 row instead of being omitted entirely.
+  // Treat it the same as a missing rate — return null so callers show "—".
+  if (fromRate == null || toRate == null || fromRate <= 0 || toRate <= 0) return null
+  return (amount * fromRate) / toRate
 }
 
 function applicantName(a: { firstName: string | null; lastName: string | null }) {
@@ -167,15 +198,18 @@ const SHOW_ALLOCATION_PREVIEW: boolean = false
 
 // Gate for Other Payment's own "Paid Fee Details" log — commented out (not
 // removed) per request, now that the left column's Payment History card
-// already shows this application's Other-category payments (it isn't
-// filtered to Tuition the way tuitionPaymentHistory narrows the tuition
-// tab), making this second list redundant.
+// calls the dedicated get-payment-others.md list while the Other Payment tab
+// is active (usePaymentOthersList below), making this second list redundant.
 const SHOW_OTHER_PAID_FEE_DETAILS: boolean = false
 
-// Payment History (left column) is fetched whole per application — not
-// server-paginated (usePaymentHistory takes no page/pageSize) — so this
-// pages it client-side instead, same Pagination component the rest of the
-// app's server-paginated lists use.
+// Tuition's own Payment History (left column) is fetched whole per
+// application — not server-paginated (usePaymentHistory takes no
+// page/pageSize) — so this pages it client-side instead, same Pagination
+// component the rest of the app's server-paginated lists use. The Other
+// Payment tab's own history (usePaymentOthersList) is genuinely
+// server-paginated, so it uses this same page size but its own page state
+// and Pagination instance further down — the two histories come from
+// different endpoints and can't share one paging cursor.
 const HISTORY_PAGE_SIZE = 10
 
 export default function PaymentConsolePage() {
@@ -420,27 +454,24 @@ export default function PaymentConsolePage() {
     }
     return Array.from(byCurrency.values())
   }, [effectiveLedgers])
-  // Outstanding Balance shows one currency's table at a time behind a
-  // dropdown now, per request (2026-09-04) — two stacked tables for a
-  // student billed in more than one currency read as confusing rather than
-  // informative. Options come straight from `currencies` (the finance-
-  // currencies master list, GET /finance/currencies) — the same source and
-  // the same full unfiltered list "Currency Received" below already uses —
-  // rather than a hardcoded KES/USD/UGX subset (dropped per a follow-up
-  // request, 2026-09-04): filtering by code silently produced a near-empty
-  // picker whenever a currency wasn't actually configured in that master
-  // list under the expected code, which is exactly what happened here.
-  const [selectedOutstandingCurrency, setSelectedOutstandingCurrency] = useState<string | null>(null)
+  // Outstanding Balance shows one currency's table at a time, converted
+  // into whichever currency the cashier has picked as "Currency Received"
+  // below — per a follow-up request (2026-09-05) that dropped the separate
+  // "Convert to Currency" picker above the ledger table in favour of
+  // reusing that one field, rather than asking the cashier to keep two
+  // currency pickers in sync on one form.
   useEffect(() => {
-    if (currencies.length === 0) { setSelectedOutstandingCurrency(null); return }
-    if (selectedOutstandingCurrency && currencies.some(c => c.currencyGuid === selectedOutstandingCurrency)) return
+    if (currencies.length === 0) return
+    if (currencyGuid && currencies.some(c => c.currencyGuid === currencyGuid)) return
     // Defaults to whichever currency the student's own ledgers are actually
     // billed in, when that's one of the configured ones — falls back to
-    // the first configured currency otherwise. Only runs when the current
-    // selection is missing/no longer valid, so it doesn't fight a
-    // cashier's own pick once one's been made.
+    // Finance's own default currency (UGX) otherwise, same as the Other
+    // Payment tab's otherCurrencyGuid default below, rather than whatever
+    // happened to be first in the API's own currency list order. Only runs
+    // when the current selection is missing/no longer valid, so it doesn't
+    // fight a cashier's own pick once one's been made.
     const preferred = ledgerTotals.find(t => currencies.some(c => c.currencyGuid === t.currencyGuid))
-    setSelectedOutstandingCurrency(preferred?.currencyGuid ?? currencies[0].currencyGuid)
+    setCurrencyGuid(preferred?.currencyGuid ?? getDefaultFinanceCurrencyGuid(currencies))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currencies, ledgerTotals])
   // Converts Scheduled Bill/Outstanding (regardless of a given ledger's own
@@ -462,22 +493,39 @@ export default function PaymentConsolePage() {
   // entered for "today", so that's the only date meaningful for a live
   // "what does this student owe right now" figure; there's no historical
   // date on this screen to convert as of.
-  const { data: todayRates = [] } = useExchangeRatesByDate(todayYmd())
+  const { data: todayRates = EMPTY_RATES } = useExchangeRatesByDate(todayYmd())
   // Today's Exchange Rates bar (header toggle) — wired to the real
   // POST/PUT exchange-rate endpoints now (per request, 2026-09-04), same
   // create-if-missing/update-if-present pattern the dedicated Exchange
   // Rate Management page (exchange-rates/page.tsx) already uses, just
-  // narrowed to USD/KES since that's all this compact bar has room for.
+  // narrowed to USD/KSH since that's all this compact bar has room for.
   // Reseeded from todayRates whenever it changes (including right after a
   // save invalidates and refetches it), so the inputs reflect what's
   // actually saved rather than a stale typed value.
   const usdCurrency = currencies.find(c => c.currencyCode === 'USD')
-  const kesCurrency = currencies.find(c => c.currencyCode === 'KES')
+  const kesCurrency = currencies.find(c => c.currencyCode === 'KSH') // Kenyan Shilling — backend's Currency Master uses code KSH, not KES
   const todayRateByCurrency = new Map(todayRates.map(r => [r.currencyGuid, r]))
+  // Locked (inputs + Save disabled) once today's rate already exists for a
+  // currency — this bar is view-only past that point (reinstated per
+  // request 2026-09-08, after briefly allowing an in-place correction here;
+  // that "Update from the bar" capability now lives only on the dedicated
+  // Exchange Rate Management page, which stays fully editable). Once
+  // today's rate is committed, correcting it goes through that page instead
+  // of this compact one.
+  const usdHasTodayRate = !!(usdCurrency && todayRateByCurrency.has(usdCurrency.currencyGuid))
+  const kesHasTodayRate = !!(kesCurrency && todayRateByCurrency.has(kesCurrency.currencyGuid))
+  // Displays the "1 {currency} = ___ UGX" direction (reverted per request,
+  // 2026-09-08 — was briefly flipped to "1 UGX = ___ {currency}" to match
+  // the Exchange Rate Management page, then both were reverted back to
+  // this direction together). The raw exRate itself is confirmed to be
+  // exactly this: "1 {currency} = {exRate} UGX" (a real
+  // get-exchange-rate-exists response: USD came back as exRate: 3774.90,
+  // i.e. 1 USD = 3774.90 UGX) — so this displays/saves it as-is, no
+  // inversion in either direction.
   const [rateBarInputs, setRateBarInputs] = useState<Record<string, string>>({})
   useEffect(() => {
     const map: Record<string, string> = {}
-    todayRates.forEach(r => { map[r.currencyGuid] = String(r.exRate) })
+    todayRates.forEach(r => { if (r.exRate) map[r.currencyGuid] = String(r.exRate) })
     setRateBarInputs(map)
   }, [todayRates])
   const createExchangeRate = useCreateExchangeRate()
@@ -485,18 +533,32 @@ export default function PaymentConsolePage() {
   const isSavingRates = createExchangeRate.isPending || updateExchangeRate.isPending
 
   async function saveExchangeRateBar() {
-    const targets = [usdCurrency, kesCurrency].filter((c): c is NonNullable<typeof c> => !!c)
-    if (targets.length === 0) { showToast('USD/KES aren’t configured in Currency Master.', 'warn'); return }
+    const lockedByGuid: Record<string, boolean> = {
+      ...(usdCurrency ? { [usdCurrency.currencyGuid]: usdHasTodayRate } : {}),
+      ...(kesCurrency ? { [kesCurrency.currencyGuid]: kesHasTodayRate } : {}),
+    }
+    const targets = [usdCurrency, kesCurrency]
+      .filter((c): c is NonNullable<typeof c> => !!c)
+      .filter(c => !lockedByGuid[c.currencyGuid])
+    if (targets.length === 0) {
+      const reason = (usdCurrency || kesCurrency) ? 'Today’s rate is already set — it’s view-only here. Use Exchange Rate Management to correct it.' : 'USD/KSH aren’t configured in Currency Master.'
+      showToast(reason, 'warn')
+      return
+    }
     let successCount = 0
     const failures: string[] = []
     for (const c of targets) {
       const raw = rateBarInputs[c.currencyGuid] ?? ''
       const num = parseFloat(raw)
       if (!raw || !(num > 0)) { failures.push(`${c.currencyCode}: enter a valid rate`); continue }
-      const existing = todayRateByCurrency.get(c.currencyGuid)
+      // Saved as-is — the "1 {code} = ___ UGX" figure typed here IS the
+      // API's own exRate convention, see the rateBarInputs effect above.
+      // Always a create at this point — targets already excludes any
+      // currency with a today's-row lock, so this never has an existing
+      // row to update.
+      const apiExRate = num
       try {
-        if (existing) await updateExchangeRate.mutateAsync({ guid: existing.exchangeRateGuid, input: { exRate: num, exDate: todayYmd() } })
-        else await createExchangeRate.mutateAsync({ currencyGuid: c.currencyGuid, exRate: num, exDate: todayYmd() })
+        await createExchangeRate.mutateAsync({ currencyGuid: c.currencyGuid, exRate: apiExRate, exDate: todayYmd() })
         successCount++
       } catch (err) {
         failures.push(`${c.currencyCode}: ${err instanceof Error ? err.message : 'failed'}`)
@@ -508,7 +570,7 @@ export default function PaymentConsolePage() {
 
   const baseCurrency = currencies.find(c => c.isDefault === 1)
   const ratesByGuid = new Map(todayRates.map(r => [r.currencyGuid, r.exRate]))
-  const targetOutstandingCurrency = currencies.find(c => c.currencyGuid === selectedOutstandingCurrency)
+  const targetOutstandingCurrency = currencies.find(c => c.currencyGuid === currencyGuid)
   const targetCurrencyGuid = targetOutstandingCurrency?.currencyGuid ?? null
   const targetCurrencyName = targetOutstandingCurrency?.currencyName ?? ''
   // null on a given ledger means its own currency (or the target's) has no
@@ -552,25 +614,50 @@ export default function PaymentConsolePage() {
   // applications) must not render the same "No payment history" message as
   // a genuinely empty result, since that would misreport a backend failure
   // as "this student has no payment history."
-  // Fetched as soon as a student is selected — Payment History is now its
-  // own inline card in the left column (below Profile Details), not a
-  // modal opened on demand, so there's no toggle left to gate this on.
-  const { data: paymentHistory = [], isLoading: isHistoryLoading, isError: isHistoryError } = usePaymentHistory(selectedApplicationGuid, !!selectedApplicationGuid)
-  // The left-column Payment History card only shows Tuition (category 1)
-  // rows while the Semester Payment tab is active — Other Payment already
-  // gets its own "Paid Fee Details" history table scoped to category 2 in
-  // the right column, so this one narrows instead of duplicating it.
-  const tuitionPaymentHistory = useMemo(
-    () => activePayTab === 'tuition' ? paymentHistory.filter(h => h.category === 1) : paymentHistory,
-    [paymentHistory, activePayTab]
-  )
+  // Fetched only while the Semester Payment tab is active — the left-column
+  // Payment History card now sources the Other Payment tab from the
+  // dedicated get-payment-others.md list further down instead (that
+  // endpoint has no Tuition rows to filter out, so there's nothing this
+  // cross-category list adds there any more; it used to be shown there
+  // unfiltered, spanning every category, which is what this change fixes).
+  const { data: paymentHistory = [], isLoading: isHistoryLoading, isError: isHistoryError } = usePaymentHistory(selectedApplicationGuid, !!selectedApplicationGuid && activePayTab === 'tuition')
+  const tuitionPaymentHistory = useMemo(() => paymentHistory.filter(h => h.category === 1), [paymentHistory])
   const [historyPage, setHistoryPage] = useState(1)
-  // Reset to page 1 whenever the underlying list changes shape — a new
-  // student, or switching tabs narrows/widens which categories are shown —
-  // so the view doesn't get stranded on a now out-of-range page.
-  useEffect(() => setHistoryPage(1), [selectedApplicationGuid, activePayTab])
+  // Reset to page 1 on a new student so the view doesn't get stranded on a
+  // now out-of-range page.
+  useEffect(() => setHistoryPage(1), [selectedApplicationGuid])
   const historyTotalPages = Math.max(1, Math.ceil(tuitionPaymentHistory.length / HISTORY_PAGE_SIZE))
   const pagedPaymentHistory = tuitionPaymentHistory.slice((historyPage - 1) * HISTORY_PAGE_SIZE, historyPage * HISTORY_PAGE_SIZE)
+
+  // View/Edit (get-payments.md/put-payment.md) — this table's own
+  // ActionMenu, Tuition rows only (this is already the Tuition tab's own
+  // history, so every row here qualifies). No separate fetch for View: the
+  // row itself (PaymentHistoryEntry) already carries everything shown.
+  const [viewEntry, setViewEntry] = useState<PaymentHistoryEntry | null>(null)
+  const [editTarget, setEditTarget] = useState<EditablePaymentTarget | null>(null)
+  // Which of this application's payments are advance-funded — put-payment.md
+  // rejects editing those outright ("adjust the advance deposit instead"),
+  // and the fee-line row itself has no `advance` field to check ahead of
+  // time (see useAdvanceStatusByPayment's own comment). Only fetched while
+  // the Tuition tab is actually active, matching this table's own gating.
+  const advanceByPayment = useAdvanceStatusByPayment(selectedApplicationGuid, !!selectedApplicationGuid && activePayTab === 'tuition')
+
+  // Other Payment tab's own Payment History — genuinely server-paginated
+  // (get-payment-others.md), unlike Tuition's own fetch-whole-then-slice
+  // approach above. Filtered by studentGuid once known (narrows to the
+  // enrolled student's own rows), falling back to applicationGuid before
+  // that — same precedence Payment Console's other studentGuid-optional
+  // queries use elsewhere on this page.
+  const [otherHistoryPage, setOtherHistoryPage] = useState(1)
+  useEffect(() => setOtherHistoryPage(1), [selectedApplicationGuid])
+  const {
+    data: otherPaymentHistory, isLoading: isOtherHistoryLoading, isError: isOtherHistoryError,
+  } = usePaymentOthersList(
+    { applicationGuid: studentGuid ? undefined : selectedApplicationGuid, studentGuid, page: otherHistoryPage, pageSize: HISTORY_PAGE_SIZE },
+    !!selectedApplicationGuid && activePayTab === 'other',
+  )
+  const otherHistoryItems = otherPaymentHistory?.items ?? []
+  const otherHistoryTotalPages = Math.max(1, Math.ceil((otherPaymentHistory?.totalCount ?? 0) / HISTORY_PAGE_SIZE))
 
   // Client-side name resolution for the profile's guid FKs — same fallback
   // pattern used throughout the app (faculty.ts's deanName, enquiry-list's
@@ -643,9 +730,19 @@ export default function PaymentConsolePage() {
     setOtherReceiptBookGuid('')
     setOtherProcBankGuid('')
     setOtherAmount('')
-    setOtherCurrencyGuid('')
+    setOtherCurrencyGuid(getDefaultFinanceCurrencyGuid(currencies))
     setOtherRemarks('')
   }
+
+  // Other Payment's own currency picker has no ledger to default off of the
+  // way Tuition's does (see that tab's own currencyGuid effect) — just
+  // Finance's own default (UGX) once the currency list loads, rather than
+  // sitting blank. Only fires while nothing's been picked yet (an advance
+  // draw-down's own currency, set in confirmAdvanceSelection above, or a
+  // manual pick both take priority).
+  useEffect(() => {
+    if (!otherCurrencyGuid && currencies.length > 0) setOtherCurrencyGuid(getDefaultFinanceCurrencyGuid(currencies))
+  }, [otherCurrencyGuid, currencies])
 
   // Checking the box opens the picker instead of flipping otherIsAdvance
   // straight away — it only actually turns on once a deposit is confirmed
@@ -871,41 +968,53 @@ export default function PaymentConsolePage() {
               <i className="lni lni-money-protection"></i> Today&apos;s Exchange Rates
               <span className="badge badge-blue text-[10px]">Daily Rate</span>
             </div>
-            {/* Wired to the real POST/PUT exchange-rate endpoints (per
-                request, 2026-09-04) — saveExchangeRateBar above creates a
-                fresh rate for today if none exists yet, or updates the
-                existing one (only today's row is PUT-able per
-                put-exchange-rate.md). Disabled + placeholder when USD/KES
-                aren't in Currency Master at all, rather than accepting
-                input that has nowhere real to save to. */}
+            {/* Wired to the real POST exchange-rate endpoint (per request,
+                2026-09-04) — saveExchangeRateBar above only ever creates a
+                fresh rate for today; it's never reached for a currency that
+                already has one, since those are locked below. Disabled +
+                placeholder when USD/KSH aren't in Currency Master at all,
+                rather than accepting input that has nowhere real to save
+                to. View-only once today's rate is already set (reinstated
+                2026-09-08) — the lock icon marks that; correcting an
+                already-set rate is done from Exchange Rate Management
+                instead. */}
             <div className="flex items-center gap-[6px] flex-wrap text-[var(--fs-sm)]">
               <span className="text-muted">1 USD =</span>
               <input
                 type="number"
-                className="ctrl"
-                disabled={!usdCurrency}
+                className="ctrl no-spinner"
+                disabled={!usdCurrency || usdHasTodayRate}
                 placeholder={usdCurrency ? '' : 'Not configured'}
+                title={usdHasTodayRate ? 'Today’s USD rate is already set — view-only here. Use Exchange Rate Management to correct it.' : undefined}
                 value={usdCurrency ? (rateBarInputs[usdCurrency.currencyGuid] ?? '') : ''}
                 onChange={e => usdCurrency && setRateBarInputs(prev => ({ ...prev, [usdCurrency.currencyGuid]: e.target.value }))}
                 style={{ width: 72, padding: '5px 9px', fontSize: 13, fontWeight: 700, color: 'var(--b800)' }}
               />
               <span className="badge badge-gold">UGX</span>
+              {usdHasTodayRate && <i className="lni lni-lock-alt-1 text-muted" title="Locked — today’s rate already set"></i>}
             </div>
             <div className="flex items-center gap-[6px] flex-wrap text-[var(--fs-sm)]">
-              <span className="text-muted">1 KES =</span>
+              <span className="text-muted">1 KSH =</span>
               <input
                 type="number"
-                className="ctrl"
-                disabled={!kesCurrency}
+                className="ctrl no-spinner"
+                disabled={!kesCurrency || kesHasTodayRate}
                 placeholder={kesCurrency ? '' : 'Not configured'}
+                title={kesHasTodayRate ? 'Today’s KSH rate is already set — view-only here. Use Exchange Rate Management to correct it.' : undefined}
                 value={kesCurrency ? (rateBarInputs[kesCurrency.currencyGuid] ?? '') : ''}
                 onChange={e => kesCurrency && setRateBarInputs(prev => ({ ...prev, [kesCurrency.currencyGuid]: e.target.value }))}
                 style={{ width: 72, padding: '5px 9px', fontSize: 13, fontWeight: 700, color: 'var(--b800)' }}
               />
               <span className="badge badge-gold">UGX</span>
+              {kesHasTodayRate && <i className="lni lni-lock-alt-1 text-muted" title="Locked — today’s rate already set"></i>}
             </div>
             <div className="flex items-center gap-[7px] flex-wrap" style={{ marginLeft: 'auto' }}>
-              <button className="btn btn-neu btn-sm" style={{ fontSize: 11 }} disabled={isSavingRates} onClick={saveExchangeRateBar}>
+              <button
+                className="btn btn-neu btn-sm"
+                style={{ fontSize: 11 }}
+                disabled={isSavingRates || (usdHasTodayRate && kesHasTodayRate)}
+                onClick={saveExchangeRateBar}
+              >
                 <i className="lni lni-save"></i> {isSavingRates ? 'Saving…' : 'Save Rates'}
               </button>
             </div>
@@ -1094,34 +1203,100 @@ export default function PaymentConsolePage() {
                       already use rather than a second card-hdr. */}
                   <div className="px-5 pb-5">
                   <div className="sec-divider"><i className="lni lni-folder"></i> Payment History</div>
-                  {isHistoryLoading ? (
-                    <div className="text-g400 text-center" style={{ padding: 16, fontSize: 12.5 }}>Loading payment history…</div>
-                  ) : isHistoryError ? (
-                    <div className="text-clr-red text-center" style={{ padding: 16, fontSize: 12.5 }}>
-                      <i className="lni lni-warning"></i> Couldn&apos;t load payment history. Please try again.
-                    </div>
-                  ) : tuitionPaymentHistory.length === 0 ? (
-                    <div className="text-g400 text-center" style={{ padding: 16, fontSize: 12.5 }}>No payment history for this application.</div>
+                  {/* Semester Payment tab: Tuition-only rows sliced client-side
+                      out of the whole-application payment-history fetch (see
+                      usePaymentHistory's own comment on why it isn't
+                      server-paginated). Other Payment tab: the dedicated
+                      get-payment-others.md list instead, genuinely
+                      server-paginated — replaces what used to be the same
+                      cross-category fetch shown UNFILTERED (every category,
+                      not just Other) while this tab was active. */}
+                  {activePayTab === 'tuition' ? (
+                    isHistoryLoading ? (
+                      <div className="text-g400 text-center" style={{ padding: 16, fontSize: 12.5 }}>Loading payment history…</div>
+                    ) : isHistoryError ? (
+                      <div className="text-clr-red text-center" style={{ padding: 16, fontSize: 12.5 }}>
+                        <i className="lni lni-warning"></i> Couldn&apos;t load payment history. Please try again.
+                      </div>
+                    ) : tuitionPaymentHistory.length === 0 ? (
+                      <div className="text-g400 text-center" style={{ padding: 16, fontSize: 12.5 }}>No payment history for this application.</div>
+                    ) : (
+                      <>
+                      <ScrollTable className="no-sticky-col">
+                        <table>
+                          <thead><tr><th style={{ width: 40 }}></th><th>Date</th><th>Category</th><th>Amount</th><th>Cur.</th><th>Method</th></tr></thead>
+                          <tbody>
+                            {pagedPaymentHistory.map(h => {
+                              // put-payment.md rejects editing an advance-funded
+                              // payment outright — this is how you can tell
+                              // ahead of time instead of finding out from the
+                              // rejection toast: the badge below, and Edit
+                              // disabled with the same explanation as its title.
+                              const isAdvanceFunded = advanceByPayment.get(h.paymentGuid) === true
+                              return (
+                              <tr key={h.paymentGuid}>
+                                <td>
+                                  <ActionMenu>
+                                    <button className="btn btn-neu btn-sm" onClick={() => setViewEntry(h)}>
+                                      <i className="lni lni-eye"></i> View
+                                    </button>
+                                    <button
+                                      className="btn btn-neu btn-sm"
+                                      disabled={isAdvanceFunded}
+                                      title={isAdvanceFunded ? 'Linked to an advance deposit — adjust the deposit instead.' : undefined}
+                                      onClick={() => setEditTarget({ paymentGuid: h.paymentGuid, amount: h.amount, payDate: h.payDate, payType: h.payType, label: h.paymentCode })}
+                                    >
+                                      <i className="lni lni-pencil-alt"></i> Edit
+                                    </button>
+                                  </ActionMenu>
+                                </td>
+                                <td>{h.payDate.slice(0, 10)}</td>
+                                <td>{PAYMENT_CATEGORY_LABELS[h.category] ?? `Category ${h.category}`}</td>
+                                <td className="text-green font-bold">{h.amount.toLocaleString()}</td>
+                                <td>{h.currencyName ?? '—'}</td>
+                                <td>
+                                  <span className="pill pill-blue">{h.payType?.name ?? '—'}</span>
+                                  {isAdvanceFunded && <span className="badge badge-purple ml-1" title="Funded from an advance deposit">Advance</span>}
+                                </td>
+                              </tr>
+                              )
+                            })}
+                          </tbody>
+                        </table>
+                      </ScrollTable>
+                      <Pagination page={historyPage} totalPages={historyTotalPages} totalCount={tuitionPaymentHistory.length} itemLabel="payments" onPageChange={setHistoryPage} />
+                      </>
+                    )
                   ) : (
-                    <>
-                    <ScrollTable className="no-sticky-col">
-                      <table>
-                        <thead><tr><th>Date</th><th>Category</th><th>Amount</th><th>Cur.</th><th>Method</th></tr></thead>
-                        <tbody>
-                          {pagedPaymentHistory.map(h => (
-                            <tr key={h.paymentGuid}>
-                              <td>{h.payDate.slice(0, 10)}</td>
-                              <td>{PAYMENT_CATEGORY_LABELS[h.category] ?? `Category ${h.category}`}</td>
-                              <td className="text-green font-bold">{h.amount.toLocaleString()}</td>
-                              <td>{h.currencyName ?? '—'}</td>
-                              <td><span className="pill pill-blue">{h.payType?.name ?? '—'}</span></td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </ScrollTable>
-                    <Pagination page={historyPage} totalPages={historyTotalPages} totalCount={tuitionPaymentHistory.length} itemLabel="payments" onPageChange={setHistoryPage} />
-                    </>
+                    isOtherHistoryLoading ? (
+                      <div className="text-g400 text-center" style={{ padding: 16, fontSize: 12.5 }}>Loading payment history…</div>
+                    ) : isOtherHistoryError ? (
+                      <div className="text-clr-red text-center" style={{ padding: 16, fontSize: 12.5 }}>
+                        <i className="lni lni-warning"></i> Couldn&apos;t load payment history. Please try again.
+                      </div>
+                    ) : otherHistoryItems.length === 0 ? (
+                      <div className="text-g400 text-center" style={{ padding: 16, fontSize: 12.5 }}>No other payments recorded for this application.</div>
+                    ) : (
+                      <>
+                      <ScrollTable className="no-sticky-col">
+                        <table>
+                          <thead><tr><th>Date</th><th>Category</th><th>Amount</th><th>Cur.</th><th>Method</th></tr></thead>
+                          <tbody>
+                            {otherHistoryItems.map(h => (
+                              <tr key={h.paymentOtherGuid}>
+                                <td>{h.payDate.slice(0, 10)}</td>
+                                <td>{PAYMENT_CATEGORY_LABELS[2]}</td>
+                                <td className="text-green font-bold">{h.amount.toLocaleString()}</td>
+                                <td>{h.currency.currencyCode}</td>
+                                <td><span className="pill pill-blue">{PAY_TYPE_LABELS[h.payType] ?? `Type ${h.payType}`}</span></td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </ScrollTable>
+                      <Pagination page={otherHistoryPage} totalPages={otherHistoryTotalPages} totalCount={otherPaymentHistory?.totalCount ?? 0} itemLabel="payments" onPageChange={setOtherHistoryPage} />
+                      </>
+                    )
                   )}
                   </div>
                 </div>
@@ -1354,33 +1529,21 @@ export default function PaymentConsolePage() {
                           Total stay below as their own bold footer rows
                           (Discount/Total aren't "a ledger", so they don't
                           belong as grid rows the column headers describe).
-                          The dropdown now converts every ledger (regardless
-                          of its own original currency) into whichever
-                          currency is picked — one merged list, not one table
-                          per currency-group — per a follow-up request;
-                          convertAmount/convertedLedgers above do the actual
-                          exchange-rate math. */}
-                      {/* ledgerTotals.length > 1 gate commented out per
-                          request (2026-09-05) — this was a frontend-only
-                          judgment call ("nothing to convert with one
-                          currency"), not anything the backend dictates, so
-                          the picker now always shows even for a single-
-                          currency student. Options come from `currencies`
-                          — the same finance-currencies master list (and the
-                          same full, unfiltered list) "Currency Received"
-                          below already uses — not a hardcoded KES/USD/UGX
-                          subset (dropped per a follow-up request,
-                          2026-09-04): that filter silently produced a
-                          near-empty picker whenever a currency wasn't
-                          actually configured in the master list under the
-                          expected code. */}
-                      <div className="fg" style={{ maxWidth: 220 }}>
-                        <label className="lbl">Convert to Currency</label>
-                        <SearchSelect
-                          options={currencies.map(c => ({ value: c.currencyGuid, label: `${c.currencyCode} — ${c.currencyName}` }))}
-                          value={selectedOutstandingCurrency ?? ''}
-                          onChange={setSelectedOutstandingCurrency}
-                        />
+                          Every ledger (regardless of its own original
+                          currency) converts into whichever currency the
+                          cashier picks as "Currency Received" further down
+                          this form — one merged list, not one table per
+                          currency-group. There's no separate "Convert to
+                          Currency" picker here any more (dropped per a
+                          follow-up request, 2026-09-05): it just duplicated
+                          Currency Received, so this table now reads live
+                          off that same field/state (currencyGuid),
+                          defaulted the same way the old picker was — see
+                          the effect above ledgerTotals. convertAmount/
+                          convertedLedgers do the actual exchange-rate
+                          math. */}
+                      <div className="text-g400 mb-2" style={{ fontSize: 11.5 }}>
+                        Converted to {targetCurrencyName || 'the currency picked below'} — set via <b>Currency Received</b> in Payment Detail.
                       </div>
                       {hasUnconvertibleLedger && (
                         <div className="warn-box mb-3">
@@ -1543,7 +1706,13 @@ export default function PaymentConsolePage() {
                     )}
                     {/* Currency + Amount paired, amount on the right, per
                         request — then Date + Method paired, then Receipt
-                        Book on its own row. */}
+                        Book on its own row. This currency picker now does
+                        double duty (per follow-up request, 2026-09-05): it's
+                        also what the Outstanding Balance table above
+                        converts into (targetCurrencyGuid/targetCurrencyName
+                        further up read straight off this same currencyGuid
+                        state), replacing what used to be a separate
+                        "Convert to Currency" dropdown up there. */}
                     <div className="g2 mb-[14px]">
                       <div className="fg">
                         <div className="lbl">Currency Received <span className="req">*</span></div>
@@ -1778,6 +1947,8 @@ export default function PaymentConsolePage() {
         studentGuid={studentGuid}
         studentDisplayName={profile ? applicantName(profile) : undefined}
       />
+      <ViewPaymentModal isOpen={!!viewEntry} onClose={() => setViewEntry(null)} showToast={showToast} entry={viewEntry} />
+      <EditPaymentModal isOpen={!!editTarget} onClose={() => setEditTarget(null)} showToast={showToast} target={editTarget} applicationGuid={selectedApplicationGuid ?? undefined} />
       <Toast toast={toast} />
     </>
   )

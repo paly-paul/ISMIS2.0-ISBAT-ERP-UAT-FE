@@ -1,4 +1,4 @@
-import { apiGet, apiPost, AuthError } from '../client'
+import { apiGet, apiPost, apiPut, AuthError } from '../client'
 
 const MOCK_AUTH = process.env.NEXT_PUBLIC_AUTH_MOCK === 'true'
 
@@ -528,6 +528,36 @@ export function getPaymentHistoryList(pageNumber = 1, pageSize = 20): Promise<Pa
   ).then(data => data ?? { items: [], totalCount: 0, pageNumber, pageSize })
 }
 
+// Confirmed via get-paid-ledgers-by-payment.md — the receipt detail view:
+// what one TUITION payment's money was actually applied to, ledger by
+// ledger/semester. The after-the-fact counterpart of getPayableLedgers'
+// pre-submit preview below. Only a category-1 payment ever has allocation
+// lines — NCHE/guild/other/advance-deposit GUIDs 404 here, which this
+// treats as "nothing to show" rather than an error, same
+// genuinely-empty-as-404 pattern used elsewhere in this file.
+export interface PaidLedgerDto {
+  ledgerGuid: string
+  ledgerName: string
+  semesterGuid: string | null
+  semName: string | null
+  amount: number
+  currencyGuid: string
+  currencyName: string
+  amtDef: number
+  discountGuid: string | null
+  discountName: string | null
+}
+
+export function getPaidLedgersByPayment(paymentGuid: string): Promise<PaidLedgerDto[]> {
+  if (MOCK_AUTH) return Promise.resolve([])
+  return apiGet<PaidLedgerDto[] | null>(`/api/v1/finance/payment-console/paid-ledgers/${paymentGuid}`)
+    .then(data => data ?? [])
+    .catch(err => {
+      if (err instanceof AuthError && err.code === 'not_found') return []
+      throw err
+    })
+}
+
 export function getPayableLedgers(params: PayableLedgersParams): Promise<PayableLedgersResult> {
   if (MOCK_AUTH) return Promise.resolve({ lines: [], balance: 0 })
   const qs = new URLSearchParams({
@@ -554,6 +584,49 @@ export function createPayment(input: PaymentInput): Promise<PaymentResult> {
     return Promise.resolve(result)
   }
   return apiPost<PaymentResult>('/api/v1/finance/payment-console/payments', input)
+}
+
+// Confirmed via put-payment.md — corrects a TUITION payment (amount, date,
+// bank, remarks, and optionally its currency/receipt book/pay type).
+// Changing amount/currency/date re-runs the allocation engine, so the
+// payment's ledger lines get rewritten. Two things make a payment
+// permanently uneditable — advance-funded, or one of its ledger lines has
+// an associated refund — both enforced server-side; this client doesn't
+// pre-check either (the row this is called from, PaymentHistoryListEntry,
+// carries neither `advance` nor refund status), so a rejection surfaces as
+// the server's own message rather than being pre-empted here.
+//
+// currencyGuid/receiptBookGuid/payType are genuinely optional here (per the
+// doc: "nullable; omit to leave unchanged") — send null for any of them the
+// cashier isn't deliberately changing. bankGuid and remarks carry no such
+// "omit to leave unchanged" note in the doc, so — unlike the three fields
+// above — treat them as always-set-to-this-value: leaving Remarks blank
+// clears it, and Bank is only meaningful (and only sent) alongside a
+// deliberate payType change.
+export interface UpdatePaymentInput {
+  amount: number
+  payDate: string
+  bankGuid: string | null
+  remarks: string | null
+  currencyGuid: string | null
+  receiptBookGuid: string | null
+  payType: number | null
+  changeAllSemesters: boolean
+}
+
+export function updatePayment(paymentGuid: string, input: UpdatePaymentInput): Promise<PaymentResult> {
+  if (MOCK_AUTH) {
+    const result: PaymentResult = {
+      paymentGuid,
+      paymentCode: 'PAY-MOCK-EDITED',
+      receipt: 'RCP-MOCK-EDITED',
+      balance: 0,
+      advanceMessage: null,
+      reRegistrationWarning: null,
+    }
+    return Promise.resolve(result)
+  }
+  return apiPut<PaymentResult>(`/api/v1/finance/payment-console/payments/${paymentGuid}`, input)
 }
 
 // Confirmed via CreateAdvanceDeposit.bru / payment-console/post-advance-
@@ -591,7 +664,10 @@ export function createAdvanceDeposit(input: AdvanceDepositInput): Promise<Advanc
     }
     return Promise.resolve(result)
   }
-  return apiPost<AdvanceDepositResult>('/api/v1/finance/payment-console/advance-deposit', input)
+  // Route moved from /payment-console/advance-deposit to /advance-payment
+  // on 2026-09-05 (post-advance-deposit.md's changelog) — advance-payment
+  // (deposits + adjustments) is now a standalone feature folder.
+  return apiPost<AdvanceDepositResult>('/api/v1/finance/advance-payment', input)
 }
 
 // NCHE/Guild payment creation moved out to their own dedicated pages/files

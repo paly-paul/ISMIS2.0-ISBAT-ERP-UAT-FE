@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ModalProps } from '../types'
 import { SuccessPopup } from '../shared/SuccessPopup'
 import { FailurePopup } from '../shared/FailurePopup'
@@ -9,7 +9,6 @@ import { UpsertCourseUnitOutlineInput } from '@/lib/api/academic/courseUnitOutli
 import { openDocumentForViewing, downloadDocument } from '@/lib/documentViewer'
 import { useCourseUnit, useUpsertCourseUnitOutlines } from '@/hooks/academic/useCourseUnits'
 import { useRepetitionTags } from '@/hooks/academic/useRepetitionTags'
-import { useEmployees } from '@/hooks/employee/useEmployees'
 import { AuthError } from '@/lib/api/client'
 
 // Add and Edit share this form — differ in prefill, whether Step 1 POSTs or
@@ -25,13 +24,14 @@ import { AuthError } from '@/lib/api/client'
 type Topic   = { name: string; taughtBy: string; studySequence: string; courseUnitTopicGuid?: string }
 type Chapter = { title: string; topics: Topic[]; courseUnitOutlineGuid?: string }
 
-// Study Sequence defaults to the topic's 1-based position within its
-// chapter when added, but is now a real editable field — the user can
-// override it to any value (e.g. to reorder without dragging, or to leave
-// gaps) rather than it always being silently forced back to array position
-// on submit.
+// Study Sequence defaults to the topic's 1-based position in the course
+// unit overall (continuing on from the last chapter's last topic, not
+// restarting at 1 for each new chapter), but is now a real editable field —
+// the user can override it to any value (e.g. to reorder without dragging,
+// or to leave gaps) rather than it always being silently forced back to
+// array position on submit.
 function blankTopic(order: number): Topic { return { name: '', taughtBy: '', studySequence: String(order) } }
-function blankChapter(): Chapter { return { title: '', topics: [blankTopic(1)] } }
+function blankChapter(startOrder = 1): Chapter { return { title: '', topics: [blankTopic(startOrder)] } }
 
 interface CourseUnitFormModalProps extends ModalProps {
   mode: 'new' | 'edit'
@@ -73,10 +73,11 @@ export function CourseUnitFormModal({ isOpen, onClose, showToast, mode, courseUn
   const [syllabusLinkLoading, setSyllabusLinkLoading] = useState(false)
   const [errors, setErrors]               = useState<Record<string, string>>({})
   const [chapterErrors, setChapterErrors] = useState<string[]>([])
-  // Keyed by "chapterIdx-topicIdx" — taughtBy (employeeGuid) is required by
-  // the backend; omitting it on any topic 400s the whole outline save, not
-  // just that one topic, so this has to be caught client-side before submit
-  // rather than left to surface as an opaque failure popup.
+  // Keyed by "chapterIdx-topicIdx" — Taught By is required by the backend
+  // (now a plain 1-15 number, not an employeeGuid); omitting it on any topic
+  // 400s the whole outline save, not just that one topic, so this has to be
+  // caught client-side before submit rather than left to surface as an
+  // opaque failure popup.
   const [topicTaughtByErrors, setTopicTaughtByErrors] = useState<Set<string>>(new Set())
   const [includeCW, setIncludeCW]       = useState(true)
   const [includeCBT, setIncludeCBT]     = useState(true)
@@ -91,8 +92,10 @@ export function CourseUnitFormModal({ isOpen, onClose, showToast, mode, courseUn
   const { data: repetitionTags = [] } = useRepetitionTags()
   const repetitionTagOptions = repetitionTags.map(t => ({ value: t.courseUnitRepetitionGuid, label: `${t.tagCode} — ${t.tagName}` }))
 
-  const { data: employees = [] } = useEmployees()
-  const employeeOptions = employees.map(e => ({ value: e.employeeGuid, label: `${e.empName} (${e.shortCode})` }))
+  // Taught By used to be a real employeeGuid picker (via useEmployees) —
+  // backend confirmed the field is now a plain 1-15 number instead, so this
+  // no longer needs the employee list/lookup at all.
+  const taughtByOptions = Array.from({ length: 15 }, (_, i) => ({ value: String(i + 1), label: String(i + 1) }))
 
   const finalTotal = (includeCW ? (+cwFinal || 0) : 0) + (includeCBT ? (+cbtFinal || 0) : 0) + (+ueFinal || 0)
   const totalOk    = finalTotal === 100
@@ -147,11 +150,23 @@ export function CourseUnitFormModal({ isOpen, onClose, showToast, mode, courseUn
     return { ...result, ...fixed }
   }
 
+  // Prefilling from `courseUnit` (Edit only) has to run exactly once per
+  // (open session, course unit) — not every time this effect's dependency
+  // reference changes. `courseUnit` comes from useCourseUnit, and Step 1's
+  // own Save & Continue (updateCourseUnit) invalidates that same query, so
+  // its background refetch resolving after setStep(2) has already fired
+  // was re-running this effect and stomping the just-made setStep(2) back
+  // to setStep(1) — the reported "sometimes lands back on tab 1" glitch.
+  // Same fix as ProgrammeModal/FeeStructureModal's own prefilledForRef.
+  const prefilledForRef = useRef<string | null>(null)
+
   // Prefill the form when the selected course unit loads (Edit only), or
   // reset to blanks when opening fresh for Create.
   useEffect(() => {
-    if (!isOpen) return
+    if (!isOpen) { prefilledForRef.current = null; return }
     if (isEdit && courseUnit) {
+      if (prefilledForRef.current === courseUnitGuid) return
+      prefilledForRef.current = courseUnitGuid
       setUnitCode(courseUnit.courseUnitCode)
       setUnitName(courseUnit.courseUnitName)
       setNumChapters(String(courseUnit.chapterCount))
@@ -172,7 +187,7 @@ export function CourseUnitFormModal({ isOpen, onClose, showToast, mode, courseUn
               // just a recomputed 1-based position.
               topics: [...o.topics]
                 .sort((a, b) => a.studySequence - b.studySequence)
-                .map(t => ({ name: t.courseUnitTopicDetails, taughtBy: t.employeeGuid, studySequence: String(t.studySequence), courseUnitTopicGuid: t.courseUnitTopicGuid })),
+                .map(t => ({ name: t.courseUnitTopicDetails, taughtBy: String(t.taughtBy), studySequence: String(t.studySequence), courseUnitTopicGuid: t.courseUnitTopicGuid })),
             }))
           : [blankChapter()]
       )
@@ -253,6 +268,7 @@ export function CourseUnitFormModal({ isOpen, onClose, showToast, mode, courseUn
   if (!isOpen) return null
 
   function handleClose() {
+    prefilledForRef.current = null
     setSaved(false); setFailure(null); setStep(1); setChapters([blankChapter()]); setActiveChapterIdx(0); setErrors({}); setChapterErrors([])
     setTopicTaughtByErrors(new Set())
     setUnitCode(''); setUnitName(''); setNumChapters(''); setCredits(''); setRepetitionTagGuid('')
@@ -278,17 +294,23 @@ export function CourseUnitFormModal({ isOpen, onClose, showToast, mode, courseUn
       return
     }
 
-    const outlines: UpsertCourseUnitOutlineInput[] = chapters.map((ch, ci) => ({
-      courseUnitOutlineGuid: ch.courseUnitOutlineGuid ?? null,
-      chapter: ci + 1,
-      chapterName: ch.title,
-      topics: ch.topics.map((t, ti) => ({
-        courseUnitTopicGuid: t.courseUnitTopicGuid ?? null,
-        courseUnitTopicDetails: t.name,
-        studySequence: +t.studySequence || ti + 1,
-        employeeGuid: t.taughtBy,
-      })),
-    }))
+    const outlines: UpsertCourseUnitOutlineInput[] = chapters.map((ch, ci) => {
+      // Fallback only kicks in if a topic's Study Sequence field somehow
+      // ended up empty at submit time — same continuing-across-chapters
+      // count as addChapter/addTopic's defaults, not a per-chapter restart.
+      const priorCount = chapters.slice(0, ci).reduce((sum, c) => sum + c.topics.length, 0)
+      return {
+        courseUnitOutlineGuid: ch.courseUnitOutlineGuid ?? null,
+        chapter: ci + 1,
+        chapterName: ch.title,
+        topics: ch.topics.map((t, ti) => ({
+          courseUnitTopicGuid: t.courseUnitTopicGuid ?? null,
+          courseUnitTopicDetails: t.name,
+          studySequence: +t.studySequence || priorCount + ti + 1,
+          taughtBy: +t.taughtBy,
+        })),
+      }
+    })
 
     upsertOutlines.mutate(
       { courseUnitGuid: activeGuid, outlines },
@@ -402,7 +424,9 @@ export function CourseUnitFormModal({ isOpen, onClose, showToast, mode, courseUn
   // chapter helpers
   function addChapter() {
     if (atChapterCap) { showToast(`No. of Chapters is set to ${chapterCap} — remove a chapter or increase that value first`, 'error'); return }
-    setChapters(p => [...p, blankChapter()])
+    // New chapter's first topic continues the study sequence on from every
+    // topic that already exists, rather than restarting at 1.
+    setChapters(p => [...p, blankChapter(p.reduce((sum, c) => sum + c.topics.length, 0) + 1)])
     setChapterErrors(p => [...p, ''])
     setActiveChapterIdx(chapters.length)
   }
@@ -427,7 +451,13 @@ export function CourseUnitFormModal({ isOpen, onClose, showToast, mode, courseUn
 
   // topic helpers
   function addTopic(ci: number) {
-    setChapters(p => p.map((c, i) => i === ci ? { ...c, topics: [...c.topics, blankTopic(c.topics.length + 1)] } : c))
+    // Same continuing-sequence fix as addChapter above — count every topic
+    // in the chapters before this one so the new topic's default picks up
+    // where the whole course unit left off, not just where this chapter did.
+    setChapters(p => {
+      const priorCount = p.slice(0, ci).reduce((sum, c) => sum + c.topics.length, 0)
+      return p.map((c, i) => i === ci ? { ...c, topics: [...c.topics, blankTopic(priorCount + c.topics.length + 1)] } : c)
+    })
     // Topic indices within this chapter shift for everything after the
     // insertion point — simplest to just drop all pending errors for this
     // chapter rather than try to remap keys; they'll be recomputed on the
@@ -925,7 +955,7 @@ export function CourseUnitFormModal({ isOpen, onClose, showToast, mode, courseUn
                             placeholder="— Select —"
                             value={t.taughtBy}
                             onChange={v => setTopic(activeChapterIdx, ti, 'taughtBy', v)}
-                            options={employeeOptions}
+                            options={taughtByOptions}
                             style={taughtByMissing ? { boxShadow: '0 0 0 1.5px var(--red)', borderRadius: 'var(--rsm)' } : undefined}
                           />
                           <button

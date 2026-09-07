@@ -8,15 +8,19 @@ import {
   getLedgerOthers,
   getOutstandingLedgers,
   getPayableLedgers,
+  getPaidLedgersByPayment,
   getPaymentHistory,
   getPaymentHistoryList,
   getStudentProfile,
   searchStudents,
+  updatePayment,
   AdvanceDepositInput,
   PaymentInput,
   PaymentOtherInput,
   PayableLedgersParams,
+  UpdatePaymentInput,
 } from '@/lib/api/finance/paymentConsole'
+import { PAYMENT_OTHERS_KEY } from './usePaymentOthers'
 
 const PAYMENT_CONSOLE_KEY = ['payment-console']
 
@@ -148,6 +152,17 @@ export function usePayableLedgers(params: PayableLedgersParams | null, enabled: 
   })
 }
 
+// Backs the paid-ledger breakdown shown in the payment View modal
+// (get-paid-ledgers-by-payment.md) — fetched on demand while that modal is
+// open, not eagerly for every row in the history table.
+export function usePaidLedgersByPayment(paymentGuid: string | null, enabled: boolean) {
+  return useQuery({
+    queryKey: [...PAYMENT_CONSOLE_KEY, 'paid-ledgers', paymentGuid],
+    queryFn: () => getPaidLedgersByPayment(paymentGuid as string),
+    enabled: enabled && !!paymentGuid,
+  })
+}
+
 export function useCreatePayment() {
   const queryClient = useQueryClient()
   return useMutation({
@@ -180,7 +195,42 @@ export function useCreatePaymentOther() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (input: PaymentOtherInput) => createPaymentOther(input),
-    onSuccess: (_result, input) => invalidateAfterCategoryPayment(queryClient, input.applicationGuid),
+    onSuccess: (_result, input) => {
+      invalidateAfterCategoryPayment(queryClient, input.applicationGuid)
+      // This page's own Payment History card now sources the Other Payment
+      // tab from the dedicated payment-others list (usePaymentOthers.ts), a
+      // separate key family from PAYMENT_CONSOLE_KEY above — a newly-added
+      // Other payment needs that refetched too, or it only shows up via the
+      // local otherPayments append rather than reflecting the real list.
+      queryClient.invalidateQueries({ queryKey: PAYMENT_OTHERS_KEY })
+    },
+  })
+}
+
+// Backs the Edit action on either payments table's ActionMenu
+// (put-payment.md): the standalone Payment History page's register
+// (usePaymentHistoryList) and Payment Console's own Tuition history
+// (usePaymentHistory). The former is always invalidated broadly (no page
+// number — cheap to refetch, and the mutation has no way to know which
+// page is open). The latter needs an applicationGuid to target, which the
+// Payment History page's own row doesn't carry — Payment Console's does
+// (it already knows which student is loaded), so it's an optional variable
+// here rather than a required one.
+export function useUpdatePayment() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ paymentGuid, input }: { paymentGuid: string; input: UpdatePaymentInput; applicationGuid?: string }) => updatePayment(paymentGuid, input),
+    onSuccess: (_result, { applicationGuid }) => {
+      queryClient.invalidateQueries({ queryKey: [...PAYMENT_CONSOLE_KEY, 'payment-history-list'] })
+      if (applicationGuid) {
+        queryClient.invalidateQueries({ queryKey: [...PAYMENT_CONSOLE_KEY, 'payment-history', applicationGuid] })
+        // Payment Console's own Outstanding Balance card reads from the
+        // discount-aware current-semester-payable, not outstanding-ledgers
+        // (see that hook's own comment) — an edited amount/date changes
+        // this too, since it re-runs the allocation engine.
+        queryClient.invalidateQueries({ queryKey: [...PAYMENT_CONSOLE_KEY, 'current-semester-payable', applicationGuid] })
+      }
+    },
   })
 }
 
@@ -200,5 +250,5 @@ export function useCreateAdvanceDeposit() {
   })
 }
 
-export type { AdvanceDepositInput, AdvanceDepositResult, AllOutstandingItem, ApplicationSummary, CurrentSemesterPayableLedger, CurrentSemesterPayableTotal, LedgerOthersDto, OutstandingLedger, PayableLedgerLine, PayableLedgersParams, PaymentHistoryEntry, PaymentHistoryListEntry, PaymentInput, PaymentOtherInput, PaymentOtherResult, PaymentResult, StudentProfile } from '@/lib/api/finance/paymentConsole'
+export type { AdvanceDepositInput, AdvanceDepositResult, AllOutstandingItem, ApplicationSummary, CurrentSemesterPayableLedger, CurrentSemesterPayableTotal, LedgerOthersDto, OutstandingLedger, PaidLedgerDto, PayableLedgerLine, PayableLedgersParams, PaymentHistoryEntry, PaymentHistoryListEntry, PaymentInput, PaymentOtherInput, PaymentOtherResult, PaymentResult, StudentProfile, UpdatePaymentInput } from '@/lib/api/finance/paymentConsole'
 export { PAYMENT_CATEGORY_LABELS, PAY_TYPE_LABELS, PAY_TYPE_TO_RECEIPT_CATEGORY } from '@/lib/api/finance/paymentConsole'

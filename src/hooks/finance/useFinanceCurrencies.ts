@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { FinanceCurrency, getFinanceCurrencies } from '@/lib/api/finance/currency'
+import { FinanceCurrency, getDefaultFinanceCurrencyGuid, getFinanceCurrencies } from '@/lib/api/finance/currency'
 
 const FINANCE_CURRENCIES_KEY = ['finance-currencies']
 
@@ -15,3 +15,4 @@ export function useFinanceCurrencies() {
 }
 
 export type { FinanceCurrency }
+export { getDefaultFinanceCurrencyGuid }

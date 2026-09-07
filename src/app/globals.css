@@ -2085,6 +2085,8 @@ textarea.ctrl {
   border: none;
   border-bottom: 2px solid var(--b200);
   background: transparent;
+  appearance: textfield;
+  -moz-appearance: textfield;
   outline: none;
   width: 100%;
   max-width: 160px;
@@ -2094,6 +2096,27 @@ textarea.ctrl {
 
 .rate-big-input:focus {
   border-color: var(--b500)
+}
+
+.rate-big-input::-webkit-outer-spin-button,
+.rate-big-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0
+}
+
+/* Same "hide the native up/down spinner" treatment as .amt-val-input above
+   — for any other number input that just wants the arrows gone without a
+   whole dedicated input class of its own (e.g. Payment Console's compact
+   Exchange Rates bar). */
+.no-spinner {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+.no-spinner::-webkit-outer-spin-button,
+.no-spinner::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0
 }
 
 /* Application Payment — direct-child combinator (not a plain descendant
@@ -2335,6 +2358,20 @@ textarea.ctrl {
 
 @media(max-width:1200px) {
   #page-payment-console-adjustments > .pc-body {
+    grid-template-columns: 1fr
+  }
+}
+
+/* Payment Refund — same 50/50 .pc-body split as Payment Console
+   Adjustments/Discount Allocation above. */
+#page-payment-refund > .pc-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px
+}
+
+@media(max-width:1200px) {
+  #page-payment-refund > .pc-body {
     grid-template-columns: 1fr
   }
 }

@@ -110,7 +110,33 @@ function NotificationsBridge() {
 }
 
 export function Providers({ children }: { children: React.ReactNode }) {
-  const [queryClient] = useState(() => new QueryClient())
+  // App-wide "cache until invalidated" default — react-query's own default
+  // staleTime is 0, which made every page's data stale the instant it
+  // loaded, so simply navigating away and back (or refocusing the tab)
+  // re-fetched it every time even though nothing had changed. staleTime:
+  // Infinity here means a query only ever re-fetches when something
+  // actually invalidates it: a mutation's own onSuccess (the established
+  // pattern already used by ~74/76 mutation hooks in src/hooks — e.g.
+  // useCourseUnits.ts's createCourseUnit invalidating COURSE_UNITS_KEY) or
+  // this cache entry getting garbage-collected after sitting unused past
+  // gcTime (react-query's own default: 5 minutes). Any individual hook can
+  // still override this with its own staleTime — an explicit option always
+  // wins over this default — so hooks like useNotificationsList (which
+  // deliberately wants a short 5s staleTime to refetch on every dropdown
+  // open) are unaffected.
+  //
+  // Trade-off worth knowing: a change made by a *different* logged-in user
+  // won't show up here until something invalidates this cache (your own
+  // save on that same data, or a full reload) — this was already true for
+  // every hook that set staleTime: Infinity individually before this change,
+  // just now it's the default instead of an opt-in.
+  const [queryClient] = useState(() => new QueryClient({
+    defaultOptions: {
+      queries: {
+        staleTime: Infinity,
+      },
+    },
+  }))
 
   return (
     <QueryClientProvider client={queryClient}>
