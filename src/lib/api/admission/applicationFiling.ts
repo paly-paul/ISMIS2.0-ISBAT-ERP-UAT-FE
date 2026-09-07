@@ -1,4 +1,4 @@
-import { apiDelete, apiGet, apiPost, apiPostForm } from '../client'
+import { apiDelete, apiGet, apiGetBlob, apiPost, apiPostForm } from '../client'
 
 const MOCK_AUTH = process.env.NEXT_PUBLIC_AUTH_MOCK === 'true'
 
@@ -536,4 +536,76 @@ export function submitApplication(intApplication: number, appRefNo: string): Pro
     appRefNo,
     declarationAccepted: true,
   })
+}
+
+// Confirmed via get-export-csv.md — streams ALL applications across every
+// status (Submitted/Vetted/Rejected/Registered) as one CSV file; there's no
+// pagination on this endpoint, the whole matching set comes back in a
+// single response. All four query params are optional and ANDed together
+// when supplied; omitting all of them (what the Export CSV button on
+// /admission/applicants does today, since that page has no filter UI of
+// its own yet) exports the full dataset. Response is a raw file (see
+// apiGetBlob's own comment for why this doesn't go through apiGet), not
+// the app's usual JSON envelope.
+export interface ExportApplicationsCsvParams {
+  intakeGuid?: string | null
+  programGuid?: string | null
+  fromDate?: string | null
+  toDate?: string | null
+}
+
+// Splits raw CSV text into rows, respecting RFC 4180 double-quoted fields
+// that can themselves contain the newline being split on (get-export-csv.md:
+// "Fields that contain a comma, double-quote, or newline are RFC
+// 4180-quoted") — a naive text.split('\n') would cut a quoted multi-line
+// field in half.
+function splitCsvRows(text: string): string[] {
+  const rows: string[] = []
+  let current = ''
+  let inQuotes = false
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]
+    if (ch === '"') inQuotes = !inQuotes
+    if ((ch === '\n' || ch === '\r') && !inQuotes) {
+      if (ch === '\r' && text[i + 1] === '\n') i++
+      rows.push(current)
+      current = ''
+    } else {
+      current += ch
+    }
+  }
+  if (current) rows.push(current)
+  return rows
+}
+
+export function exportApplicationsCsv(params: ExportApplicationsCsvParams = {}): Promise<{ blob: Blob; filename: string }> {
+  if (MOCK_AUTH) {
+    // Nothing meaningful to fabricate for a raw file download in a UI-only
+    // prototype — a header-only CSV is enough to exercise the download
+    // flow (button → file saved) without a backend.
+    const header = 'App Ref,Applicant Name,Phone,Email,Programme,Intake,Gender,Date,Status\n'
+    return Promise.resolve({ blob: new Blob([header], { type: 'text/csv' }), filename: 'applications_mock.csv' })
+  }
+  const qs = new URLSearchParams()
+  if (params.intakeGuid) qs.set('intakeGuid', params.intakeGuid)
+  if (params.programGuid) qs.set('programGuid', params.programGuid)
+  if (params.fromDate) qs.set('fromDate', params.fromDate)
+  if (params.toDate) qs.set('toDate', params.toDate)
+  const suffix = qs.toString() ? `?${qs.toString()}` : ''
+  return apiGetBlob(`/api/v1/admissions/application-filling/export/csv${suffix}`)
+    .then(async ({ blob, filename }) => {
+      // The endpoint's own default order is CreatedDate ASCENDING — oldest
+      // first (get-export-csv.md) — and there's no sort-direction query
+      // param to ask it for the reverse. Re-ordered here to newest-first
+      // instead, same "newest to oldest" convention just applied to
+      // Course Allocation's table, so the exported file reads consistently
+      // with the rest of the app rather than needing backend support for it.
+      const rows = splitCsvRows(await blob.text())
+      const [header, ...dataRows] = rows
+      const reordered = header !== undefined ? [header, ...dataRows.reverse()].join('\r\n') : ''
+      return {
+        blob: reordered ? new Blob([reordered], { type: 'text/csv' }) : blob,
+        filename: filename ?? 'applications.csv',
+      }
+    })
 }

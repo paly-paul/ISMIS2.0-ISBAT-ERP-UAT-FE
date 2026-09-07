@@ -1,8 +1,8 @@
 'use client'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useMarkAllNotificationsRead, useMarkNotificationRead, useNotificationsList, useUnreadCount } from '@/hooks/useNotifications'
-import { notificationHref, notificationVisual, NotificationItem } from '@/lib/api/notifications'
+import { notificationHref, notificationTypeLabel, notificationVisual, NotificationItem } from '@/lib/api/notifications'
 import { timeAgo } from '@/lib/date'
 
 const PAGE_SIZE = 20
@@ -39,6 +39,23 @@ export default function NotificationsPage() {
   const totalCount = listResult?.totalCount ?? 0
   const hasMore = items.length < totalCount
 
+  // Group the already-loaded (newest-first) items by typeCode — the backend
+  // itself now groups the list response this way (see getNotifications'
+  // handling of the { groups: [...] } shape), but flattens it back to a
+  // plain items[] for pagination/search to stay simple. Regrouping here
+  // client-side, keyed by each type's first (i.e. most recent) appearance,
+  // reproduces the same grouping for display without needing the raw
+  // groups[] shape to survive "load more"/search across pages.
+  const groupedItems = useMemo(() => {
+    const order: string[] = []
+    const byType = new Map<string, NotificationItem[]>()
+    for (const n of items) {
+      if (!byType.has(n.typeCode)) { byType.set(n.typeCode, []); order.push(n.typeCode) }
+      byType.get(n.typeCode)!.push(n)
+    }
+    return order.map(typeCode => ({ typeCode, items: byType.get(typeCode)! }))
+  }, [items])
+
   // Debounce the raw input (~300ms per the doc) rather than a request per
   // keystroke.
   useEffect(() => {
@@ -58,7 +75,8 @@ export default function NotificationsPage() {
   // own dropdown.
   useEffect(() => {
     if (!listResult) return
-    setItems(prev => (page === 1 ? listResult.items : [...prev, ...listResult.items]))
+    const newItems = listResult.items ?? []
+    setItems(prev => (page === 1 ? newItems : [...prev, ...newItems]))
   }, [listResult, page])
 
   useLayoutEffect(() => {
@@ -133,29 +151,37 @@ export default function NotificationsPage() {
             </div>
           ) : (
             <>
-              <div className="ntf-list">
-                {items.map((n, i) => {
-                  const visual = notificationVisual(n.typeCode)
-                  return (
-                    <button
-                      key={n.notificationGuid}
-                      className={`ntf-item${n.isRead ? '' : ' unread'}`}
-                      style={{ animationDelay: `${Math.min(i, 8) * 30}ms` }}
-                      onClick={() => openNotification(n)}
-                    >
-                      <span className={`ntf-dot ${visual.tone}`}><i className={`lni ${visual.icon}`}></i></span>
-                      <span className="ntf-content">
-                        <span className="ntf-top-row">
-                          <span className="ntf-title">{n.title}</span>
-                          {!n.isRead && <span className="ntf-unread-mark"></span>}
-                          <span className="ntf-time">{timeAgo(n.createdDate)}</span>
-                        </span>
-                        <span className="ntf-body">{n.body}</span>
-                      </span>
-                    </button>
-                  )
-                })}
-              </div>
+              {groupedItems.map(({ typeCode, items: group }, gi) => (
+                <div key={typeCode} className={gi > 0 ? 'mt-1' : undefined}>
+                  <div className="sec-divider flex items-center justify-between" style={gi === 0 ? { paddingTop: 0 } : undefined}>
+                    <span>{notificationTypeLabel(typeCode)}</span>
+                    <span className="badge badge-grey">{group.length}</span>
+                  </div>
+                  <div className="ntf-list">
+                    {group.map((n, i) => {
+                      const visual = notificationVisual(n.typeCode)
+                      return (
+                        <button
+                          key={n.notificationGuid}
+                          className={`ntf-item${n.isRead ? '' : ' unread'}`}
+                          style={{ animationDelay: `${Math.min(i, 8) * 30}ms` }}
+                          onClick={() => openNotification(n)}
+                        >
+                          <span className={`ntf-dot ${visual.tone}`}><i className={`lni ${visual.icon}`}></i></span>
+                          <span className="ntf-content">
+                            <span className="ntf-top-row">
+                              <span className="ntf-title">{n.title}</span>
+                              {!n.isRead && <span className="ntf-unread-mark"></span>}
+                              <span className="ntf-time">{timeAgo(n.createdDate)}</span>
+                            </span>
+                            <span className="ntf-body">{n.body}</span>
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              ))}
               <div className="flex items-center justify-between mt-3" style={{ fontSize: 12.5, color: 'var(--g500)' }}>
                 <span>Showing {items.length} of {totalCount.toLocaleString()}</span>
                 {hasMore && (

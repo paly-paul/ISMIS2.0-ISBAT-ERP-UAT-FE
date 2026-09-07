@@ -62,6 +62,7 @@ export function BatchFormModal({ isOpen, onClose, showToast, mode, batchGuid, cr
   const [pHeadGuid, setPHeadGuid]         = useState('')
   const [startDate, setStartDate]         = useState('')
   const [endDate, setEndDate]             = useState('')
+  const [active, setActive]               = useState(1)
   const [errors, setErrors]               = useState<Record<string, string>>({})
 
   // Every field prefills from the fetched record on Edit — GET returns real
@@ -78,11 +79,12 @@ export function BatchFormModal({ isOpen, onClose, showToast, mode, batchGuid, cr
       setPHeadGuid(batch.pHead && batch.pHead !== EMPTY_GUID ? batch.pHead : '')
       setStartDate(batch.bStartDate ? batch.bStartDate.slice(0, 10) : '')
       setEndDate(batch.bEndDate ? batch.bEndDate.slice(0, 10) : '')
+      setActive(batch.active ?? 1)
       setErrors({})
     } else if (!isEdit) {
       setProgramGuid(''); setIntakeGuid(''); setSemesterGuid(''); setStreamGuid(''); setBatchTimeGuid(''); setInChargeGuid('')
       setPHeadGuid('')
-      setStartDate(''); setEndDate(''); setErrors({})
+      setStartDate(''); setEndDate(''); setActive(1); setErrors({})
     }
   }, [isOpen, isEdit, batch])
 
@@ -92,7 +94,7 @@ export function BatchFormModal({ isOpen, onClose, showToast, mode, batchGuid, cr
     setSaved(false); setFailure(null)
     setProgramGuid(''); setIntakeGuid(''); setSemesterGuid(''); setStreamGuid(''); setBatchTimeGuid(''); setInChargeGuid('')
     setPHeadGuid('')
-    setStartDate(''); setEndDate(''); setErrors({})
+    setStartDate(''); setEndDate(''); setActive(1); setErrors({})
     onClose()
   }
 
@@ -120,9 +122,10 @@ export function BatchFormModal({ isOpen, onClose, showToast, mode, batchGuid, cr
       bInCharge: inChargeGuid,
       intakeGuid,
       pHead: pHeadGuid || null,
+      active,
     }
-    const onSuccess = () => { setSaved(true); showToast(isEdit ? 'Batch updated successfully' : 'Batch created successfully') }
-    const onError = (error: Error) => setFailure(error.message || `Failed to ${isEdit ? 'update' : 'create'} batch. Please try again.`)
+    const onSuccess = () => { showToast(isEdit ? 'Batch updated successfully' : 'Batch created successfully', 'success'); handleClose() }
+    const onError = (error: Error) => { showToast(error.message || `Failed to ${isEdit ? 'update' : 'create'} batch. Please try again.`, 'danger') }
 
     if (isEdit && batchGuid) {
       updateBatch.mutate({ guid: batchGuid, input }, { onSuccess, onError })
@@ -133,39 +136,16 @@ export function BatchFormModal({ isOpen, onClose, showToast, mode, batchGuid, cr
 
   const isPending = isEdit ? updateBatch.isPending : createBatch.isPending
 
-  if (saved) {
-    return (
-      <div className="modal-overlay open">
-        <div className="modal" style={{ maxWidth: 400 }}>
-          <SuccessPopup
-            title={isEdit ? 'Batch Updated!' : 'Batch Created!'}
-            subtitle={isEdit ? 'Your changes have been saved successfully.' : 'The new batch has been saved successfully.'}
-            onClose={handleClose}
-          />
-        </div>
-      </div>
-    )
-  }
-
-  if (failure) {
-    return (
-      <div className="modal-overlay open">
-        <div className="modal" style={{ maxWidth: 400 }}>
-          <FailurePopup title={isEdit ? "Couldn't Update Batch" : "Couldn't Create Batch"} subtitle={failure} onClose={() => setFailure(null)} />
-        </div>
-      </div>
-    )
-  }
-
   if (isEdit && isError) {
     return (
       <div className="modal-overlay open">
-        <div className="modal" style={{ maxWidth: 400 }}>
-          <FailurePopup
-            title="Couldn't Load Batch"
-            subtitle={error instanceof AuthError ? (error.message || 'Failed to load batch details.') : 'Failed to load batch details.'}
-            onClose={handleClose}
-          />
+        <div className="modal" style={{ maxWidth: 400, padding: 24, textAlign: 'center' }}>
+          <div style={{ fontSize: 24, marginBottom: 12, color: 'var(--red)' }}><i className="lni lni-warning"></i></div>
+          <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 8 }}>Couldn't Load Batch</div>
+          <div style={{ color: 'var(--g500)', marginBottom: 20 }}>
+            {error instanceof AuthError ? (error.message || 'Failed to load batch details.') : 'Failed to load batch details.'}
+          </div>
+          <button className="btn btn-neu" onClick={handleClose}>Close</button>
         </div>
       </div>
     )
@@ -246,6 +226,21 @@ export function BatchFormModal({ isOpen, onClose, showToast, mode, batchGuid, cr
           </div>
           <div className="fg"><div className="lbl">Start Date</div><DatePicker value={startDate} onChange={setStartDate} /></div>
           <div className="fg"><div className="lbl">End Date</div><DatePicker value={endDate} onChange={setEndDate} /></div>
+          {isEdit && (
+            <div className="fg">
+              <div className="lbl">Status <span className="req">*</span></div>
+              <div className="flex items-center gap-4 mt-2">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="radio" name="batchStatus" checked={active === 1} onChange={() => setActive(1)} />
+                  <span>Active</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="radio" name="batchStatus" checked={active === 0} onChange={() => setActive(0)} />
+                  <span>Inactive</span>
+                </label>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="modal-footer">

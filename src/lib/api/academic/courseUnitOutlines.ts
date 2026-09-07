@@ -12,7 +12,12 @@ export interface UpsertCourseUnitOutlineTopicInput {
   courseUnitTopicGuid: string | null
   courseUnitTopicDetails: string
   studySequence: number
-  employeeGuid: string
+  // Backend confirmed this is a plain 1-15 number now, not a real
+  // employeeGuid — was a lookup into the employee list before; the UI's own
+  // Taught By dropdown is a flat 1-15 list rather than calling useEmployees.
+  // Key name is a best-effort guess (matches the local Topic.taughtBy field
+  // name) — flag for confirmation if the real wire key differs.
+  taughtBy: number
 }
 
 export interface UpsertCourseUnitOutlineInput {
@@ -44,7 +49,7 @@ export function upsertCourseUnitOutlines(courseUnitGuid: string, outlines: Upser
         courseUnitTopicCode: `MOCK_${oi + 1}_${ti + 1}`,
         courseUnitTopicDetails: t.courseUnitTopicDetails,
         studySequence: t.studySequence,
-        employeeGuid: t.employeeGuid,
+        taughtBy: t.taughtBy,
       })),
     })))
   }

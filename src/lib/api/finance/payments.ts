@@ -47,9 +47,22 @@ export interface Payment {
   bankReconcile: number | null
 }
 
-export function getPayments(page = 1, pageSize = 10): Promise<PagedResult<Payment>> {
+// applicationGuid/studentGuid confirmed as optional filters on this same
+// endpoint (get-payments.md) — same "either can be used independently"
+// convention as getPaymentAdvances below. Used to answer "is THIS payment
+// advance-funded" for a specific application, since the fee-line history
+// views (getPaymentHistory/getPaymentHistoryList) carry no `advance` field
+// at all — this raw list is the only place that flag lives.
+export function getPayments(page = 1, pageSize = 10, applicationGuid?: string | null, studentGuid?: string | null): Promise<PagedResult<Payment>> {
   if (MOCK_AUTH) return Promise.resolve(emptyPage(page, pageSize))
-  return apiGet<PagedResult<Payment> | null>(`/api/v1/finance/payments?page=${page}&pageSize=${pageSize}`)
+  const qs = new URLSearchParams({ page: String(page), pageSize: String(pageSize) })
+  if (applicationGuid) qs.set('applicationGuid', applicationGuid)
+  if (studentGuid) qs.set('studentGuid', studentGuid)
+  // Route moved from /payments to /payment-console/payments on 2026-09-05
+  // (get-payments.md's changelog) — the read endpoint now sits in the
+  // payment-console route group next to the tuition create/update
+  // endpoints. API ID unchanged.
+  return apiGet<PagedResult<Payment> | null>(`/api/v1/finance/payment-console/payments?${qs.toString()}`)
     .then(data => data ?? emptyPage(page, pageSize))
 }
 
@@ -88,18 +101,26 @@ export function getPaymentAdvances(page = 1, pageSize = 10, studentGuid?: string
   if (MOCK_AUTH) return Promise.resolve(emptyPage(page, pageSize))
   const qs = new URLSearchParams({ page: String(page), pageSize: String(pageSize) })
   if (studentGuid) qs.set('studentGuid', studentGuid)
-  return apiGet<PagedResult<PaymentAdvance> | null>(`/api/v1/finance/payment-advances?${qs.toString()}`)
+  // Route moved from /payment-advances to /advance-payment on 2026-09-05
+  // (get-payment-advances.md's changelog) — the list now sits at the
+  // advance-payment group root, alongside POST /advance-payment. API ID
+  // unchanged.
+  return apiGet<PagedResult<PaymentAdvance> | null>(`/api/v1/finance/advance-payment?${qs.toString()}`)
     .then(data => data ?? emptyPage(page, pageSize))
 }
 
-// Confirmed via payment-console/get-payment-guilds.md — no currency/pay-type
-// columns on this table at all (not just nullable — genuinely absent),
-// unlike Payment/PaymentAdvance/PaymentOther above.
+// Confirmed via guild/get-payment-guilds.md — no currency/pay-type columns
+// on this table at all (not just nullable — genuinely absent), unlike
+// Payment/PaymentAdvance/PaymentOther above. studentName/intakeCode are
+// pre-resolved here (and on guild/get-payment-history.md's own rows) —
+// NCHE's equivalent list carries neither.
 export interface PaymentGuild {
   paymentGuildGuid: string
   applicationGuid: string
   studentGuid: string | null
+  studentName: string | null
   intakeGuid: string | null
+  intakeCode: number | null
   payDate: string
   bankDeposit: string | null
   receipt: string | null
@@ -108,7 +129,12 @@ export interface PaymentGuild {
 
 export function getPaymentGuilds(page = 1, pageSize = 10): Promise<PagedResult<PaymentGuild>> {
   if (MOCK_AUTH) return Promise.resolve(emptyPage(page, pageSize))
-  return apiGet<PagedResult<PaymentGuild> | null>(`/api/v1/finance/payment-guilds?page=${page}&pageSize=${pageSize}`)
+  // Route moved from /payment-guilds to /guild/payment-guilds on
+  // 2026-09-05 (get-payment-guilds.md's changelog) — the read endpoint
+  // now sits in the Guild route group with the create/update/delete
+  // endpoints. API ID unchanged. Unlike NCHE's sibling list, this doc
+  // documents no studentGuid filter — stays unfiltered.
+  return apiGet<PagedResult<PaymentGuild> | null>(`/api/v1/finance/guild/payment-guilds?page=${page}&pageSize=${pageSize}`)
     .then(data => data ?? emptyPage(page, pageSize))
 }
 
@@ -145,9 +171,16 @@ export interface PaymentNche {
   remarks: string | null
 }
 
-export function getPaymentNches(page = 1, pageSize = 10): Promise<PagedResult<PaymentNche>> {
+// studentGuid confirmed as an optional filter (nche/get-payment-nches.md).
+export function getPaymentNches(page = 1, pageSize = 10, studentGuid?: string | null): Promise<PagedResult<PaymentNche>> {
   if (MOCK_AUTH) return Promise.resolve(emptyPage(page, pageSize))
-  return apiGet<PagedResult<PaymentNche> | null>(`/api/v1/finance/payment-nches?page=${page}&pageSize=${pageSize}`)
+  const qs = new URLSearchParams({ page: String(page), pageSize: String(pageSize) })
+  if (studentGuid) qs.set('studentGuid', studentGuid)
+  // Route moved from /payment-nches to /nche/payments on 2026-09-05
+  // (get-payment-nches.md's changelog) — the read endpoint now sits in the
+  // NCHE route group with the create/update/delete endpoints. API ID
+  // unchanged.
+  return apiGet<PagedResult<PaymentNche> | null>(`/api/v1/finance/nche/payments?${qs.toString()}`)
     .then(data => data ?? emptyPage(page, pageSize))
 }
 

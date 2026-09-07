@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { createBatch, deleteBatch, getBatchById, getBatches, updateBatch, Batch, BatchCreateInput, BatchDetail, BatchUpdateInput } from '@/lib/api/academic/batch'
+import { createBatch, deleteBatch, getBatchById, getBatches, getStudentCountsByBatch, updateBatch, Batch, BatchCreateInput, BatchDetail, BatchUpdateInput } from '@/lib/api/academic/batch'
 
 const BATCHES_KEY = ['batches']
 
@@ -57,6 +57,20 @@ export function useUpdateBatch() {
       queryClient.invalidateQueries({ queryKey: BATCHES_KEY })
       queryClient.invalidateQueries({ queryKey: [...BATCHES_KEY, 'byGuid', guid] })
     },
+  })
+}
+
+// Backs the delete-confirmation note ("this batch has N students enrolled")
+// — scoped to just the one batch actually being deleted rather than the
+// whole visible page, since that's the only place this matters. See
+// getStudentCountsByBatch's own comment for why a missing key means zero.
+export function useBatchStudentCount(batchGuid: string | null, enabled: boolean) {
+  return useQuery({
+    queryKey: [...BATCHES_KEY, 'studentCount', batchGuid],
+    queryFn: () => getStudentCountsByBatch([batchGuid as string]).then(counts => counts[batchGuid as string] ?? 0),
+    enabled: enabled && !!batchGuid,
+    staleTime: Infinity,
+    gcTime: Infinity,
   })
 }
 

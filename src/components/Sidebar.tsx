@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { useMenu } from '@/hooks/users/useMenu'
 import { MenuNode } from '@/lib/api/users/menu'
 
-export type RailId = 'admission' | 'academic' | 'finance' | 'student' | 'employee' | 'assessment' | 'config'
+export type RailId = 'admission' | 'academic' | 'finance' | 'student' | 'employee' | 'assessment' | 'config' | 'activity-log'
 
 interface SidebarProps {
   panelOpen: boolean
@@ -34,6 +34,7 @@ const RAIL_DEFS: RailDef[] = [
   { id: 'employee', name: 'Employee', fallbackIcon: 'lni lni-briefcase', footer: 'S4 · Employee Service' },
   { id: 'assessment', name: 'Assessment', fallbackIcon: 'lni lni-pencil-alt', footer: 'S4 · Evaluation Lifecycle' },
   { id: 'config', name: 'Config', fallbackIcon: 'lni lni-cog', footer: 'S0 · Core Config' },
+  { id: 'activity-log', name: 'Activity Log', fallbackIcon: 'lni lni-list', footer: 'S0 · Audit & Activity' },
 ]
 
 // Cosmetic-only counters — the menu API carries no notion of these, so they
@@ -69,6 +70,60 @@ function resolveHref(url: string, railId: RailId): string {
 
 function idFromUrl(url: string): string {
   return url.split('/').filter(Boolean).pop()!
+}
+
+// Sidebar entries hidden from navigation without touching the backend menu
+// tree or deleting the page itself — keyed by the same url-slug idFromUrl()
+// resolves for every other leaf (BADGES above, sb-item's `active` state).
+// Ledger Adjustments: commented out per request (2026-09-07) — that page is
+// still a UI-only mock (see AdjustLedgerModal.tsx's own comment: no backing
+// "ledger adjustment" endpoint exists in the API spec yet), so it stays out
+// of the menu until there's something real behind it. The route/page are
+// left in place, just unreachable from here.
+const HIDDEN_ITEM_IDS = new Set<string>([
+  'ledger-adjustments',
+])
+
+// Client-side reorder for Finance's own Payment Collection items, per
+// request (2026-09-07) — the backend menu API decides sidebar order, so
+// there's no static array to reorder in-place the way a hardcoded nav
+// would; this re-sorts whichever children array these slugs turn up in
+// instead. Listed items move to the front in this exact order; anything
+// not listed here (a section header, another module's items, a future
+// Finance page not yet accounted for) keeps its original relative order
+// and simply follows after — a plain index lookup used as a stable-sort
+// key achieves both at once.
+const ORDER_PRIORITY = [
+  'dashboard',
+  'payment-console',
+  'payment-console-adjustments',
+  'nche-guild-payment',
+  'advanced-payments',
+  'discount-allocation',
+  'payment-refund',
+  'payment-history',
+  'exchange-rates',
+]
+
+function orderIndex(item: MenuNode): number {
+  if (!item.url) return ORDER_PRIORITY.length
+  const i = ORDER_PRIORITY.indexOf(idFromUrl(item.url))
+  return i === -1 ? ORDER_PRIORITY.length : i
+}
+
+// railId scopes ORDER_PRIORITY's re-sort to Finance only — several other
+// modules have their own "Dashboard" leaf sharing the exact slug ORDER_
+// PRIORITY matches on, and re-sorting every module just because Finance's
+// own order was requested would silently reshuffle navigation nobody asked
+// to change. The hide-filter has no such collision risk (HIDDEN_ITEM_IDS is
+// currently Finance-only anyway) so it stays applied everywhere.
+function visibleChildren(children: MenuNode[], railId: RailId): MenuNode[] {
+  const filtered = children.filter(c => !c.url || !HIDDEN_ITEM_IDS.has(idFromUrl(c.url)))
+  if (railId !== 'finance') return filtered
+  // Array.prototype.sort is a stable sort in every engine this app ships
+  // to (spec-guaranteed since ES2019) — items tied on orderIndex (i.e.
+  // every unlisted one) keep the relative order the API sent them in.
+  return filtered.sort((a, b) => orderIndex(a) - orderIndex(b))
 }
 
 export function Sidebar({ panelOpen, setPanelOpen, currentPage, collapsedSections, toggleCollapse, activeRail, setActiveRail }: SidebarProps) {
@@ -132,7 +187,7 @@ export function Sidebar({ panelOpen, setPanelOpen, currentPage, collapsedSection
           <span>{section.name}</span><span className="sb-chevron">{collapsed ? '▸' : '▾'}</span>
         </div>
         <div className="sb-collapse-body">
-          {section.children.map(item => sbItem(item, railId))}
+          {visibleChildren(section.children, railId).map(item => sbItem(item, railId))}
         </div>
       </div>
     )
@@ -187,7 +242,7 @@ export function Sidebar({ panelOpen, setPanelOpen, currentPage, collapsedSection
           <div className="sb-panel-hdr-title">Module</div>
           <div className="sb-panel-hdr-name"><i className={node.icon ?? def.fallbackIcon}></i> {node.name}</div>
         </div>
-        {node.children.map(section => (section.children.length > 0 ? sbSection(node.name, section, def.id) : sbItem(section, def.id)))}
+        {visibleChildren(node.children, def.id).map(section => (section.children.length > 0 ? sbSection(node.name, section, def.id) : sbItem(section, def.id)))}
         <div className="sb-panel-footer">{def.footer}</div>
       </>
     )
@@ -195,34 +250,60 @@ export function Sidebar({ panelOpen, setPanelOpen, currentPage, collapsedSection
 
   const activeDef = RAIL_DEFS.find(d => d.id === activeRail)!
 
-  return (
-    <div className="sidebar">
-      <div className="sb-rail bg-bg">
-        {renderRailSlot(RAIL_DEFS[0])}
-        <div className="rail-divider"></div>
-        {renderRailSlot(RAIL_DEFS[1])}
-        <div className="rail-divider"></div>
-        {renderRailSlot(RAIL_DEFS[2])}
-        <div className="rail-divider"></div>
-        {renderRailSlot(RAIL_DEFS[3])}
-        <div className="rail-divider"></div>
+  // renderRailSlot(def) returns null for a module the user has no access to
+  // (moduleByName.get(def.name) misses) — everything else here (the two
+  // locked "Coming Soon" placeholders, the loading skeleton) always
+  // renders something. Dividers used to be hardcoded between every pair of
+  // slots regardless, so a null slot (e.g. no Config access) left two
+  // .rail-dividers stacked back-to-back with nothing between them — a
+  // visibly doubled line right above whatever module happened to follow
+  // (confirmed live: Activity Log, when Config returned null). Built as a
+  // {key, node} list and filtered first instead, so a divider only ever
+  // renders between two slots that both actually rendered something.
+  const railSlots: { key: string; node: React.ReactNode }[] = [
+    { key: 'admission', node: renderRailSlot(RAIL_DEFS[0]) },
+    { key: 'academic', node: renderRailSlot(RAIL_DEFS[1]) },
+    { key: 'finance', node: renderRailSlot(RAIL_DEFS[2]) },
+    { key: 'student', node: renderRailSlot(RAIL_DEFS[3]) },
+    {
+      key: 'attendance',
+      node: (
         <div className="rail-item locked" data-mod="attendance">
           <span className="rail-icon"><i className="lni lni-alarm-clock"></i></span>
           <span className="rail-label">Attendance</span>
           <span className="rail-tooltip">Attendance · Coming Soon</span>
         </div>
-        <div className="rail-divider"></div>
+      ),
+    },
+    {
+      key: 'analytics',
+      node: (
         <div className="rail-item locked" data-mod="analytics">
           <span className="rail-icon"><i className="lni lni-bar-chart"></i></span>
           <span className="rail-label">Analytics</span>
           <span className="rail-tooltip">Analytics · Coming Soon</span>
         </div>
-        <div className="rail-divider"></div>
-        {renderRailSlot(RAIL_DEFS[4])}
-        <div className="rail-divider"></div>
-        {renderRailSlot(RAIL_DEFS[5])}
-        <div className="rail-divider"></div>
-        {renderRailSlot(RAIL_DEFS[6])}
+      ),
+    },
+    { key: 'employee', node: renderRailSlot(RAIL_DEFS[4]) },
+    { key: 'assessment', node: renderRailSlot(RAIL_DEFS[5]) },
+    { key: 'config', node: renderRailSlot(RAIL_DEFS[6]) },
+    { key: 'activity-log', node: renderRailSlot(RAIL_DEFS[7]) },
+  ]
+  const visibleRailSlots = railSlots.filter(s => s.node)
+
+  return (
+    <div className="sidebar">
+      <div className="sb-rail bg-bg">
+        {visibleRailSlots.map((slot, i) => (
+          // display: contents keeps the wrapper out of .sb-rail's own flex
+          // layout (flex column + gap) — its children (the divider, the
+          // slot itself) participate directly as if there were no wrapper.
+          <div key={slot.key} style={{ display: 'contents' }}>
+            {i > 0 && <div className="rail-divider"></div>}
+            {slot.node}
+          </div>
+        ))}
         <div className="rail-spacer"></div>
         {/* Admin (User & Role) — commented out per request, not deleted, in
             case a real backend-driven module takes its place later. Its

@@ -1,4 +1,4 @@
-import { useMutation, useQuery, keepPreviousData } from '@tanstack/react-query'
+import { useInfiniteQuery, useMutation, useQuery, keepPreviousData } from '@tanstack/react-query'
 import { createEnquiryFollowUp, EnquiryFollowUpInput, EnquiryFollowUpListItem, getEnquiryFollowUps, getEnquiryFollowUpsByAdvisor } from '@/lib/api/admission/enquiryFollowUp'
 
 const ENQUIRY_FOLLOW_UPS_KEY = ['enquiryFollowUps']
@@ -32,6 +32,37 @@ export function useEnquiryFollowUpsCount() {
   return useQuery({
     queryKey: [...ENQUIRY_FOLLOW_UPS_KEY, 'count'],
     queryFn: () => getEnquiryFollowUps(1, 1),
+    staleTime: Infinity,
+    gcTime: Infinity,
+  })
+}
+
+// Scroll-to-load-more variant backing NewFollowUpLogModal's Enquiry picker —
+// replaces a single capped pageSize=1000 fetch (same "silently misses rows
+// past the cap" class of bug useCourseUnits hit at 1000-of-1500 rows; this
+// list was already 826-of-totalCount, getting close). Deliberately has NO
+// search param, unlike useEnquiryFollowUps above — the picker sends each
+// selected enquiry as its 1-based *position* within this exact fetch (see
+// the long note on EnquiryFollowUpInput.intEnquiry: the real id mapping is
+// still unconfirmed, so position-in-the-full-unfiltered-list is the
+// existing guess). A server-side search would reorder/subset that position
+// out from under the guess, silently sending a DIFFERENT wrong number than
+// today's already-wrong-but-at-least-consistent one — so this only ever
+// paginates the same canonical (unfiltered) order, never searches it. The
+// modal still offers a search box, but purely as a client-side filter over
+// whatever's already loaded (same as SearchSelect's own behavior), which
+// only narrows what's *visible* — it never changes an item's position in
+// the underlying flattened list.
+export function useEnquiryFollowUpsInfinite(pageSize: number, enabled: boolean) {
+  return useInfiniteQuery({
+    queryKey: [...ENQUIRY_FOLLOW_UPS_KEY, 'picker-infinite', pageSize],
+    queryFn: ({ pageParam }) => getEnquiryFollowUps(pageParam, pageSize),
+    initialPageParam: 1,
+    getNextPageParam: (lastPage, allPages) => {
+      const fetched = allPages.reduce((sum, p) => sum + p.items.length, 0)
+      return fetched < lastPage.totalCount ? allPages.length + 1 : undefined
+    },
+    enabled,
     staleTime: Infinity,
     gcTime: Infinity,
   })

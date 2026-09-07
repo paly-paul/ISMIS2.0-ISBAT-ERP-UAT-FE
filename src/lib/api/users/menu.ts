@@ -58,6 +58,7 @@ const FINANCE_PAYMENT_SECTIONS: MenuNode[] = [
     leaf('Dashboard', 'dashboard', 'dashboard'),
     leaf('Payment Console', 'credit-cards', 'payment-console'),
     leaf('Payment Console Adjustments', 'pencil-alt', 'payment-console-adjustments'),
+    leaf('Payment Refund', 'reload', 'payment-refund'),
     leaf('NCHE & Guild Payment', 'graduation', 'nche-guild-payment'),
     leaf('Discount Allocation', 'tag', 'discount-allocation'),
     leaf('Payment History', 'bar-chart', 'payment-history'),
@@ -234,6 +235,7 @@ const mockMenu: MenuNode[] = [
     section('Course Unit Master', [
       leaf('Repetition Tag', 'reload', '/academic/repetition-tag'),
       leaf('Course Units', 'book', '/academic/course-units'),
+      leaf('Course Allocation', 'agenda', '/academic/course-allocation'),
     ]),
     section('Programme Master', [
       leaf('Programme Level', 'layers', '/academic/programme-level'),
@@ -259,6 +261,7 @@ const mockMenu: MenuNode[] = [
       leaf('Cooperates', 'handshake', '/finance/cooperates'),
       leaf('Discounts', 'tag', '/finance/discounts'),
       leaf('Ledgers', 'book', '/finance/ledgers'),
+      leaf('Other Ledgers', 'book', '/finance/ledger-others'),
       leaf('Currency Master', 'dollar', '/finance/currency-master'),
       leaf('Receipt Books', 'ticket', '/finance/receipt-books'),
       leaf('General Settings', 'cog', '/finance/gen-sets'),
@@ -285,6 +288,11 @@ const mockMenu: MenuNode[] = [
   ]),
 
   module_('Assessment', 'pencil-alt', ASSESSMENT_SECTIONS),
+  module_('Activity Log', 'list', [
+    section('Audit Trail', [
+      leaf('Activity Log', 'list', '/activity-log/logs'),
+    ]),
+  ]),
 ]
 
 // TEMPORARY: the real /me/menu response has no Employee module yet (backend
@@ -299,6 +307,14 @@ const HARDCODED_EMPLOYEE_MODULE: MenuNode = module_('Employee', 'briefcase', [
 ])
 
 const HARDCODED_ASSESSMENT_MODULE: MenuNode = module_('Assessment', 'pencil-alt', ASSESSMENT_SECTIONS)
+
+// TEMPORARY: the real /me/menu response has no Activity Log module yet —
+// force it in until the backend starts returning a real "Activity Log" node.
+const HARDCODED_ACTIVITY_LOG_MODULE: MenuNode = module_('Activity Log', 'list', [
+  section('Audit Trail', [
+    leaf('Activity Log', 'list', '/activity-log/logs'),
+  ]),
+])
 
 // TEMPORARY: unlike Employee above, the real /me/menu response DOES have a
 // Finance module (it backs the already-real Cooperates/Discounts/Ledgers/
@@ -329,6 +345,7 @@ function mergeFinanceSections(menu: MenuNode[]): MenuNode[] {
     const existingLeaves = new Set(collectionSection.children.map(l => l.name))
     const missingLeaves = [
       leaf('Payment Console Adjustments', 'pencil-alt', 'payment-console-adjustments'),
+      leaf('Payment Refund', 'reload', 'payment-refund'),
       leaf('NCHE & Guild Payment', 'graduation', 'nche-guild-payment'),
       leaf('Discount Allocation', 'tag', 'discount-allocation'),
     ].filter(l => !existingLeaves.has(l.name))
@@ -558,6 +575,44 @@ function ensureBulkIntakeEdit(menu: MenuNode[]): MenuNode[] {
 // of Student Records if the real backend still has it registered there, and
 // this adds it into Academic Core (right after Batch Management) if the
 // backend doesn't register it there yet. Same shape as ensureBulkIntakeEdit.
+// New page, no confirmed backend yet (no menu/permission registration for
+// it) — same "patch it into the real menu client-side" pattern as
+// ensureBatchSummary etc. immediately below. Targets "Course Unit Master"
+// specifically, inserted right after "Course Units" since that's the
+// page it's most closely related to (assigning lecturers to the units
+// listed there).
+function ensureCourseAllocation(menu: MenuNode[]): MenuNode[] {
+  const acadIdx = menu.findIndex(n => n.name === 'Academic')
+  if (acadIdx === -1) return menu
+
+  const acadModule = menu[acadIdx]
+  const cuSectionIdx = acadModule.children.findIndex(c => c.name === 'Course Unit Master')
+  if (cuSectionIdx === -1) return menu
+
+  const cuSection = acadModule.children[cuSectionIdx]
+  if (cuSection.children.some(l => l.name === 'Course Allocation')) return menu
+
+  const children = [...cuSection.children]
+  const courseUnitsIdx = children.findIndex(l => l.name === 'Course Units')
+  const courseAllocationLeaf = leaf('Course Allocation', 'agenda', '/academic/course-allocation')
+
+  if (courseUnitsIdx !== -1) {
+    children.splice(courseUnitsIdx + 1, 0, courseAllocationLeaf)
+  } else {
+    children.push(courseAllocationLeaf)
+  }
+
+  const mergedSection = { ...cuSection, children }
+
+  const mergedAcad = { ...acadModule }
+  mergedAcad.children = [...acadModule.children]
+  mergedAcad.children[cuSectionIdx] = mergedSection
+
+  const mergedMenu = [...menu]
+  mergedMenu[acadIdx] = mergedAcad
+  return mergedMenu
+}
+
 function ensureBatchSummary(menu: MenuNode[]): MenuNode[] {
   const acadIdx = menu.findIndex(n => n.name === 'Academic')
   if (acadIdx === -1) return menu
@@ -747,11 +802,13 @@ export function getMenu(): Promise<MenuResult> {
       const withEmployee = menu.some(n => n.name === 'Employee') ? menu : [...menu, HARDCODED_EMPLOYEE_MODULE]
       const withApprovals = ensureEmployeeApprovals(withEmployee)
       const withAssessment = withApprovals.some(n => n.name === 'Assessment') ? withApprovals : [...withApprovals, HARDCODED_ASSESSMENT_MODULE]
-      const withFinance = mergeFinanceSections(withAssessment)
+      const withActivityLog = withAssessment.some(n => n.name === 'Activity Log') ? withAssessment : [...withAssessment, HARDCODED_ACTIVITY_LOG_MODULE]
+      const withFinance = mergeFinanceSections(withActivityLog)
       const withStudent = mergeStudentSections(withFinance)
       const withBulkEdit = ensureBulkIntakeEdit(withStudent)
       const withBatchSummary = ensureBatchSummary(withBulkEdit)
-      const withConfig = mergeConfigSections(withBatchSummary)
+      const withCourseAllocation = ensureCourseAllocation(withBatchSummary)
+      const withConfig = mergeConfigSections(withCourseAllocation)
       const withProgApp = ensureProgrammeApproval(withConfig)
       const withAssMaster = ensureAssessmentMaster(withProgApp)
       const finalMenu = ensureResitMaster(withAssMaster)

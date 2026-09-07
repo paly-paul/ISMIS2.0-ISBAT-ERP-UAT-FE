@@ -1,28 +1,132 @@
 'use client'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ModalProps } from '../types'
 import { SuccessPopup } from '../shared/SuccessPopup'
 import { FailurePopup } from '../shared/FailurePopup'
 import { SearchSelect } from '@/components/SearchSelect'
 import DatePicker from '@/components/DatePicker'
-import { EnquiryFollowUpInput, EnquiryFollowUpListItem } from '@/lib/api/admission/enquiryFollowUp'
+import { EnquiryFollowUpInput } from '@/lib/api/admission/enquiryFollowUp'
 import { useEmployees } from '@/hooks/employee/useEmployees'
 import { useFollowUpStatuses } from '@/hooks/config/useFollowUpStatuses'
 import { useFollowUpModes } from '@/hooks/admission/useFollowUpModes'
 import { useEnquiryStatuses } from '@/hooks/config/useEnquiryStatuses'
 import { useInterestLevels } from '@/hooks/admission/useInterestLevels'
+import { useEnquiryFollowUpsInfinite } from '@/hooks/admission/useEnquiryFollowUps'
 
 interface NewFollowUpLogModalProps extends ModalProps {
-  // Capped at 1000, fetched by the page only while this modal is open — the
-  // real ?search= endpoint (see getEnquiryFollowUps) is confirmed to work,
-  // but SearchSelect below only takes a static option list, not a live
-  // server-search callback, so it isn't wired through here. Revisit if the
-  // real enquiry count ever grows past this cap.
-  enquiries: EnquiryFollowUpListItem[]
   createFollowUp: {
     mutate: (input: EnquiryFollowUpInput, options?: { onSuccess?: () => void; onError?: (error: Error) => void }) => void
     isPending: boolean
   }
+}
+
+const ENQUIRY_PICKER_PAGE_SIZE = 20
+
+// Enquiry picker — scroll-to-load-more (via useEnquiryFollowUpsInfinite)
+// instead of a SearchSelect over a capped 1000-row snapshot, but the value
+// it hands back is still that enquiry's 1-based *position* within the
+// canonical fetch order (see EnquiryFollowUpInput.intEnquiry's own long
+// note — the real backend id mapping is unconfirmed, so position is the
+// existing guess this preserves rather than fixes). Reuses SearchSelect's
+// own CSS classes (.ss-trigger, .ss-opts, etc.) for a matching look without
+// duplicating its styles. The search box here only filters what's already
+// loaded — client-side, purely for display — it never asks the server to
+// search, since that would silently change an enquiry's position and send
+// a different (still wrong) number than picking the same enquiry after
+// scrolling to it normally would.
+function EnquiryPicker({ value, onChange, enabled, hasError }: { value: string; onChange: (v: string) => void; enabled: boolean; hasError?: boolean }) {
+  const [open, setOpen] = useState(false)
+  const [filterText, setFilterText] = useState('')
+  const boxRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    function handle(e: MouseEvent) {
+      if (!boxRef.current?.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handle)
+    return () => document.removeEventListener('mousedown', handle)
+  }, [open])
+
+  const { data, fetchNextPage, hasNextPage, isFetchingNextPage, isFetching } = useEnquiryFollowUpsInfinite(ENQUIRY_PICKER_PAGE_SIZE, enabled)
+
+  const allItems = data?.pages.flatMap(p => p.items) ?? []
+  const selected = value ? allItems[Number(value)] : undefined
+
+  const term = filterText.trim().toLowerCase()
+  const filtered = allItems
+    .map((item, absIndex) => ({ item, absIndex }))
+    .filter(({ item }) => !term || `${item.enquiryCode} ${item.studentName}`.toLowerCase().includes(term))
+
+  // Same scrollTop > 0 guard the other infinite-scroll dropdowns in this app
+  // use — a plain distance-to-bottom check alone fires spuriously on a short
+  // list right after a new page loads, even with no user interaction.
+  function handleScroll(e: React.UIEvent<HTMLDivElement>) {
+    if (!hasNextPage || isFetchingNextPage) return
+    const el = e.currentTarget
+    if (el.scrollTop > 0 && el.scrollHeight - el.scrollTop - el.clientHeight < 48) fetchNextPage()
+  }
+
+  function pick(absIndex: number) {
+    onChange(String(absIndex))
+    setOpen(false)
+    setFilterText('')
+  }
+
+  return (
+    <div style={{ position: 'relative' }} ref={boxRef}>
+      <button
+        type="button"
+        className="ctrl ss-trigger"
+        onClick={() => setOpen(o => !o)}
+        style={hasError ? { borderColor: 'var(--red)' } : undefined}
+      >
+        <span className={`ss-label${!selected ? ' ss-placeholder' : ''}`}>
+          {selected ? `${selected.enquiryCode} — ${selected.studentName}` : '— select an enquiry —'}
+        </span>
+        <i className="lni lni-chevron-down ss-chevron" style={{ transform: open ? 'rotate(180deg)' : undefined }} />
+      </button>
+      {open && (
+        <div
+          className="ss-drop mt-1"
+          style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 30 }}
+        >
+          <div className="ss-search">
+            <input
+              className="ctrl"
+              style={{ fontSize: 12, height: 28, padding: '4px 8px' }}
+              placeholder="Search loaded enquiries…"
+              value={filterText}
+              onChange={e => setFilterText(e.target.value)}
+              onClick={e => e.stopPropagation()}
+            />
+          </div>
+          <div className="ss-opts" style={{ maxHeight: 200 }} onScroll={handleScroll}>
+            {isFetching && allItems.length === 0 ? (
+              <div className="ss-no-match">Loading…</div>
+            ) : filtered.length === 0 ? (
+              <div className="ss-no-match">
+                {term ? 'No matches among loaded enquiries — keep scrolling to load more.' : 'No enquiries found.'}
+              </div>
+            ) : (
+              <>
+                {filtered.map(({ item, absIndex }) => (
+                  <div
+                    key={item.enquiryGuid}
+                    className={`col-filter-opt${value === String(absIndex) ? ' fil-active' : ''}`}
+                    onClick={() => pick(absIndex)}
+                  >
+                    {item.enquiryCode} — {item.studentName}
+                  </div>
+                ))}
+                {isFetchingNextPage && <div className="ss-no-match">Loading more…</div>}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
 }
 
 // Today's date at midnight, matching the confirmed payload sample's format.
@@ -39,14 +143,13 @@ function todayAtMidnight() {
 // lib/api/admission/enquiryFollowUp.ts. Each dropdown here is real (backed
 // by the actual masters), but the value actually sent for these five fields
 // is that option's 1-based position in its list, not a confirmed id.
-export function NewFollowUpLogModal({ isOpen, onClose, showToast, enquiries, createFollowUp }: NewFollowUpLogModalProps) {
+export function NewFollowUpLogModal({ isOpen, onClose, showToast, createFollowUp }: NewFollowUpLogModalProps) {
   const { data: employees = [] }        = useEmployees()
   const { data: followUpStatuses = [] } = useFollowUpStatuses()
   const { data: followUpModes = [] }    = useFollowUpModes()
   const { data: enquiryStatuses = [] }  = useEnquiryStatuses()
   const { data: interestLevels = [] }   = useInterestLevels()
 
-  const enquiryOptions      = enquiries.map((e, i) => ({ value: String(i), label: `${e.enquiryCode} — ${e.studentName}` }))
   const advisorOptions      = employees.map(e => ({ value: e.employeeGuid, label: e.empName }))
   const followUpStatusOptions = followUpStatuses.map((s, i) => ({ value: String(i), label: s.followUpStatusName }))
   const followUpModeOptions   = followUpModes.map((m, i) => ({ value: String(i), label: m.followUpModeName }))
@@ -141,7 +244,7 @@ export function NewFollowUpLogModal({ isOpen, onClose, showToast, enquiries, cre
         <div className="g2">
           <div className="fg" style={{ gridColumn: 'span 2' }}>
             <div className="lbl">Enquiry <span className="req">*</span></div>
-            <SearchSelect placeholder="— select from this page —" options={enquiryOptions} value={enquiryIdx} onChange={setEnquiryIdx} />
+            <EnquiryPicker value={enquiryIdx} onChange={setEnquiryIdx} enabled={isOpen} hasError={!!errors.enquiryIdx} />
             {errors.enquiryIdx && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.enquiryIdx}</p>}
           </div>
           <div className="fg">

@@ -38,6 +38,7 @@ const FALLBACK_PAGE_FOR_ENTITY: Record<string, string> = {
   Batch: '/academic/batch-management',
   CourseUnit: '/academic/course-units',
   ProgramApproval: '/academic/programme-master',
+  Program: '/academic/programme-master',
   FeeStructure: '/academic/fee-structure',
   Timetable: '/academic/timetable',
 }
@@ -54,12 +55,14 @@ const MODULE_FOR_ENTITY: Record<string, string> = {
   Batch: 'academic',
   CourseUnit: 'academic',
   ProgramApproval: 'academic',
+  Program: 'academic',
   FeeStructure: 'academic',
   Timetable: 'academic',
 }
 
 export function notificationHref(n: NotificationItem): string {
   if (!n.pageUrl) return FALLBACK_PAGE_FOR_ENTITY[n.entityType] ?? '/notifications'
+  if (n.pageUrl.startsWith('/')) return n.pageUrl
   const module = MODULE_FOR_ENTITY[n.entityType] ?? 'academic'
   return `/${module}/${n.pageUrl}`
 }
@@ -90,6 +93,20 @@ export function notificationVisual(typeCode: string): { icon: string; tone: stri
   return TYPE_VISUAL[typeCode] ?? DEFAULT_VISUAL
 }
 
+// Human-readable group heading for a typeCode (e.g. "PROGRAM_APPROVAL_REQUESTED"
+// → "Program Approval Requested") — generic title-casing rather than a
+// hardcoded map, same "sane fallback for any typeCode this frontend has
+// never seen" reasoning as DEFAULT_VISUAL above, so a new backend-added
+// type groups under a readable heading with no frontend change needed.
+export function notificationTypeLabel(typeCode: string): string {
+  return typeCode
+    .toLowerCase()
+    .split('_')
+    .filter(Boolean)
+    .map(w => w[0].toUpperCase() + w.slice(1))
+    .join(' ')
+}
+
 export interface NotificationListParams {
   page?: number
   size?: number
@@ -117,21 +134,49 @@ export function getNotifications(params: NotificationListParams = {}): Promise<N
   const qs = new URLSearchParams({ page: String(page), size: String(size) })
   if (search?.trim()) qs.set('search', search.trim())
   if (unreadOnly) qs.set('unreadOnly', 'true')
-  return apiGet<{ items: NotificationItem[]; totalCount: number } | null>(`/api/v1/notifications?${qs}`)
-    .then(data => data ?? { items: [], totalCount: 0 })
+  return apiGet<any>(`/api/v1/notifications?${qs}`)
+    .then(data => {
+      if (!data) return { items: [], totalCount: 0 }
+
+      // Handle the new grouped response shape: { groups: [...], totalNotificationCount: number }
+      if (Array.isArray(data.groups)) {
+        const allItems = data.groups.flatMap((g: any) => g.items || [])
+        // Sort newest first, as flattening groups might mix up the chronological order
+        allItems.sort((a: any, b: any) => new Date(b.createdDate).getTime() - new Date(a.createdDate).getTime())
+        
+        const total = unreadOnly 
+          ? (data.totalUnreadCount ?? allItems.length)
+          : (data.totalNotificationCount ?? allItems.length)
+
+        return {
+          items: allItems,
+          totalCount: total
+        }
+      }
+
+      // Fallback for old/flat shape
+      if (Array.isArray(data.items)) {
+        return {
+          items: data.items,
+          totalCount: data.totalCount ?? data.items.length
+        }
+      }
+
+      return { items: [], totalCount: 0 }
+    })
 }
 
 // Returns the *remaining* unread count directly — the doc is explicit that
 // the caller should set the badge from this response rather than issuing a
 // second unread-count call. A 404 (already read, or a double-click race) is
 // swallowed by the caller, not here — see useMarkNotificationRead.
-export function markNotificationRead(guid: string): Promise<number> {
+export function markNotificationRead(guid: string): Promise<number | undefined> {
   if (MOCK_AUTH) {
     const n = mockNotifications.find(x => x.notificationGuid === guid)
     if (n) n.isRead = true
     return Promise.resolve(mockNotifications.filter(x => !x.isRead).length)
   }
-  return apiPost<number | null>(`/api/v1/notifications/${guid}/read`, {}).then(n => n ?? 0)
+  return apiPost<number | null>(`/api/v1/notifications/${guid}/read`, {}).then(n => n == null ? undefined : n)
 }
 
 // Returns rows changed — 0 is a normal outcome (nothing was unread).

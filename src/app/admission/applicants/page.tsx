@@ -9,8 +9,10 @@ import { Pagination } from '@/components/Pagination'
 import { EmptyState } from '@/components/EmptyState'
 import { TableLoadingState } from '@/components/TableLoadingState'
 import { usePagination } from '@/hooks/usePagination'
-import { useApplications, ApplicationListItem } from '@/hooks/admission/useApplicationFiling'
+import { useApplications, useExportApplicationsCsv, ApplicationListItem } from '@/hooks/admission/useApplicationFiling'
 import { useProgramMasters } from '@/hooks/academic/useProgramMaster'
+import { downloadBlob } from '@/lib/downloadBlob'
+import { AuthError } from '@/lib/api/client'
 
 const PAGE_SIZE = 10
 // This endpoint has no search param (unlike Filing's payment-search) — fetch
@@ -68,6 +70,23 @@ export default function ApplicantsPage() {
 
   const { page, setPage, totalPages, totalCount, pageItems } = usePagination(filtered, PAGE_SIZE)
 
+  // No filter UI on this page yet (see FETCH_ALL_PAGE_SIZE's own note) — the
+  // export always pulls the full, unfiltered dataset, same "everything the
+  // table itself shows" scope get-export-csv.md's optional intake/programme/
+  // date params would otherwise narrow.
+  const exportCsv = useExportApplicationsCsv()
+  function handleExport() {
+    exportCsv.mutate({}, {
+      onSuccess: ({ blob, filename }) => {
+        downloadBlob(blob, filename)
+        showToast('CSV exported successfully', 'success')
+      },
+      onError: (error: Error) => {
+        showToast(error instanceof AuthError ? error.message : (error.message || 'Failed to export CSV. Please try again.'), 'error')
+      },
+    })
+  }
+
   return (
     <div id="page-applicants">
       <div className="pg-hdr">
@@ -85,8 +104,8 @@ export default function ApplicantsPage() {
             minChars={MIN_SEARCH_CHARS}
             onSelect={() => router.push('/admission/registration')}
           />
-          <button className="btn btn-outline" onClick={() => showToast('CSV exported successfully', 'success')}>
-            <i className="lni lni-download mr-1" /> Export CSV
+          <button className="btn btn-outline" disabled={exportCsv.isPending} onClick={handleExport}>
+            <i className="lni lni-download mr-1" /> {exportCsv.isPending ? 'Exporting…' : 'Export CSV'}
           </button>
         </div>
       </div>

@@ -74,6 +74,7 @@ export interface BatchCreateInput {
   bInCharge: string
   intakeGuid: string
   pHead: string | null
+  active: number
 }
 
 // Confirmed: Update takes the identical shape as Create — a full replace,
@@ -173,4 +174,19 @@ export function deleteBatch(guid: string): Promise<boolean> {
     return Promise.resolve(true)
   }
   return apiDelete<boolean>(`/api/v1/academic/batches/${guid}`)
+}
+
+// Confirmed via students/post-counts-by-batch.md: "Used by the academic
+// service to display student counts on batch management screens" — but
+// wasn't actually wired into this page at all until now, so Batch
+// Management never surfaced whether a batch being deleted had real students
+// enrolled in it (the confirmed bug this backs the fix for). Batches with
+// zero students are omitted from the response entirely (a missing key means
+// zero), not returned as an explicit 0 — normalised to a plain number here
+// so callers don't have to special-case "key absent" themselves.
+export function getStudentCountsByBatch(batchGuids: string[]): Promise<Record<string, number>> {
+  if (batchGuids.length === 0) return Promise.resolve({})
+  if (MOCK_AUTH) return Promise.resolve({})
+  return apiPost<Record<string, number> | null>('/api/v1/students/counts-by-batch', batchGuids)
+    .then(data => data ?? {})
 }

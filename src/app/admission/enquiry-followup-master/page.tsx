@@ -98,17 +98,11 @@ export default function EnquiryFollowupMasterPage() {
   const searchMatches = searchTrimmed.length >= MIN_SEARCH_CHARS ? rows.slice(0, 8) : []
 
   // "Add Follow-up" needs a full enquiry picker to search across — the main
-  // table above is now paginated 10-at-a-time and can't supply that. Fetched
-  // separately (capped at 1000, only while the modal is actually open) since
-  // SearchSelect (the picker's underlying component) only takes a static
-  // option list, not a live server-search callback — same "capped, no async
-  // picker" trade-off useAllCourseUnits documents for CourseUnitModal. The
-  // real ?search= endpoint (see getEnquiryFollowUps) isn't wired into this
-  // picker for that reason, even though it's confirmed to exist now.
-  const followUpModalOpen = openModals.has('new-followup-log-modal')
-  const { data: pickerData } = useEnquiryFollowUps(1, 1000, '', followUpModalOpen)
-  const pickerEnquiries = pickerData?.items ?? []
-
+  // table above is now paginated 10-at-a-time and can't supply that.
+  // NewFollowUpLogModal fetches its own picker list now (scroll-to-load-more,
+  // no cap) via useEnquiryFollowUpsInfinite, only while it's actually open —
+  // see that hook's own comment for why it deliberately doesn't do a live
+  // server-side search the way the main table's search box above does.
   function openViewModal(guid: string) {
     setViewingGuid(guid)
     openModal('enquiry-assign-modal')
@@ -212,7 +206,6 @@ export default function EnquiryFollowupMasterPage() {
         isOpen={openModals.has('new-followup-log-modal')}
         onClose={() => closeModal('new-followup-log-modal')}
         showToast={showToast}
-        enquiries={pickerEnquiries}
         createFollowUp={createFollowUp}
       />
       <Toast toast={toast} />

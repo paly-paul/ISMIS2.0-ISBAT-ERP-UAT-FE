@@ -7,8 +7,11 @@ export interface CourseUnitTopic {
   courseUnitTopicCode: string
   courseUnitTopicDetails: string
   studySequence: number
-  // The API uses different names for this field in different requests.
-  employeeGuid: string
+  // Was employeeGuid (a real employee lookup) — backend confirmed Taught By
+  // is now a plain 1-15 number, so the UI's dropdown no longer calls
+  // useEmployees at all. See the same note on
+  // UpsertCourseUnitOutlineTopicInput.taughtBy in courseUnitOutlines.ts.
+  taughtBy: number
 }
 
 export interface CourseUnitOutline {
@@ -62,8 +65,8 @@ const mockCourseUnits: CourseUnit[] = [
         chapter: 1,
         chapterName: 'Basics of Programming',
         topics: [
-          { courseUnitTopicGuid: '282f843c-4f55-43fd-811d-ef1ce58552b4', courseUnitTopicCode: 'CS1012_1', courseUnitTopicDetails: 'Variables and Data Types', studySequence: 1, employeeGuid: '5' },
-          { courseUnitTopicGuid: '0a5a1d5f-42bc-4fe2-ad62-f4597d8b548f', courseUnitTopicCode: 'CS1012_2', courseUnitTopicDetails: 'Operators and Expressions', studySequence: 2, employeeGuid: '5' },
+          { courseUnitTopicGuid: '282f843c-4f55-43fd-811d-ef1ce58552b4', courseUnitTopicCode: 'CS1012_1', courseUnitTopicDetails: 'Variables and Data Types', studySequence: 1, taughtBy: 5 },
+          { courseUnitTopicGuid: '0a5a1d5f-42bc-4fe2-ad62-f4597d8b548f', courseUnitTopicCode: 'CS1012_2', courseUnitTopicDetails: 'Operators and Expressions', studySequence: 2, taughtBy: 5 },
         ],
       },
       {
@@ -72,7 +75,7 @@ const mockCourseUnits: CourseUnit[] = [
         chapter: 2,
         chapterName: 'Control Structures',
         topics: [
-          { courseUnitTopicGuid: '32955c9f-e3b1-4f15-a27d-b1c2ffd3be8f', courseUnitTopicCode: 'CS1012_3', courseUnitTopicDetails: 'Loops and Conditionals', studySequence: 1, employeeGuid: '5' },
+          { courseUnitTopicGuid: '32955c9f-e3b1-4f15-a27d-b1c2ffd3be8f', courseUnitTopicCode: 'CS1012_3', courseUnitTopicDetails: 'Loops and Conditionals', studySequence: 1, taughtBy: 5 },
         ],
       },
       {
@@ -81,7 +84,7 @@ const mockCourseUnits: CourseUnit[] = [
         chapter: 3,
         chapterName: 'Functions and Modularity',
         topics: [
-          { courseUnitTopicGuid: 'b7569cb1-669e-4738-b156-bf6fbfa88ec3', courseUnitTopicCode: 'CS1012_4', courseUnitTopicDetails: 'Function Declaration and Scope', studySequence: 1, employeeGuid: '6' },
+          { courseUnitTopicGuid: 'b7569cb1-669e-4738-b156-bf6fbfa88ec3', courseUnitTopicCode: 'CS1012_4', courseUnitTopicDetails: 'Function Declaration and Scope', studySequence: 1, taughtBy: 6 },
         ],
       },
     ],
@@ -104,8 +107,8 @@ const mockCourseUnits: CourseUnit[] = [
         chapter: 1,
         chapterName: 'Basics of Programming',
         topics: [
-          { courseUnitTopicGuid: '87df8261-5528-43ac-9de3-615372ee0c7d', courseUnitTopicCode: 'CS101_1', courseUnitTopicDetails: 'Variables and Data Types', studySequence: 1, employeeGuid: '5' },
-          { courseUnitTopicGuid: 'c586134e-1f49-4539-a296-37b726e28e90', courseUnitTopicCode: 'CS101_2', courseUnitTopicDetails: 'Operators and Expressions', studySequence: 2, employeeGuid: '5' },
+          { courseUnitTopicGuid: '87df8261-5528-43ac-9de3-615372ee0c7d', courseUnitTopicCode: 'CS101_1', courseUnitTopicDetails: 'Variables and Data Types', studySequence: 1, taughtBy: 5 },
+          { courseUnitTopicGuid: 'c586134e-1f49-4539-a296-37b726e28e90', courseUnitTopicCode: 'CS101_2', courseUnitTopicDetails: 'Operators and Expressions', studySequence: 2, taughtBy: 5 },
         ],
       },
       {
@@ -114,7 +117,7 @@ const mockCourseUnits: CourseUnit[] = [
         chapter: 2,
         chapterName: 'Control Structures',
         topics: [
-          { courseUnitTopicGuid: '748bab9e-9071-4d65-a719-27f0e7372d4c', courseUnitTopicCode: 'CS101_3', courseUnitTopicDetails: 'Loops and Conditionals', studySequence: 1, employeeGuid: '5' },
+          { courseUnitTopicGuid: '748bab9e-9071-4d65-a719-27f0e7372d4c', courseUnitTopicCode: 'CS101_3', courseUnitTopicDetails: 'Loops and Conditionals', studySequence: 1, taughtBy: 5 },
         ],
       },
       {
@@ -123,7 +126,7 @@ const mockCourseUnits: CourseUnit[] = [
         chapter: 3,
         chapterName: 'Functions and Modularity',
         topics: [
-          { courseUnitTopicGuid: '725c313f-0bf5-4d33-9353-804dc0674d97', courseUnitTopicCode: 'CS101_4', courseUnitTopicDetails: 'Function Declaration and Scope', studySequence: 1, employeeGuid: '6' },
+          { courseUnitTopicGuid: '725c313f-0bf5-4d33-9353-804dc0674d97', courseUnitTopicCode: 'CS101_4', courseUnitTopicDetails: 'Function Declaration and Scope', studySequence: 1, taughtBy: 6 },
         ],
       },
     ],
@@ -269,9 +272,10 @@ export function getCourseUnitById(guid: string): Promise<CourseUnit> {
 // outlines for real (see the note on getCourseUnitById above) — View/Edit
 // modals and ProgrammeModal's Syllabus/Outline/Taught By popup all rely on
 // useCourseUnit(), which now fetches through here instead.
-export interface CourseUnitTopicDetail extends CourseUnitTopic {
-  employeeName: string
-}
+// Used to extend CourseUnitTopic with a resolved employeeName when taughtBy
+// was a real employeeGuid — no longer needed now that it's a plain 1-15
+// number the UI can render directly.
+export type CourseUnitTopicDetail = CourseUnitTopic
 
 export interface CourseUnitOutlineDetail extends Omit<CourseUnitOutline, 'topics'> {
   topics: CourseUnitTopicDetail[]
@@ -330,10 +334,7 @@ export function getCourseUnitDetailsByGuid(guid: string): Promise<CourseUnitFull
         ueWeightage: 0,
         syllabus: existing.syllabus,
       },
-      outlines: existing.outlines.map(o => ({
-        ...o,
-        topics: o.topics.map(t => ({ ...t, employeeName: `Employee #${t.employeeGuid}` })),
-      })),
+      outlines: existing.outlines,
     })
   }
   return apiGet<CourseUnitFullDto>(`/api/v1/academic/courseunits/${guid}/details`)

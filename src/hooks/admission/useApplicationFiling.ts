@@ -1,10 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   deleteQualification,
+  exportApplicationsCsv,
   getApplications,
   getFilingCountries,
   saveGeneral,
   saveQualification,
+  ExportApplicationsCsvParams,
   SaveGeneralInput,
   SaveQualificationInput,
   searchApplicationsForFiling,
@@ -75,9 +77,20 @@ export function useSubmitApplication() {
   })
 }
 
+// Backs /admission/applicants' Export CSV button. A one-shot file download,
+// not cached data, so this is a mutation (matching useSaveQualification's
+// own "action, not a query" reasoning) even though the underlying call is a
+// GET.
+export function useExportApplicationsCsv() {
+  return useMutation({
+    mutationFn: (params: ExportApplicationsCsvParams = {}) => exportApplicationsCsv(params),
+  })
+}
+
 export type {
   ApplicationListItem,
   CountryDropdownDto,
+  ExportApplicationsCsvParams,
   FilingApplicationSearchResult,
   SaveGeneralInput,
   SaveGeneralResponse,

@@ -11,15 +11,31 @@ import {
 
 const PAYMENTS_KEY = ['payments']
 
-// All seven of these are unfiltered back-office list views (no student/date
-// filter — see get-payments.md) — never treat the cached page as stale on
-// its own, only refetch on remount/page change, same "load it, don't keep
-// refiring" convention as most read-only list hooks elsewhere in this app.
-export function usePayments(page: number, pageSize: number) {
+// Unfiltered by default (no student/date filter — see get-payments.md),
+// same "load it, don't keep refiring" convention as most read-only list
+// hooks elsewhere in this app — never treat the cached page as stale on its
+// own, only refetch on remount/page change. applicationGuid/studentGuid are
+// optional per the doc; passed by useAdvanceStatusByPayment below to scope
+// this to one application instead of the whole back-office table.
+export function usePayments(page: number, pageSize: number, enabled = true, applicationGuid?: string | null, studentGuid?: string | null) {
   return useQuery({
-    queryKey: [...PAYMENTS_KEY, 'list', page, pageSize],
-    queryFn: () => getPayments(page, pageSize),
+    queryKey: [...PAYMENTS_KEY, 'list', page, pageSize, applicationGuid ?? null, studentGuid ?? null],
+    queryFn: () => getPayments(page, pageSize, applicationGuid, studentGuid),
+    enabled,
   })
+}
+
+// Answers "is this payment advance-funded" for a specific application —
+// the fee-line history views (getPaymentHistory/getPaymentHistoryList) that
+// back Payment Console's and Payment History's own tables carry no
+// `advance` field at all (see get-payments.md's own note: those are
+// deliberately NOT the raw table), so this raw list is the only place that
+// flag lives. pageSize 200 covers realistic single-application payment
+// counts in one request — this is a lookup map, not a paged UI.
+export function useAdvanceStatusByPayment(applicationGuid: string | null, enabled: boolean) {
+  const { data } = usePayments(1, 200, enabled && !!applicationGuid, applicationGuid)
+  const items = data?.items ?? []
+  return new Map(items.map(p => [p.paymentGuid, p.advance === 1]))
 }
 
 // enabled defaults to true (the advanced-payments console page's own usage,
@@ -50,10 +66,11 @@ export function usePaymentLedgers(page: number, pageSize: number) {
   })
 }
 
-export function usePaymentNches(page: number, pageSize: number) {
+export function usePaymentNches(page: number, pageSize: number, enabled = true, studentGuid?: string | null) {
   return useQuery({
-    queryKey: [...PAYMENTS_KEY, 'nches', page, pageSize],
-    queryFn: () => getPaymentNches(page, pageSize),
+    queryKey: [...PAYMENTS_KEY, 'nches', page, pageSize, studentGuid ?? null],
+    queryFn: () => getPaymentNches(page, pageSize, studentGuid),
+    enabled,
   })
 }
 
