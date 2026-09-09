@@ -32,7 +32,7 @@ function Field({ label, value, mono, wide }: { label: string; value: React.React
 export function ViewProgrammeLevelModal({ isOpen, onClose, programLevelGuid, onEdit, canEdit }: ViewProgrammeLevelModalProps) {
   const { data: programLevel, isLoading, isError, error } = useProgramLevel(programLevelGuid, isOpen)
 
-  const { data: currencies = [] } = useFinanceCurrencies()
+  const { data: currencies = [] } = useFinanceCurrencies(isOpen)
 
   if (!isOpen) return null
 

@@ -1,8 +1,9 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   deleteQualification,
   exportApplicationsCsv,
   getApplications,
+  getFilingApplicationsPage,
   getFilingCountries,
   saveGeneral,
   saveQualification,
@@ -43,6 +44,30 @@ export function useSearchApplicationsForFiling(searchTerm: string, pageNumber: n
     queryKey: [...FILING_KEY, 'search', searchTerm, pageNumber, pageSize, intakeCode ?? ''],
     queryFn: () => searchApplicationsForFiling(searchTerm, pageNumber, pageSize, intakeCode),
     enabled,
+  })
+}
+
+// Real server-paginated, scroll-to-load-more variant for the Filing page's
+// interactive applicant-search dropdown — same useInfiniteQuery +
+// fetch-next-on-scroll mechanism as useSearchCourseUnitsInfinite
+// (useCourseUnits.ts) and useSearchStudentsInfinite (usePaymentConsole.ts).
+// searchTerm is CONFIRMED real server-side (2026-09-08, see
+// getApplicationPayments) and part of the query key, same convention as
+// those two — each typed term's pages are cached separately rather than
+// re-filtered client-side. intakeCode still scopes every page server-side
+// too, combined with whatever term is typed.
+export function useSearchApplicationsForFilingInfinite(searchTerm: string, pageSize: number, enabled: boolean, intakeCode?: number | string) {
+  return useInfiniteQuery({
+    queryKey: [...FILING_KEY, 'search-infinite', searchTerm, pageSize, intakeCode ?? ''],
+    queryFn: ({ pageParam }) => getFilingApplicationsPage(pageParam, pageSize, intakeCode, searchTerm),
+    initialPageParam: 1,
+    getNextPageParam: (lastPage, allPages) => {
+      const fetched = allPages.reduce((sum, p) => sum + p.items.length, 0)
+      return fetched < lastPage.totalCount ? allPages.length + 1 : undefined
+    },
+    enabled,
+    staleTime: Infinity,
+    gcTime: Infinity,
   })
 }
 

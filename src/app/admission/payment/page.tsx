@@ -8,6 +8,7 @@ import { ImportSourceModal } from '@/components/modals/admission/ImportSourceMod
 import { ImportCrmModal } from '@/components/modals/admission/ImportCrmModal'
 import { ImportOdelModal } from '@/components/modals/admission/ImportOdelModal'
 import { SearchSelect } from '@/components/SearchSelect'
+import { EnquirySearchPicker } from '@/components/EnquirySearchPicker'
 import DatePicker from '@/components/DatePicker'
 import { useIntakes } from '@/hooks/academic/useIntakes'
 import { useCampuses } from '@/hooks/config/useCampuses'
@@ -25,7 +26,6 @@ import {
   useApplicationPaymentExemptionTypes,
   useApplicationPaymentTypes,
   useCreateApplicationPayment,
-  useUnconvertedEnquiries,
 } from '@/hooks/admission/useApplicationPayments'
 import { usePagePermissions } from '@/hooks/users/usePagePermissions'
 import { sanitizePhoneInput } from '@/lib/errorMessages'
@@ -112,11 +112,15 @@ function Field({ label, req, children, span2 }: { label: string; req?: boolean; 
 }
 
 function PreviewRow({ label, value }: { label: string; value?: string }) {
+  const filled = !!value
   return (
-    <div className="prev-row">
+    <div className={`prev-row${filled ? ' filled' : ''}`}>
       <span className="prev-lbl">{label}</span>
       <span className="prev-sep">:</span>
-      <span className="prev-val">{value || '—'}</span>
+      <span className="prev-val flex items-center gap-1.5">
+        {value || '—'}
+        {filled && <i className="lni lni-checkmark-circle prev-check" />}
+      </span>
     </div>
   )
 }
@@ -161,6 +165,19 @@ function PaymentPageContent() {
   // display) so the submitted exRate actually matches what's shown here.
   const [usdRate, setUsdRate] = useState('3720')
   const [kesRate, setKesRate] = useState('28.5')
+  // Purely decorative — the rates are seeded, not actually re-fetched — but
+  // the Refresh button doing nothing visible on click reads as broken, so a
+  // brief icon-spin gives it the "did something" feedback a real refresh
+  // would have.
+  const [isRefreshingRates, setIsRefreshingRates] = useState(false)
+  function refreshRates() {
+    setIsRefreshingRates(true)
+    setTimeout(() => setIsRefreshingRates(false), 600)
+  }
+
+  // Receipt Upload drag-and-drop highlight — same treatment as Filing's own
+  // file zones.
+  const [payProofDragActive, setPayProofDragActive] = useState(false)
 
   const pipelineRef = useRef<HTMLDivElement>(null)
   const [canPipLeft, setCanPipLeft]   = useState(false)
@@ -248,12 +265,14 @@ function PaymentPageContent() {
   // "optional" but a real 400 reproduced by removing only this field from
   // an otherwise-working payload proves otherwise) — every payment must
   // link to a real enquiry. Per Application_Payment_Change_Requests_Final_
-  // Updated.md #1/#2, the Enquiry dropdown is now scoped to the selected
-  // Intake and restricted to not-yet-converted enquiries (GET
-  // .../unconverted-enquiries?intakeGuid=...&page=1&pageSize=10), replacing
-  // the old generic "first 100 of 11k+" useEnquiries() list — only enabled
-  // once an Intake is actually picked.
-  const { data: unconvertedEnquiriesData } = useUnconvertedEnquiries(form.intakeGuid, 1, 1000, !!form.intakeGuid)
+  // Updated.md #1/#2, the Enquiry dropdown is scoped to the selected Intake
+  // and restricted to not-yet-converted enquiries (GET
+  // .../unconverted-enquiries?intakeGuid=...&page=...&pageSize=...),
+  // replacing the old generic "first 100 of 11k+" useEnquiries() list — only
+  // enabled once an Intake is actually picked. Fetched via
+  // EnquirySearchPicker's own real server-paginated, scroll-to-load-more
+  // hook (useUnconvertedEnquiriesInfinite) rather than a single capped
+  // pageSize=1000 snapshot of the whole intake.
   const { data: intakes = [] }       = useIntakes()
   const { data: campuses = [] }      = useCampuses()
   // Per #7 — scoped to the selected Campus instead of every programme.
@@ -395,13 +414,12 @@ function PaymentPageContent() {
     }))
   }, [selectedEnquiry, countries])
 
-  const enquiryOptions  = (unconvertedEnquiriesData?.items ?? []).map(e => ({ value: e.enquiryGuid, label: `${e.studentName} (${e.enquiryCode})` }))
-  const enquiryOptionsWithSelected = selectedEnquiry
-    ? [
-        { value: selectedEnquiry.enquiryGuid, label: `${selectedEnquiry.studentName} (${selectedEnquiry.enquiryCode})` },
-        ...enquiryOptions.filter(o => o.value !== selectedEnquiry.enquiryGuid),
-      ]
-    : enquiryOptions
+  // Label shown in EnquirySearchPicker's closed box once something's
+  // selected — sourced from selectedEnquiry (the full-detail fetch above),
+  // not the picker's own paged list, so a ?enquiryGuid= handoff from
+  // enquiry-followup(-master) still shows a real label even before that
+  // specific enquiry has been paged into the picker's own search results.
+  const selectedEnquiryLabel = selectedEnquiry ? `${selectedEnquiry.studentName} (${selectedEnquiry.enquiryCode})` : null
 
   const intakeOptions   = intakes.map(i => ({ value: i.intakeGuid, label: `${i.intakeCode} — ${i.description}` }))
   const campusOptions   = campuses.map(c => ({ value: c.campusGuid, label: c.campusName }))
@@ -429,7 +447,23 @@ function PaymentPageContent() {
   const selectedBankGuid = isBank ? (form.bankGuid || null) : null
   const showBankDetails = isBank
 
-  
+  // Live form-completion feedback for the progress strip and the submit
+  // button's "ready" glow — mirrors handleSubmit's own required-field list
+  // below, but kept as its own separate computation (not factored into one
+  // shared source) so a display-only change here can never alter what's
+  // actually enforced on submit.
+  const requiredFieldsFilled = [
+    !!form.enquiryGuid, !!form.firstName, !!form.lastName, !!form.phone,
+    !!form.intakeGuid, !!form.countryGuid, !!form.campusGuid, !!form.programGuid,
+    !!form.semesterGuid, !!form.batchTimeGuid, !!form.batchGuid, !!form.feeHdGuid,
+    !!form.paymentDate,
+    ...(isWaived ? [] : [
+      !!form.payType, !!form.currencyGuid, !!form.receiptBookGuid, !!form.feeAmount,
+      ...(isBank ? [!!form.bankGuid] : []),
+    ]),
+  ]
+  const formCompletePct = Math.round((requiredFieldsFilled.filter(Boolean).length / requiredFieldsFilled.length) * 100)
+  const formReady = requiredFieldsFilled.every(Boolean)
 
   // Fee Amount is manual-entry only — a first attempt tried to auto-fill it
   // from the selected Fee Structure's dropdown entry, but the real DTO
@@ -561,7 +595,7 @@ function PaymentPageContent() {
             <span className="badge-blue text-[11px] px-1.5 py-0.5 rounded font-bold">UGX</span>
           </div>
           <span className="text-[11px] text-g400 ml-auto">Last updated: Today 08:30 AM</span>
-          <button className="btn btn-neu btn-sm" style={{ gap: 5 }}>
+          <button className={`btn btn-neu btn-sm${isRefreshingRates ? ' pmt-refresh-spin' : ''}`} style={{ gap: 5 }} onClick={refreshRates}>
             <i className="lni lni-reload" style={{ fontSize: 12 }} /> Refresh
           </button>
         </div>
@@ -623,8 +657,13 @@ function PaymentPageContent() {
         {/* Left — forms */}
         <div className="flex flex-col gap-5">
 
+          <div className="pmt-progress">
+            <div className="prog-bar-track"><div className="prog-bar-fill" style={{ width: `${formCompletePct}%` }} /></div>
+            <span className="pmt-progress-label">{formCompletePct}% complete</span>
+          </div>
+
           {/* Section 1: Application Type & Candidate Info */}
-          <div className="card">
+          <div className="card pmt-card">
             <div className="flex items-center gap-2 mb-4 pb-3 border-b border-g100">
               <i className="lni lni-clipboard text-b500" style={{ fontSize: 18 }} />
               <div className="card-title">Application Type &amp; Candidate Info</div>
@@ -635,11 +674,12 @@ function PaymentPageContent() {
                 <SearchSelect options={intakeOptions} value={form.intakeGuid} placeholder="-- Select Intake --" onChange={setIntake} />
               </Field>
               <Field label="Enquiry" req>
-                <SearchSelect
-                  options={enquiryOptionsWithSelected}
-                  value={form.enquiryGuid}
+                <EnquirySearchPicker
+                  intakeGuid={form.intakeGuid}
+                  selectedLabel={form.enquiryGuid ? selectedEnquiryLabel : null}
+                  onSelect={e => set('enquiryGuid', e.enquiryGuid)}
+                  onClear={() => set('enquiryGuid', '')}
                   placeholder={form.intakeGuid ? '-- Select Enquiry --' : '-- Select Intake First --'}
-                  onChange={v => set('enquiryGuid', v)}
                   disabled={!form.intakeGuid}
                 />
               </Field>
@@ -702,7 +742,7 @@ function PaymentPageContent() {
           </div>
 
           {/* Section 2: Payment Details */}
-          <div className="card">
+          <div className="card pmt-card">
             <div className="flex items-center gap-2 mb-4 pb-3 border-b border-g100">
               <i className="lni lni-credit-cards text-b500" style={{ fontSize: 18 }} />
               <div className="card-title">Payment Details</div>
@@ -764,9 +804,18 @@ function PaymentPageContent() {
             </div>
 
             <Field label="Receipt Upload" span2>
-              <div className="file-zone">
+              <div
+                className={`file-zone${payProofDragActive ? ' drag-active' : ''}`}
+                onDragOver={e => { e.preventDefault(); setPayProofDragActive(true) }}
+                onDragLeave={() => setPayProofDragActive(false)}
+                onDrop={e => {
+                  e.preventDefault(); setPayProofDragActive(false)
+                  const dropped = e.dataTransfer.files?.[0]
+                  if (dropped) setPayProofFile(dropped)
+                }}
+              >
                 <input type="file" accept="image/*,.pdf" onChange={e => setPayProofFile(e.target.files?.[0] ?? null)} />
-                <i className="lni lni-upload text-g400" style={{ fontSize: 20 }} />
+                <i className={`lni ${payProofFile ? 'lni-checkmark-circle' : 'lni-upload'}`} style={{ fontSize: 20, color: payProofFile ? 'var(--green)' : 'var(--g400)' }} />
                 <span className="text-g500" style={{ fontSize: 'var(--fs-sm)' }}>
                   {payProofFile ? payProofFile.name : 'Click to upload or drag & drop a scanned receipt'}
                 </span>
@@ -802,7 +851,7 @@ function PaymentPageContent() {
                 <i className="lni lni-reload" /> Clear
               </button>
               {permissions.add && (
-                <button className="btn btn-primary ml-auto" disabled={createPayment.isPending} onClick={handleSubmit}>
+                <button className={`btn btn-primary ml-auto${formReady ? ' btn-submit-ready' : ''}`} disabled={createPayment.isPending} onClick={handleSubmit}>
                   <i className="lni lni-credit-cards" /> {createPayment.isPending ? 'Saving…' : 'Save Payment & Generate Receipt →'}
                 </button>
               )}
@@ -811,7 +860,7 @@ function PaymentPageContent() {
 
           {/* Generated receipt */}
           {showReceipt && (
-            <div className="card">
+            <div className="card pmt-card tab-panel-in">
               <div className="flex items-center gap-2 mb-4">
                 <i className="lni lni-ticket-alt text-clr-green" style={{ fontSize: 18 }} />
                 <div className="card-title">Generated Receipt</div>
@@ -871,7 +920,7 @@ function PaymentPageContent() {
                 <i className="lni lni-eye text-b500" style={{ fontSize: 16 }} />
                 <div className="card-title">Live Application Preview</div>
               </div>
-              <span className="badge-green text-[11px] px-2 py-0.5 rounded-md font-semibold">Auto-updated</span>
+              <span className={`text-[11px] px-2 py-0.5 rounded-md font-semibold ${formReady ? 'badge-green' : 'badge-blue'}`}>{formReady ? 'Ready to submit' : `${formCompletePct}% filled`}</span>
             </div>
 
             <div className="flex flex-col gap-2">

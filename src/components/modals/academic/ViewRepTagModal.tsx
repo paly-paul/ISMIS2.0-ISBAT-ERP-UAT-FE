@@ -23,7 +23,7 @@ function Field({ label, value, mono, wide }: { label: string; value: React.React
 
 export function ViewRepTagModal({ isOpen, onClose, courseUnitRepetitionGuid, onEdit, canEdit }: ViewRepTagModalProps) {
   const { data: tag, isLoading, isError, error } = useRepetitionTag(courseUnitRepetitionGuid, isOpen)
-  const { data: programLevels = [] } = useProgramLevels()
+  const { data: programLevels = [] } = useProgramLevels(isOpen)
 
   if (!isOpen) return null
 

@@ -96,7 +96,6 @@ const HIDDEN_ITEM_IDS = new Set<string>([
 const ORDER_PRIORITY = [
   'dashboard',
   'payment-console',
-  'payment-console-adjustments',
   'nche-guild-payment',
   'advanced-payments',
   'discount-allocation',

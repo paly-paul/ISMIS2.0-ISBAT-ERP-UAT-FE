@@ -3,7 +3,10 @@ import { createRepetitionTag, deleteRepetitionTag, getRepetitionTagById, getRepe
 
 const REPETITION_TAGS_KEY = ['repetitionTags']
 
-export function useRepetitionTags() {
+// enabled defaults to true so every existing call site keeps eagerly
+// fetching exactly as before — only a caller that shouldn't hit the network
+// until it's actually open (e.g. a modal) needs to pass enabled={isOpen}.
+export function useRepetitionTags(enabled = true) {
   return useQuery({
     queryKey: REPETITION_TAGS_KEY,
     queryFn: () => getRepetitionTags(),
@@ -12,6 +15,7 @@ export function useRepetitionTags() {
     // those are wired up.
     staleTime: Infinity,
     gcTime: Infinity,
+    enabled,
   })
 }
 

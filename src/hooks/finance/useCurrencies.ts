@@ -6,13 +6,17 @@ const CURRENCIES_KEY = ['currencies']
 // Load enough rows to cover the full currency list in one request.
 const CURRENCIES_PAGE_SIZE = 1000
 
-export function useCurrencies() {
+// enabled defaults to true so every existing call site keeps eagerly
+// fetching exactly as before — only a caller that shouldn't hit the network
+// until it's actually open (e.g. a modal) needs to pass enabled={isOpen}.
+export function useCurrencies(enabled = true) {
   return useQuery({
     queryKey: CURRENCIES_KEY,
     queryFn: () => getCurrencies(1, CURRENCIES_PAGE_SIZE),
     // Keep the list cached until a mutation invalidates it.
     staleTime: Infinity,
     gcTime: Infinity,
+    enabled,
   })
 }
 

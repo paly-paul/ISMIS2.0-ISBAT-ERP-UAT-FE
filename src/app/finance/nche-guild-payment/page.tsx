@@ -129,7 +129,15 @@ function RegulatoryOutstandingTable({ items, isLoading, isError, category }: { i
         const isDue = s.status === 'Due'
         return (
           <div className={`pc-ledger-item${isPaid ? ' paid' : ''}`} key={s.semesterGuid}>
-            <span className="pc-ledger-icon"><i className={isPaid ? 'lni lni-checkmark-circle' : isDue ? 'lni lni-invoice' : 'lni lni-timer'}></i></span>
+            {/* lni-invoice (the Due icon this used before) isn't a real
+                LineIcons 4.0 class — it's the only place in this codebase
+                that ever referenced it (vs. lni-timer/lni-checkmark-circle
+                below, both confirmed working elsewhere), so it silently
+                rendered blank instead of an icon (2026-09-09 bug report:
+                "the Due row has no icon"). lni-alarm-clock is a real,
+                already-used icon and reads well for "due now" next to
+                lni-timer's own "not yet due" waiting look. */}
+            <span className="pc-ledger-icon"><i className={isPaid ? 'lni lni-checkmark-circle' : isDue ? 'lni lni-alarm-clock' : 'lni lni-timer'}></i></span>
             <div className="flex-1 min-w-0">
               <div className="pc-ledger-name truncate">{s.semName}</div>
               {isPaid && <div className="pc-ledger-sub">Paid</div>}
@@ -392,17 +400,6 @@ export default function NcheGuildPaymentPage() {
           </div>
         </div>
 
-        <div className="card p-0 overflow-hidden">
-          <div className="tab-bar">
-            <button className={`tab-btn${category === 'nche' ? ' active' : ''}`} onClick={() => switchCategory('nche')}>
-              <i className="lni lni-graduation"></i> NCHE
-            </button>
-            <button className={`tab-btn${category === 'guild' ? ' active' : ''}`} onClick={() => switchCategory('guild')}>
-              <i className="lni lni-users"></i> Guild
-            </button>
-          </div>
-        </div>
-
         <div className="card">
           <div className="card-hdr">
             <div className="card-title"><span className="ctitle-icon"><i className="lni lni-search-alt"></i></span> Student Search</div>
@@ -483,7 +480,24 @@ export default function NcheGuildPaymentPage() {
         </div>
 
         {profile && (
-          <div className="pc-body">
+          <>
+            {/* Same rounded-pill .pc-tabs/.pc-tab-btn switcher as Payment
+                Console's own Semester Payment/Other Payment tabs, moved
+                below Student Search and gated on a selected student
+                (2026-09-09, per request) — matches Payment Console's own
+                .pc-tabs, which only renders once selectedApplicationGuid is
+                set, rather than showing category-selection ahead of picking
+                who it's even for. */}
+            <div className="pc-tabs">
+              <button className={`pc-tab-btn${category === 'nche' ? ' active' : ''}`} onClick={() => switchCategory('nche')}>
+                <i className="lni lni-graduation"></i> NCHE
+              </button>
+              <button className={`pc-tab-btn${category === 'guild' ? ' active' : ''}`} onClick={() => switchCategory('guild')}>
+                <i className="lni lni-users"></i> Guild
+              </button>
+            </div>
+
+            <div className="pc-body">
             {/* LEFT column: Profile Details + Payment History, merged into
                 one card — same layout Payment Console's own left column
                 uses (see its own "merged into this same card as a second
@@ -634,11 +648,14 @@ export default function NcheGuildPaymentPage() {
                   </div>
                 )}
                 <div className="flex gap-[10px] justify-end items-center">
-u
+                  <button className="btn btn-primary btn-lg" disabled={isSaving} onClick={handleSave}>
+                    <i className="lni lni-save"></i> {isSaving ? 'Saving…' : 'Submit'}
+                  </button>
                 </div>
               </div>
             </div>
-          </div>
+            </div>
+          </>
         )}
       </div>
 

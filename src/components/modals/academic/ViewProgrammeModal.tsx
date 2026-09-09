@@ -28,9 +28,9 @@ export function ViewProgrammeModal({ isOpen, onClose, programGuid, onEdit }: Vie
   const { data: programGroups = [] } = useProgramGroups()
   const { data: programLevels = [] } = useProgramLevels()
   const { data: faculties = [] } = useFaculties()
-  const { data: intakes = [] } = useIntakes()
-  const { data: ledgers = [] } = useLedgers()
-  const { data: financeCurrencies = [] } = useFinanceCurrencies()
+  const { data: intakes = [] } = useIntakes(isOpen)
+  const { data: ledgers = [] } = useLedgers(isOpen)
+  const { data: financeCurrencies = [] } = useFinanceCurrencies(isOpen)
 
   if (!isOpen) return null
 

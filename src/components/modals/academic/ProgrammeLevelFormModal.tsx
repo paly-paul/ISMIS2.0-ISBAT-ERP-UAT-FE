@@ -46,7 +46,7 @@ export function ProgrammeLevelFormModal({ isOpen, onClose, showToast, mode, prog
 
   // useFinanceCurrencies, not useCurrencies/currencyMaster.ts — the payload needs a real currencyGuid;
   // sending Currency Master's intCurrency gets rejected with "Currency is required".
-  const { data: currencies = [] } = useFinanceCurrencies()
+  const { data: currencies = [] } = useFinanceCurrencies(isOpen)
   const currencyOptions = currencies.map(c => ({ value: c.currencyGuid, label: `${c.currencyCode} — ${c.currencyName}` }))
 
   // Prefill on edit once the level loads; re-runs per guid since react-query resets `programLevel` to undefined between them.

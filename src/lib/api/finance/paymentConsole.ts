@@ -709,10 +709,10 @@ export function getLedgerOthers(): Promise<LedgerOthersDto[]> {
 // required, procBankGuid required too unless payType is Cash) or from an
 // existing advance deposit (paymentAdvanceGuid supplied — no receipt/book/
 // bank needed). Both modes are wired on the form now — the Advance Payment
-// checkbox opens AdvanceDepositPickerModal (get-payment-advances.md) instead
-// of flipping a local-only flag (2026-09-01); a real paymentAdvanceGuid is
-// only ever set once a deposit is actually picked there, so this field is
-// never fabricated.
+// checkbox reveals an inline deposit-picker table (get-payment-advances.md)
+// instead of flipping a local-only flag (2026-09-01); a real
+// paymentAdvanceGuid is only ever set once a deposit row is actually picked
+// there, so this field is never fabricated.
 export interface PaymentOtherInput {
   applicationGuid: string
   studentGuid: string | null

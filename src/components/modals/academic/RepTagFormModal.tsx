@@ -34,7 +34,7 @@ export function RepTagFormModal({ isOpen, onClose, showToast, mode, courseUnitRe
   const [failure, setFailure] = useState<string | null>(null)
   const [errors, setErrors]   = useState<Record<string, string>>({})
 
-  const { data: programLevels = [] } = useProgramLevels()
+  const { data: programLevels = [] } = useProgramLevels(isOpen)
   const programLevelOptions = programLevels.map(p => ({ value: p.programLevelGuid, label: p.levelName }))
 
   // Fill the form when the tag loads on edit, recovering the linked programme level; blank on fresh create.

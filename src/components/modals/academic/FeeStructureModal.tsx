@@ -85,9 +85,9 @@ let nextId = 200
 let nextStructId = 100
 
 export function FeeStructureModal({ isOpen, onClose, showToast, mode, editData }: ModalProps & { mode?: 'edit'; editData?: ProgramFeeStructureHeader }) {
-  const { data: programs = [] }   = useProgramMasters()
-  const { data: intakes = [] }    = useIntakes()
-  const { data: currencies = [] } = useCurrencies()
+  const { data: programs = [] }   = useProgramMasters(isOpen)
+  const { data: intakes = [] }    = useIntakes(isOpen)
+  const { data: currencies = [] } = useCurrencies(isOpen)
   const saveFeeStructureComplete   = useSaveProgramFeeStructureComplete()
   const updateFeeStructureComplete = useUpdateProgramFeeStructureComplete()
   // Real fetch-by-guid now — GET fee-lines/:feeHdGuid, same convention as
@@ -99,8 +99,10 @@ export function FeeStructureModal({ isOpen, onClose, showToast, mode, editData }
   // Copy Fee Code — real now: sourced from every existing fee structure via
   // the same GET-all endpoint the main page's table uses, not the old
   // session-only "other structures added in this modal" list. Fetched
-  // unconditionally (matches the rest of this modal's non-guid-scoped
-  // lookups, e.g. useProgramMasters/useIntakes above), not gated on isOpen.
+  // unconditionally (matches useProgramMasters above) — safe because it
+  // shares the exact same query key/args as the fee-structure page's own
+  // useProgramFeeStructures(1, FEE_STRUCTURES_LOAD_SIZE) call, so this just
+  // reuses that cached fetch instead of firing a second request on mount.
   const { data: allFeeStructuresData } = useProgramFeeStructures(1, 1000)
   const allFeeStructures = allFeeStructuresData?.items ?? []
   // Per-source-guid on-demand fetch of the picked structure's real fee
@@ -113,7 +115,7 @@ export function FeeStructureModal({ isOpen, onClose, showToast, mode, editData }
   // Intake dropdown at all, it's forced to whatever intake is currently
   // flagged current (the same "Current Academic Intake" hero-card filter
   // already used on /academic/intake-master), shown read-only.
-  const { data: currentAcademicIntake } = useCurrentAcademicIntake()
+  const { data: currentAcademicIntake } = useCurrentAcademicIntake(isOpen)
 
   const programOptions = programs.map(p => ({ value: p.programGuid, label: `${p.programName} (${p.programCode})` }))
   // Same real intakeGuid convention as ProgrammeModal's Intake step. Still
@@ -252,9 +254,9 @@ export function FeeStructureModal({ isOpen, onClose, showToast, mode, editData }
   // this component has to run on every render regardless of isOpen, or
   // React loses track of hook order between a closed and open render.
   const { data: semesters = [] } = useSemestersForProgram(active.programme, !!active.programme)
-  const { data: financeCurrencies = [] } = useFinanceCurrencies()
+  const { data: financeCurrencies = [] } = useFinanceCurrencies(isOpen)
   const financeCurrencyOptions = financeCurrencies.map(c => ({ value: c.currencyGuid, label: `${c.currencyCode} — ${c.currencyName}` }))
-  const { data: ledgers = [] } = useLedgers()
+  const { data: ledgers = [] } = useLedgers(isOpen)
   // Base options from the Ledger master list, PLUS a synthesized option for
   // any ledgerGuid already sitting on a loaded fee item (from GET fee-lines
   // or a Copy Fee Code source) that isn't in that list — using the real

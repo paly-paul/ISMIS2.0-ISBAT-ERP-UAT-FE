@@ -61,10 +61,17 @@ function redirectToLogin(triggeredBy: string, cause: unknown) {
   // out on this page" report impossible to root-cause after the fact.
   if (typeof window !== 'undefined') {
     console.warn(
-      `[auth] Redirecting to /login — refresh failed after a 401 from "${triggeredBy}".`,
+      `[auth] Redirecting to /login/staff — refresh failed after a 401 from "${triggeredBy}".`,
       cause,
     )
-    window.location.href = '/login'
+    // /login (the portal selector) rather than /login/staff directly used to
+    // strand the cashier/registrar on a "pick your portal" screen instead of
+    // straight back at a login form — every module this session's own
+    // refresh timer actually guards (academic/finance/admission/employee/
+    // config/assessment, and the staff-facing student-records pages under
+    // /student) is staff-only, so /login/staff is always the right target
+    // here, not a guess between portals.
+    window.location.href = '/login/staff'
   }
 }
 

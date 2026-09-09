@@ -3,7 +3,10 @@ import { createLedger, deleteLedger, getLedgerById, getLedgers, Ledger, LedgerIn
 
 const LEDGERS_KEY = ['ledgers']
 
-export function useLedgers() {
+// enabled defaults to true so every existing call site keeps eagerly
+// fetching exactly as before — only a caller that shouldn't hit the network
+// until it's actually open (e.g. a modal) needs to pass enabled={isOpen}.
+export function useLedgers(enabled = true) {
   return useQuery({
     queryKey: LEDGERS_KEY,
     queryFn: () => getLedgers(),
@@ -12,6 +15,7 @@ export function useLedgers() {
     // instead of on every remount/window focus.
     staleTime: Infinity,
     gcTime: Infinity,
+    enabled,
   })
 }
 

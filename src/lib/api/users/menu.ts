@@ -53,11 +53,15 @@ function module_(name: string, icon: string, children: MenuNode[]): MenuNode {
 // getMenu() — the backend hasn't registered these two sections on its
 // permission model yet (see the TEMPORARY note by mergeFinanceSections),
 // so both mock mode and the temporary merge need the identical definitions.
+//
+// 'Payment Console Adjustments' removed (2026-09-08) — its "Apply Advance"
+// fields/functionality moved into Payment Console's own Semester Payment
+// tab, behind a Regular Payment/Apply Advance toggle; the standalone page
+// now just redirects there, so it no longer needs its own nav entry.
 const FINANCE_PAYMENT_SECTIONS: MenuNode[] = [
   section('Payment Collection', [
     leaf('Dashboard', 'dashboard', 'dashboard'),
     leaf('Payment Console', 'credit-cards', 'payment-console'),
-    leaf('Payment Console Adjustments', 'pencil-alt', 'payment-console-adjustments'),
     leaf('Payment Refund', 'reload', 'payment-refund'),
     leaf('NCHE & Guild Payment', 'graduation', 'nche-guild-payment'),
     leaf('Discount Allocation', 'tag', 'discount-allocation'),
@@ -342,7 +346,6 @@ function mergeFinanceSections(menu: MenuNode[]): MenuNode[] {
     const collectionSection = financeModule.children[collectionIdx]
     const existingLeaves = new Set(collectionSection.children.map(l => l.name))
     const missingLeaves = [
-      leaf('Payment Console Adjustments', 'pencil-alt', 'payment-console-adjustments'),
       leaf('Payment Refund', 'reload', 'payment-refund'),
       leaf('NCHE & Guild Payment', 'graduation', 'nche-guild-payment'),
       leaf('Discount Allocation', 'tag', 'discount-allocation'),

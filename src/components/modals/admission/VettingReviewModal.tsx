@@ -5,6 +5,7 @@ import { SuccessPopup } from '../shared/SuccessPopup'
 import { FailurePopup } from '../shared/FailurePopup'
 import { applicantProfileHref } from '@/lib/applicantProfileLink'
 import { useVettingApplicationDetail, useWaitApplication } from '@/hooks/admission/useVetting'
+import { useIntakes } from '@/hooks/academic/useIntakes'
 import { VetApplicationInput } from '@/lib/api/admission/vetting'
 import { AuthError } from '@/lib/api/client'
 
@@ -29,6 +30,17 @@ interface Props extends ModalProps {
 export function VettingReviewModal({ isOpen, onClose, showToast, applicationGuid, vetApplication, onReject }: Props) {
   const { data: detail, isLoading, isError, error } = useVettingApplicationDetail(applicationGuid, isOpen)
   const waitApplication = useWaitApplication()
+  const { data: intakes = [] } = useIntakes()
+
+  function resolveIntakeLabel(guid?: string | null) {
+    if (!guid) return ''
+    const found = intakes.find(i => i.intakeGuid === guid)
+    return found ? (found.description ? `${found.intakeCode} — ${found.description}` : String(found.intakeCode)) : ''
+  }
+
+  const intakeDisplay = detail
+    ? String(detail.intakeName || detail.intakeCode || detail.intake || resolveIntakeLabel(detail.intakeGuid) || '—')
+    : '—'
 
   const [remarks, setRemarks] = useState('')
   const [approved, setApproved] = useState(false)
@@ -155,7 +167,7 @@ export function VettingReviewModal({ isOpen, onClose, showToast, applicationGuid
                     nationalId: detail.nationalId ?? undefined,
                     phone: detail.phone ?? undefined,
                     email: detail.emailId ?? undefined,
-                    intake: detail.intakeCode,
+                    intake: intakeDisplay !== '—' ? intakeDisplay : undefined,
                     campus: detail.campusName,
                     submitted: detail.submittedDate,
                   })}
@@ -192,7 +204,7 @@ export function VettingReviewModal({ isOpen, onClose, showToast, applicationGuid
                 <div className="fg"><label className="lbl">App. Ref</label><input className="ctrl font-mono" readOnly value={detail.appRefNo || ''} /></div>
                 <div className="fg"><label className="lbl">Admission Type</label><input className="ctrl" readOnly value={detail.admissionType || ''} /></div>
                 <div className="fg"><label className="lbl">Programme</label><input className="ctrl" readOnly value={detail.programName || ''} /></div>
-                <div className="fg"><label className="lbl">Intake</label><input className="ctrl" readOnly value={detail.intakeCode || '—'} /></div>
+                <div className="fg"><label className="lbl">Intake</label><input className="ctrl" readOnly value={intakeDisplay} /></div>
                 <div className="fg"><label className="lbl">Campus</label><input className="ctrl" readOnly value={detail.campusName || '—'} /></div>
                 <div className="fg"><label className="lbl">Submitted</label><input className="ctrl" readOnly value={detail.submittedDate ? detail.submittedDate.slice(0, 10) : ''} /></div>
                 <div className="fg"><label className="lbl">Fee Paid</label><input className="ctrl" readOnly value={detail.feePaid ? 'Yes' : 'No'} /></div>
