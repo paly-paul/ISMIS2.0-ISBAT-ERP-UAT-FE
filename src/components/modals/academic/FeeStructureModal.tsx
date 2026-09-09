@@ -85,7 +85,7 @@ let nextId = 200
 let nextStructId = 100
 
 export function FeeStructureModal({ isOpen, onClose, showToast, mode, editData }: ModalProps & { mode?: 'edit'; editData?: ProgramFeeStructureHeader }) {
-  const { data: programs = [] }   = useProgramMasters(isOpen)
+  const { data: programs = [] }   = useProgramMasters()
   const { data: intakes = [] }    = useIntakes(isOpen)
   const { data: currencies = [] } = useCurrencies(isOpen)
   const saveFeeStructureComplete   = useSaveProgramFeeStructureComplete()
