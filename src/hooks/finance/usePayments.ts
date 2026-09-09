@@ -38,12 +38,10 @@ export function useAdvanceStatusByPayment(applicationGuid: string | null, enable
   return new Map(items.map(p => [p.paymentGuid, p.advance === 1]))
 }
 
-// enabled defaults to true (the advanced-payments console page's own usage,
-// always visible, unfiltered — no studentGuid passed) — the Other Payment
-// tab's Advance Payment picker modal (AdvanceDepositPickerModal) passes
-// false until it's actually open, plus studentGuid (per
-// get-payment-advances.md's own optional filter) to scope the list to just
-// the currently-selected student instead of every deposit in the system.
+// enabled defaults to true — the advanced-payments console page's own usage,
+// always visible, unfiltered, no studentGuid passed. (The Other Payment
+// tab's own Advance Payment picker uses the separate applicationGuid-scoped
+// useAdvanceDeposits instead — see that hook's own comment.)
 export function usePaymentAdvances(page: number, pageSize: number, enabled = true, studentGuid?: string | null) {
   return useQuery({
     queryKey: [...PAYMENTS_KEY, 'advances', page, pageSize, studentGuid ?? null],

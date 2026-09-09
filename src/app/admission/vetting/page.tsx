@@ -42,16 +42,13 @@ function actionLabel(action: number | null): string {
   }
 }
 
-function timeAgo(iso: string | null): string {
-  if (!iso) return '—'
-  const then = new Date(iso).getTime()
-  if (Number.isNaN(then)) return '—'
-  const mins = Math.floor((Date.now() - then) / 60_000)
-  if (mins < 1) return 'just now'
-  if (mins < 60) return `${mins}m ago`
-  const hours = Math.floor(mins / 60)
-  if (hours < 24) return `${hours}h ago`
-  return `${Math.floor(hours / 24)}d ago`
+function timeAgo(dateStr: string | null): string {
+  if (!dateStr) return '—'
+  const diff = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000)
+  if (diff < 60) return 'just now'
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
+  return `${Math.floor(diff / 86400)}d ago`
 }
 
 export default function VettingPage() {
@@ -105,10 +102,12 @@ export default function VettingPage() {
     { value: 'all', label: 'All Programmes' },
     ...Array.from(new Set(items.map(i => i.programName))).map(name => ({ value: name, label: name })),
   ]
+
   // Rows are already server-paginated (see useVettingQueue above) —
-  // visibleRows just narrows the current page's own rows by programme, it
-  // doesn't page through them again client-side.
-  const visibleRows = filterProg === 'all' ? items : items.filter(r => r.programName === filterProg)
+  // visibleRows narrows the current page's own rows by programme.
+  const visibleRows = filterProg === 'all'
+    ? items
+    : items.filter(r => r.programName === filterProg)
 
   function updateSearch(value: string) { setSearch(value); setPage(1) }
 
@@ -162,12 +161,23 @@ export default function VettingPage() {
         </div>
         <ScrollTable>
           <table>
-            <thead><tr><th style={{ width: 48 }}></th><th>App. Ref</th><th>Applicant Name</th><th>Programme</th><th>Type</th><th>Documents</th><th>Submitted</th><th>Status</th></tr></thead>
+            <thead>
+              <tr>
+                <th style={{ width: 48 }}></th>
+                <th>App. Ref</th>
+                <th>Applicant Name</th>
+                <th>Programme</th>
+                <th>Type</th>
+                <th>Documents</th>
+                <th>Submitted</th>
+                <th>Status</th>
+              </tr>
+            </thead>
             <tbody>
               {isLoading
                 ? <TableLoadingState colSpan={8} />
                 : visibleRows.length === 0
-                  ? <EmptyState colSpan={8} hasFilters={!!search.trim() || filterProg !== 'all'} onClearFilters={() => { setSearch(''); setFilterProg('all') }} />
+                  ? <EmptyState colSpan={8} hasFilters={!!search.trim() || filterProg !== 'all'} onClearFilters={() => { setSearch(''); setFilterProg('all'); setPage(1) }} />
                   : null}
               {visibleRows.map(row => (
                 <tr key={row.applicationGuid}>

@@ -112,11 +112,21 @@ export interface NotificationListParams {
   size?: number
   search?: string
   unreadOnly?: boolean
+  typeCode?: string
+}
+
+export interface NotificationGroupItem {
+  typeCode: string
+  groupName?: string
+  totalCount?: number
+  unreadCount?: number
+  items: NotificationItem[]
 }
 
 export interface NotificationListResult {
   items: NotificationItem[]
   totalCount: number
+  groups?: NotificationGroupItem[]
 }
 
 // ─── Real endpoints ──────────────────────────────────────────────────────
@@ -129,11 +139,12 @@ export function getUnreadCount(): Promise<number> {
 // size is clamped to 100 server-side per the doc's API table — not
 // re-enforced client-side, the backend is the source of truth for the cap.
 export function getNotifications(params: NotificationListParams = {}): Promise<NotificationListResult> {
-  const { page = 1, size = 20, search, unreadOnly } = params
-  if (MOCK_AUTH) return Promise.resolve(mockList(page, size, search, unreadOnly))
+  const { page = 1, size = 20, search, unreadOnly, typeCode } = params
+  if (MOCK_AUTH) return Promise.resolve(mockList(page, size, search, unreadOnly, typeCode))
   const qs = new URLSearchParams({ page: String(page), size: String(size) })
   if (search?.trim()) qs.set('search', search.trim())
   if (unreadOnly) qs.set('unreadOnly', 'true')
+  if (typeCode && typeCode !== 'all') qs.set('typeCode', typeCode)
   return apiGet<any>(`/api/v1/notifications?${qs}`)
     .then(data => {
       if (!data) return { items: [], totalCount: 0 }
@@ -150,7 +161,8 @@ export function getNotifications(params: NotificationListParams = {}): Promise<N
 
         return {
           items: allItems,
-          totalCount: total
+          totalCount: total,
+          groups: data.groups,
         }
       }
 
@@ -355,9 +367,10 @@ const mockNotifications: NotificationItem[] = [
   },
 ]
 
-function mockList(page: number, size: number, search?: string, unreadOnly?: boolean): NotificationListResult {
+function mockList(page: number, size: number, search?: string, unreadOnly?: boolean, typeCode?: string): NotificationListResult {
   let rows = [...mockNotifications].sort((a, b) => new Date(b.createdDate).getTime() - new Date(a.createdDate).getTime())
   if (unreadOnly) rows = rows.filter(n => !n.isRead)
+  if (typeCode && typeCode !== 'all') rows = rows.filter(n => n.typeCode === typeCode)
   const term = search?.trim().toLowerCase()
   if (term) rows = rows.filter(n => `${n.title} ${n.body}`.toLowerCase().includes(term))
   const totalCount = rows.length

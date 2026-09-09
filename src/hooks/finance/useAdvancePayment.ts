@@ -60,12 +60,21 @@ export function useCreateAdjustment() {
       // there was a leftover, a new deposit was created) — the picker and
       // balance strip are both stale. So is this deposit's own adjustment
       // history, and — since this settles real tuition ledgers, exactly
-      // like a Payment Console payment would — the application's
-      // outstanding-ledgers/payment-history.
+      // like a Payment Console payment would — the application's own
+      // outstanding-ledger table and payment history.
+      //
+      // 'current-semester-payable' (not 'outstanding-ledgers') — this
+      // mutation moved from the standalone Payment Console Adjustments page
+      // (which read useOutstandingLedgers) into Payment Console's own
+      // Semester Payment tab (2026-09-08), which reads the different,
+      // discount-aware useCurrentSemesterPayable instead — see that hook's
+      // own comment. No trailing studentGuid in the key: invalidateQueries
+      // matches by prefix, so this catches every studentGuid variant cached
+      // for this applicationGuid without having to know which one is live.
       queryClient.invalidateQueries({ queryKey: [...ADVANCE_DEPOSITS_KEY, applicationGuid] })
       queryClient.invalidateQueries({ queryKey: [...ADVANCE_BALANCE_KEY, applicationGuid] })
       queryClient.invalidateQueries({ queryKey: [...ADJUSTMENTS_BY_ADVANCE_KEY, paymentAdvanceGuid] })
-      queryClient.invalidateQueries({ queryKey: ['payment-console', 'outstanding-ledgers', applicationGuid] })
+      queryClient.invalidateQueries({ queryKey: ['payment-console', 'current-semester-payable', applicationGuid] })
       queryClient.invalidateQueries({ queryKey: ['payment-console', 'payment-history', applicationGuid] })
       // A newly-created leftover deposit (newAdvanceMessage) or the
       // cross-student advances list both live under this separate key

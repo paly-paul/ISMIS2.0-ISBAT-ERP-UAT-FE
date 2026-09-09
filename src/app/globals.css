@@ -2348,22 +2348,11 @@ textarea.ctrl {
   }
 }
 
-/* Payment Console Adjustments — same 50/50 .pc-body split as Discount
-   Allocation above. */
-#page-payment-console-adjustments > .pc-body {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 16px
-}
-
-@media(max-width:1200px) {
-  #page-payment-console-adjustments > .pc-body {
-    grid-template-columns: 1fr
-  }
-}
-
-/* Payment Refund — same 50/50 .pc-body split as Payment Console
-   Adjustments/Discount Allocation above. */
+/* Payment Refund — same 50/50 .pc-body split as Discount Allocation above.
+   (Payment Console Adjustments' own identical block lived here too, until
+   that standalone page was retired 2026-09-08 in favor of a toggle inside
+   Payment Console's own Semester Payment tab — its .pc-body already gets
+   Payment Console's own #page-payment-console-scoped layout, not this one.) */
 #page-payment-refund > .pc-body {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -4318,6 +4307,164 @@ th:hover .th-fi {
   background: var(--b700);
   border-color: var(--b700);
   color: var(--white);
+}
+
+/* ═══════════════════════════════════════
+   NOTIFICATIONS — 2-Panel Master-Detail Layout
+   (Left category navigation + Right stream with infinite scroll)
+═══════════════════════════════════════ */
+.ntf-layout {
+  display: flex;
+  min-height: 560px;
+  max-height: calc(100vh - 200px);
+  background: var(--white);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.ntf-sidebar {
+  width: 280px;
+  flex-shrink: 0;
+  border-right: 1.5px solid var(--g200);
+  background: #fbfcfe;
+  display: flex;
+  flex-direction: column;
+}
+
+.ntf-sidebar-hdr {
+  padding: 14px 16px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--g400);
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--g150);
+}
+
+.ntf-sidebar-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ntf-group-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: var(--rsm);
+  background: transparent;
+  border: 1.5px solid transparent;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  font-family: inherit;
+  transition: all .16s ease;
+  color: var(--g800);
+}
+
+.ntf-group-nav-item:hover {
+  background: var(--b50);
+  border-color: var(--b100);
+}
+
+.ntf-group-nav-item.active {
+  background: var(--b700);
+  border-color: var(--b700);
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(45, 68, 143, .22);
+}
+
+.ntf-group-nav-item.active .badge-grey {
+  background: rgba(255, 255, 255, .25);
+  color: #fff;
+}
+
+.ntf-group-nav-item.active .badge-blue {
+  background: #fff;
+  color: var(--b700);
+}
+
+.ntf-group-nav-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.3;
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ntf-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--white);
+  overflow: hidden;
+}
+
+.ntf-main-header {
+  padding: 12px 20px;
+  border-bottom: 1.5px solid var(--g200);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  background: var(--white);
+}
+
+.ntf-main-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ntf-category-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: var(--b50);
+  border-radius: var(--rsm);
+  border: 1px solid var(--b100);
+  margin-bottom: 6px;
+}
+
+@media (max-width: 860px) {
+  .ntf-layout {
+    flex-direction: column;
+    max-height: none;
+  }
+  .ntf-sidebar {
+    width: 100%;
+    border-right: none;
+    border-bottom: 1.5px solid var(--g200);
+  }
+  .ntf-sidebar-list {
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 8px 10px;
+  }
+  .ntf-group-nav-item {
+    width: auto;
+    flex-shrink: 0;
+  }
+  .ntf-main-body {
+    max-height: 600px;
+  }
 }
 
 .ntf-list {
@@ -8479,5 +8626,753 @@ body {
 
   .batch-body {
     grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* ═══════════════════════════════════════
+   APPLICATION FILING — VISUAL ENHANCEMENTS
+   Scoped entirely to #page-filing so nothing here touches the shared
+   .pipeline/.card/.file-zone/.chk-item look used on other pages.
+═══════════════════════════════════════ */
+
+/* Campus/Programme/Fee Structure/Semester (Programme Details) are disabled
+   to keep the counsellor from editing them, not because they're
+   unavailable — they're real, already-confirmed values prefilled from the
+   selected application (see the page's own comment above those four
+   fields). The shared .ctrl:disabled/.ss-trigger:disabled grey-out reads as
+   "empty/unavailable" instead, which is misleading for a field that
+   genuinely has a value on it. Restores normal text/background here while
+   keeping the not-allowed cursor and actual non-interactivity untouched —
+   scoped to this page only so every other real disabled control in the app
+   (including this same SearchSelect elsewhere) keeps the standard greyed-out
+   look.
+   ss-clear stays out of this — a locked field never renders it (no
+   placeholder set, see SearchSelect's own `clearable` guard), so there's
+   nothing to restyle there. */
+#page-filing .ss-trigger:disabled,
+#page-filing input.ctrl:disabled,
+#page-filing select.ctrl:disabled {
+  background: var(--white);
+  color: var(--g800);
+  cursor: not-allowed;
+}
+
+#page-filing .ss-trigger:disabled .ss-chevron {
+  opacity: .35;
+}
+
+/* Overall completion strip under the pipeline — reuses the existing
+   .prog-bar-track/.prog-bar-fill primitive (fee-collection style) rather
+   than inventing a new progress-bar look. */
+#page-filing .filing-progress {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: -8px 0 20px;
+}
+
+#page-filing .filing-progress .prog-bar-track {
+  flex: 1;
+}
+
+#page-filing .filing-progress .prog-bar-fill {
+  background: linear-gradient(90deg, var(--b400), var(--b600));
+}
+
+#page-filing .filing-progress-label {
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  color: var(--g500);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Pipeline: gentle lift + glow pulse on the active ("Filing") step so the
+   counsellor's current position in the flow reads immediately. */
+#page-filing .pipeline .pip-step {
+  transition: var(--tr);
+}
+
+#page-filing .pipeline .pip-step.active {
+  box-shadow: 0 0 0 3px var(--b100), var(--neu-sm);
+  animation: filing-pip-pulse 2.4s ease-in-out infinite;
+}
+
+#page-filing .pipeline .pip-step:hover {
+  transform: translateY(-1px);
+}
+
+@keyframes filing-pip-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px var(--b100), var(--neu-sm); }
+  50%      { box-shadow: 0 0 0 6px var(--b50), var(--neu-sm); }
+}
+
+/* Small gradient icon badge used before card/section titles. */
+#page-filing .sec-icon-badge {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  background: linear-gradient(135deg, var(--b700), var(--b500));
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  flex-shrink: 0;
+  box-shadow: 0 3px 8px rgba(37, 99, 235, .25);
+}
+
+/* Applicant search dropdown — avatar chips + a soft entrance animation
+   instead of the box just appearing. */
+#page-filing .applicant-dd {
+  animation: filing-dd-in .16s ease-out both;
+}
+
+@keyframes filing-dd-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+#page-filing .applicant-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 9px 14px;
+  font-size: var(--fs-sm);
+  transition: var(--tr);
+  border-bottom: 1px solid var(--g100);
+}
+
+#page-filing .applicant-row:last-child {
+  border-bottom: none;
+}
+
+#page-filing .applicant-row:hover {
+  background: var(--b50);
+}
+
+#page-filing .av-chip {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--b600), var(--b400));
+  color: #fff;
+  font-size: 11.5px;
+  font-weight: 800;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Selected-applicant summary — promoted from a plain .info-box into a small
+   profile strip with an avatar, once someone is actually picked. */
+#page-filing .applicant-profile-strip {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 16px;
+  padding: 14px 16px;
+  border-radius: var(--rsm);
+  background: linear-gradient(90deg, var(--b50) 0%, #f8faff 70%);
+  border: 1.5px solid var(--b100);
+}
+
+#page-filing .applicant-profile-strip .av-chip {
+  width: 44px;
+  height: 44px;
+  font-size: 16px;
+  box-shadow: 0 3px 10px rgba(37, 99, 235, .22);
+}
+
+/* Numbered stepper (Personal Info / Qualifications / Documents) — replaces
+   the old horizontal tab-bar buttons with a numbered-circle-and-connector
+   layout (same shape/spacing language as a typical multi-step wizard),
+   kept in the app's own blue accent rather than introducing a new color. */
+#page-filing .filing-stepper-wrap {
+  padding: 22px 24px 20px;
+  border-bottom: 1px solid var(--g100);
+  background: var(--surface);
+}
+
+#page-filing .filing-stepper {
+  display: flex;
+  align-items: flex-start;
+  max-width: 560px;
+}
+
+#page-filing .filing-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 0 4px;
+}
+
+#page-filing .filing-step-circle {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--g400);
+  background: var(--white);
+  border: 2px solid var(--g200);
+  transition: var(--tr);
+  flex-shrink: 0;
+}
+
+#page-filing .filing-step-label {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--g400);
+  white-space: nowrap;
+  transition: var(--tr);
+}
+
+#page-filing .filing-step.active .filing-step-circle {
+  background: linear-gradient(135deg, var(--b600), var(--b500));
+  border-color: var(--b500);
+  color: #fff;
+  box-shadow: 0 0 0 4px var(--b100), 0 4px 10px rgba(37, 99, 235, .25);
+}
+
+#page-filing .filing-step.active .filing-step-label {
+  color: var(--b700);
+}
+
+#page-filing .filing-step.done .filing-step-circle {
+  background: var(--green);
+  border-color: var(--green);
+  color: #fff;
+}
+
+#page-filing .filing-step.done .filing-step-label {
+  color: var(--g700);
+}
+
+#page-filing .filing-step:hover .filing-step-circle {
+  border-color: var(--b400);
+}
+
+#page-filing .filing-step-connector {
+  flex: 1;
+  height: 2px;
+  background: var(--g200);
+  margin: 19px 2px 0;
+  transition: var(--tr);
+  min-width: 20px;
+}
+
+#page-filing .filing-step-connector.done {
+  background: var(--b500);
+}
+
+/* Step header above each panel's fields — same "title + one-line
+   description" pairing the reference stepper uses per step. */
+#page-filing .filing-step-hdr {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--g100);
+}
+
+#page-filing .filing-step-hdr > i {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background: var(--b50);
+  color: var(--b600);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+#page-filing .filing-step-hdr-title {
+  font-size: var(--fs-md);
+  font-weight: 700;
+  color: var(--g900);
+}
+
+#page-filing .filing-step-hdr-desc {
+  font-size: var(--fs-sm);
+  color: var(--g500);
+  margin-top: 1px;
+}
+
+@media (max-width: 560px) {
+  #page-filing .filing-step-label {
+    display: none;
+  }
+}
+
+@keyframes filing-check-pop {
+  from { transform: scale(0); }
+  to   { transform: scale(1); }
+}
+
+/* File upload zones — active drag-over highlight, matches the existing
+   :hover treatment so dropping a file feels continuous with hovering it. */
+#page-filing .file-zone.drag-active {
+  border-color: var(--b500);
+  background: var(--b50);
+  box-shadow: 0 0 0 3px var(--b100);
+}
+
+#page-filing .file-zone .file-zone-icon {
+  transition: var(--tr);
+}
+
+#page-filing .file-zone:hover .file-zone-icon,
+#page-filing .file-zone.drag-active .file-zone-icon {
+  transform: translateY(-2px);
+  color: var(--b600);
+}
+
+/* Qualification rows — hover lift + a left accent bar once saved. */
+#page-filing .qual-card {
+  transition: var(--tr);
+}
+
+#page-filing .qual-card:hover {
+  box-shadow: var(--neu-sm);
+  transform: translateY(-1px);
+}
+
+#page-filing .qual-card.saved {
+  border-color: var(--green-bd);
+  background: var(--green-bg);
+}
+
+#page-filing .qual-num {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--b100);
+  color: var(--b700);
+  font-size: 11px;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+#page-filing .qual-card.saved .qual-num {
+  background: var(--green);
+  color: #fff;
+}
+
+/* Application status checklist — pending rows get a soft breathing icon so
+   outstanding steps draw the eye without shouting. */
+#page-filing .chk-item.pending i {
+  animation: filing-chk-breathe 1.8s ease-in-out infinite;
+  color: var(--amber);
+}
+
+@keyframes filing-chk-breathe {
+  0%, 100% { opacity: .55; }
+  50%      { opacity: 1; }
+}
+
+#page-filing .chk-item.pass i {
+  animation: filing-check-pop .3s cubic-bezier(.34, 1.56, .64, 1) both;
+}
+
+/* Submit button — a gentle glow once every requirement is actually met, so
+   "ready to submit" is felt, not just legible from the enabled state. */
+#page-filing .btn-submit-ready:not(:disabled) {
+  background: linear-gradient(135deg, var(--b600), var(--b500));
+  box-shadow: 0 4px 14px rgba(37, 99, 235, .35);
+  animation: filing-submit-glow 2.2s ease-in-out infinite;
+}
+
+@keyframes filing-submit-glow {
+  0%, 100% { box-shadow: 0 4px 14px rgba(37, 99, 235, .3); }
+  50%      { box-shadow: 0 4px 20px rgba(37, 99, 235, .5); }
+}
+
+/* Empty state (no application selected yet) */
+#page-filing .filing-empty-state {
+  padding: 48px 20px;
+  text-align: center;
+}
+
+#page-filing .filing-empty-icon {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: var(--b50);
+  color: var(--b500);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26px;
+  margin: 0 auto 14px;
+}
+
+/* ═══════════════════════════════════════
+   REUSABLE ASYNC SEARCH PICKER (CourseUnitSearchPicker,
+   EnquirySearchPicker, ...) — not scoped to any one page id since these
+   components render wherever they're used. Same avatar-chip + soft
+   entrance-animation treatment Filing's applicant dropdown already has.
+═══════════════════════════════════════ */
+.search-picker-dd {
+  animation: filing-dd-in .16s ease-out both;
+}
+
+.sp-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 9px 14px;
+  font-size: var(--fs-sm);
+  transition: var(--tr);
+  border-bottom: 1px solid var(--g100);
+  cursor: pointer;
+}
+
+.sp-row:last-child {
+  border-bottom: none;
+}
+
+.sp-row:hover {
+  background: var(--b50);
+}
+
+.sp-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--b600), var(--b400));
+  color: #fff;
+  font-size: 11.5px;
+  font-weight: 800;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ═══════════════════════════════════════
+   APPLICATION PAYMENT — VISUAL ENHANCEMENTS
+   Scoped to #page-payment so nothing here touches the shared .card/
+   .pipeline/.file-zone look used on other pages.
+═══════════════════════════════════════ */
+
+/* Form-completion strip — same .prog-bar-track/.prog-bar-fill primitive and
+   gradient fill Filing's own progress strip uses, for a consistent feel
+   across both stages of the admission pipeline. */
+#page-payment .pmt-progress {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 0 0 18px;
+}
+
+#page-payment .pmt-progress .prog-bar-track {
+  flex: 1;
+}
+
+#page-payment .pmt-progress .prog-bar-fill {
+  background: linear-gradient(90deg, var(--b400), var(--b600));
+}
+
+#page-payment .pmt-progress-label {
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  color: var(--g500);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Active pipeline step — same glow-pulse Filing's own pipeline uses
+   (shares that keyframe, just re-applied under this page's own scroll-strip
+   pipeline variant). */
+#page-payment .pip-step.active {
+  animation: filing-pip-pulse 2.4s ease-in-out infinite;
+}
+
+/* Section cards get a gentle lift on hover so the form reads a little less
+   static — opted in per-card via .pmt-card rather than every .card on the
+   page (the sticky right-hand preview card stays put). */
+#page-payment .pmt-card {
+  transition: var(--tr);
+}
+
+#page-payment .pmt-card:hover {
+  box-shadow: var(--neu-out), 0 6px 16px rgba(37, 99, 235, .06);
+  transform: translateY(-1px);
+}
+
+/* Receipt Upload drag-and-drop — same highlight/icon-lift treatment as
+   Filing's own file zones. */
+#page-payment .file-zone.drag-active {
+  border-color: var(--b500);
+  background: var(--b50);
+  box-shadow: 0 0 0 3px var(--b100);
+}
+
+#page-payment .file-zone:hover i,
+#page-payment .file-zone.drag-active i {
+  transform: translateY(-2px);
+  color: var(--b600);
+}
+
+#page-payment .file-zone i {
+  transition: var(--tr);
+}
+
+/* Live Preview rows — a filled field's row gets a small pop-in check mark
+   and a slightly bolder value, so the panel visibly reacts as the form is
+   completed rather than just quietly updating text. */
+#page-payment .prev-row.filled .prev-val {
+  color: var(--g900);
+}
+
+#page-payment .prev-check {
+  color: var(--green);
+  font-size: 11px;
+  animation: filing-check-pop .25s cubic-bezier(.34, 1.56, .64, 1) both;
+}
+
+/* Exchange-rate Refresh button — spins its icon while "refreshing" so the
+   action reads as live even though the rates are seeded, not fetched. */
+#page-payment .pmt-refresh-spin i {
+  animation: pmt-spin .6s linear;
+}
+
+@keyframes pmt-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* Submit button — glows once every required field is actually filled, same
+   "ready to submit is felt, not just enabled" treatment as Filing's own
+   submit button. */
+#page-payment .btn-submit-ready:not(:disabled) {
+  box-shadow: 0 4px 14px rgba(37, 99, 235, .35);
+  animation: filing-submit-glow 2.2s ease-in-out infinite;
+}
+
+/* ═══════════════════════════════════════
+   FILING — STAGE SPLIT LAYOUT
+   Left summary panel (shared across all 3 stages: Personal Info,
+   Qualifications, Documents) + right form column, replacing the old
+   single-column layout each stage used to have on its own. Scoped to
+   #page-filing; the panel uses the app's own blue tokens (no illustration),
+   not a bespoke accent color.
+═══════════════════════════════════════ */
+#page-filing .filing-stage-layout {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  gap: 28px;
+  align-items: start;
+}
+
+#page-filing .filing-summary-panel {
+  background: linear-gradient(165deg, var(--b700) 0%, var(--b600) 55%, var(--b500) 100%);
+  border-radius: var(--radius);
+  padding: 26px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  color: #fff;
+  position: sticky;
+  top: 16px;
+}
+
+#page-filing .filing-summary-avatar-wrap {
+  position: relative;
+  margin-bottom: 14px;
+}
+
+#page-filing .filing-summary-avatar {
+  width: 88px;
+  height: 88px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .16);
+  border: 3px solid rgba(255, 255, 255, .35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 30px;
+  font-weight: 800;
+  color: #fff;
+  letter-spacing: .02em;
+}
+
+#page-filing .filing-summary-avatar-edit {
+  position: absolute;
+  bottom: -2px;
+  right: -2px;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: #fff;
+  color: var(--b600);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .2);
+  transition: var(--tr);
+}
+
+#page-filing .filing-summary-avatar-edit:hover {
+  transform: scale(1.08);
+}
+
+#page-filing .filing-summary-avatar-edit input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+#page-filing .filing-summary-name {
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 1.3;
+}
+
+#page-filing .filing-summary-panel .badge {
+  margin-top: 8px;
+  background: rgba(255, 255, 255, .18);
+  color: #fff;
+  border-color: rgba(255, 255, 255, .3);
+}
+
+#page-filing .filing-summary-meta {
+  width: 100%;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(255, 255, 255, .2);
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+#page-filing .filing-summary-meta-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, .9);
+}
+
+#page-filing .filing-summary-meta-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 170px;
+}
+
+#page-filing .filing-summary-facts {
+  width: 100%;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(255, 255, 255, .2);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  text-align: left;
+}
+
+#page-filing .filing-summary-fact {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+#page-filing .filing-summary-fact span {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: rgba(255, 255, 255, .65);
+}
+
+#page-filing .filing-summary-fact strong {
+  font-size: 12.5px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#page-filing .filing-summary-progress {
+  width: 100%;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(255, 255, 255, .2);
+}
+
+#page-filing .filing-summary-progress .prog-bar-track {
+  background: rgba(255, 255, 255, .2);
+}
+
+#page-filing .filing-summary-progress .prog-bar-fill {
+  background: #fff;
+}
+
+#page-filing .filing-summary-progress .filing-progress-label {
+  display: block;
+  margin-top: 6px;
+  color: rgba(255, 255, 255, .85);
+}
+
+#page-filing .filing-form-col {
+  min-width: 0;
+}
+
+@media (max-width: 860px) {
+  #page-filing .filing-stage-layout {
+    grid-template-columns: 1fr;
+  }
+
+  #page-filing .filing-summary-panel {
+    position: static;
+    flex-direction: row;
+    flex-wrap: wrap;
+    text-align: left;
+    padding: 18px 20px;
+  }
+
+  #page-filing .filing-summary-avatar-wrap {
+    margin-bottom: 0;
+  }
+
+  #page-filing .filing-summary-name,
+  #page-filing .filing-summary-panel .badge {
+    margin-left: 4px;
+  }
+
+  #page-filing .filing-summary-meta,
+  #page-filing .filing-summary-facts,
+  #page-filing .filing-summary-progress {
+    width: 100%;
+    text-align: left;
+  }
+
+  #page-filing .filing-summary-meta-row {
+    justify-content: flex-start;
   }
 }

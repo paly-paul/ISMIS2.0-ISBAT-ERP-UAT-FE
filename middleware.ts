@@ -19,8 +19,12 @@ export function middleware(request: NextRequest) {
   // and the guard becomes a no-op. Reactive 401 handling lives in
   // src/lib/api/client.ts. Skipped entirely in mock mode, since mock auth
   // never sets either cookie.
+  // Straight to /login/staff, not the /login portal-selector — every route
+  // this guard actually covers is staff-only (same convention as
+  // providers.tsx's own keep-alive redirect and client.ts's reactive 401
+  // handler; per request, 2026-09-09).
   if (!MOCK_AUTH && request.nextUrl.pathname.startsWith('/academic') && !request.cookies.has('erp_refresh')) {
-    return NextResponse.redirect(new URL('/login', request.url))
+    return NextResponse.redirect(new URL('/login/staff', request.url))
   }
 
   const ua = request.headers.get('user-agent') ?? ''

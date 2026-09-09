@@ -10,6 +10,7 @@ import { EmptyState } from '@/components/EmptyState'
 import { TableLoadingState } from '@/components/TableLoadingState'
 import { useApplications, useExportApplicationsCsv, ApplicationListItem } from '@/hooks/admission/useApplicationFiling'
 import { useProgramMasters } from '@/hooks/academic/useProgramMaster'
+import { ViewApplicantModal } from '@/components/modals/admission/ViewApplicantModal'
 import { downloadBlob } from '@/lib/downloadBlob'
 import { AuthError } from '@/lib/api/client'
 
@@ -38,8 +39,15 @@ export default function ApplicantsPage() {
   const [toast, setToast] = useState<{ msg: string; type: string } | null>(null)
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
+  const [selectedApplicant, setSelectedApplicant] = useState<ApplicationListItem | null>(null)
+  const [isViewModalOpen, setIsViewModalOpen] = useState(false)
 
   function showToast(msg: string, type = '') { setToast({ msg, type }); setTimeout(() => setToast(null), 3500) }
+
+  function openViewModal(applicant: ApplicationListItem) {
+    setSelectedApplicant(applicant)
+    setIsViewModalOpen(true)
+  }
 
   const searchTrimmed = search.trim()
   // Server-side search (see getApplications) — only actually queried once
@@ -99,7 +107,10 @@ export default function ApplicantsPage() {
             onChange={v => { setSearch(v); setPage(1) }}
             results={searchMatches.map(a => ({ id: a.applicationGuid, primary: a.appRefNo, secondary: applicantName(a) }))}
             minChars={MIN_SEARCH_CHARS}
-            onSelect={() => router.push('/admission/registration')}
+            onSelect={item => {
+              const found = pageItems.find(a => a.applicationGuid === item.id)
+              if (found) openViewModal(found)
+            }}
           />
           <button className="btn btn-outline" disabled={exportCsv.isPending} onClick={handleExport}>
             <i className="lni lni-download mr-1" /> {exportCsv.isPending ? 'Exporting…' : 'Export CSV'}
@@ -132,7 +143,13 @@ export default function ApplicantsPage() {
                   : null}
               {pageItems.map((a, i) => (
                 <tr key={a.applicationGuid} className="border-b border-g100 hover:bg-g50">
-                  <td><ActionMenu><button className="btn btn-neu btn-sm" onClick={() => router.push('/admission/registration')}><i className="lni lni-eye" /> View</button></ActionMenu></td>
+                  <td>
+                    <ActionMenu>
+                      <button className="btn btn-neu btn-sm" onClick={() => openViewModal(a)}>
+                        <i className="lni lni-eye" /> View
+                      </button>
+                    </ActionMenu>
+                  </td>
                   <td className="py-2.5 text-g400">{(page - 1) * PAGE_SIZE + i + 1}</td>
                   <td className="py-2.5 font-mono text-xs text-b600">{a.appRefNo}</td>
                   <td className="py-2.5 text-g800 font-medium">{applicantName(a)}</td>
@@ -150,6 +167,14 @@ export default function ApplicantsPage() {
         <Pagination page={page} totalPages={totalPages} totalCount={totalCount} itemLabel="applicants" onPageChange={setPage} />
       </div>
 
+      <ViewApplicantModal
+        isOpen={isViewModalOpen}
+        onClose={() => {
+          setIsViewModalOpen(false)
+          setSelectedApplicant(null)
+        }}
+        applicant={selectedApplicant}
+      />
       <Toast toast={toast} />
     </div>
   )

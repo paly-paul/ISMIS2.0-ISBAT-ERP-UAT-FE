@@ -3,13 +3,17 @@ import { createUnitType, deleteUnitType, getUnitTypeById, getUnitTypes, updateUn
 
 const UNIT_TYPES_KEY = ['unit-types']
 
-export function useUnitTypes() {
+// enabled defaults to true so every existing call site keeps eagerly
+// fetching exactly as before — only a caller that shouldn't hit the network
+// until it's actually open (e.g. a modal) needs to pass enabled={isOpen}.
+export function useUnitTypes(enabled = true) {
   return useQuery({
     queryKey: UNIT_TYPES_KEY,
     queryFn: () => getUnitTypes(),
     // Keep the cached list until a mutation explicitly refreshes it.
     staleTime: Infinity,
     gcTime: Infinity,
+    enabled,
   })
 }
 

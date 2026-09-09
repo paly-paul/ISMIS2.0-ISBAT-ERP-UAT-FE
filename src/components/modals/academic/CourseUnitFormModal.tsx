@@ -89,7 +89,7 @@ export function CourseUnitFormModal({ isOpen, onClose, showToast, mode, courseUn
   const [cbtFinal, setCbtFinal]         = useState('15')
   const [ueFinal, setUeFinal]           = useState('70')
 
-  const { data: repetitionTags = [] } = useRepetitionTags()
+  const { data: repetitionTags = [] } = useRepetitionTags(isOpen)
   const repetitionTagOptions = repetitionTags.map(t => ({ value: t.courseUnitRepetitionGuid, label: `${t.tagCode} — ${t.tagName}` }))
 
   const finalTotal = (includeCW ? (+cwFinal || 0) : 0) + (includeCBT ? (+cbtFinal || 0) : 0) + (+ueFinal || 0)

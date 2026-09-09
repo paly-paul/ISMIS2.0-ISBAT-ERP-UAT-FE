@@ -358,13 +358,27 @@ export function createProgramMasterStep1(input: ProgramMasterCreateInput): Promi
 // List query for the programme-master table.
 export function getProgramMasters(search = ''): Promise<ProgramMaster[]> {
   if (MOCK_AUTH) return Promise.resolve(mockProgramMasters)
-  return apiGet<any>(`/api/v1/academic/program-master?search=${encodeURIComponent(search)}`)
+  return apiGet<any>(`/api/v1/academic/program-master?pageSize=1000&search=${encodeURIComponent(search)}`)
     .then(data => {
       if (Array.isArray(data)) return data
       if (data && Array.isArray(data.items)) return data.items
       if (data && Array.isArray(data.data)) return data.data
       return []
     })
+}
+
+export interface ProgramDropdownItem {
+  programGuid: string
+  programCode: string
+  programName: string
+}
+
+// GET /api/v1/academic/program-master/dropdown — per get-program-dropdown.md.
+export function getProgramDropdown(facultyGuid?: string): Promise<ProgramDropdownItem[]> {
+  if (MOCK_AUTH) return Promise.resolve(mockProgramMasters.map(p => ({ programGuid: p.programGuid, programCode: p.programCode, programName: p.programName })))
+  const query = facultyGuid ? `?facultyGuid=${facultyGuid}` : ''
+  return apiGet<ProgramDropdownItem[] | null>(`/api/v1/academic/program-master/dropdown${query}`)
+    .then((data: any) => Array.isArray(data) ? data : (data && typeof data === 'object' ? (data.items || data.data || Object.values(data).find(Array.isArray) || []) : []))
 }
 
 // GET /api/v1/academic/program-master/{programGuid} — per get-program-by-guid.md.

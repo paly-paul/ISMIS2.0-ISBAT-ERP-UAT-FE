@@ -3,7 +3,10 @@ import { FinanceCurrency, getDefaultFinanceCurrencyGuid, getFinanceCurrencies } 
 
 const FINANCE_CURRENCIES_KEY = ['finance-currencies']
 
-export function useFinanceCurrencies() {
+// enabled defaults to true so every existing call site keeps eagerly
+// fetching exactly as before — only a caller that shouldn't hit the network
+// until it's actually open (e.g. a modal) needs to pass enabled={isOpen}.
+export function useFinanceCurrencies(enabled = true) {
   return useQuery({
     queryKey: FINANCE_CURRENCIES_KEY,
     queryFn: () => getFinanceCurrencies(),
@@ -11,6 +14,7 @@ export function useFinanceCurrencies() {
     // manual invalidation, instead of on every remount/window focus.
     staleTime: Infinity,
     gcTime: Infinity,
+    enabled,
   })
 }
 

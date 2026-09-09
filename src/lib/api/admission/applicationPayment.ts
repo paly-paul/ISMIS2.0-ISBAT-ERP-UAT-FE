@@ -187,10 +187,17 @@ interface UnconvertedEnquiriesResult {
 // underlying Enquiry record set, just pre-filtered server-side. Verify
 // against a real response and correct the item shape if it differs (e.g. if
 // this endpoint returns a narrower projection rather than the full DTO).
-export function getUnconvertedEnquiries(intakeGuid: string, page = 1, pageSize = 10): Promise<UnconvertedEnquiriesResult> {
+// searchTerm is CONFIRMED real server-side (2026-09-08) — same param name as
+// GET /api/v1/admissions/application-payments (see applicationFiling.ts's
+// getApplicationPayments); combining it with intakeGuid in the same request
+// isn't independently verified, only each param on its own, but both are
+// standard query filters on the same list endpoint so they're assumed
+// combinable here.
+export function getUnconvertedEnquiries(intakeGuid: string, page = 1, pageSize = 10, searchTerm?: string): Promise<UnconvertedEnquiriesResult> {
   if (MOCK_AUTH) return Promise.resolve({ items: [], totalCount: 0, pageNumber: page, pageSize })
+  const searchParam = searchTerm?.trim() ? `&searchTerm=${encodeURIComponent(searchTerm.trim())}` : ''
   return apiGet<UnconvertedEnquiriesResult | null>(
-    `/api/v1/admissions/application-payments/unconverted-enquiries?intakeGuid=${intakeGuid}&page=${page}&pageSize=${pageSize}`,
+    `/api/v1/admissions/application-payments/unconverted-enquiries?intakeGuid=${intakeGuid}&page=${page}&pageSize=${pageSize}${searchParam}`,
   ).then(data => data ?? { items: [], totalCount: 0, pageNumber: page, pageSize })
 }
 

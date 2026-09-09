@@ -38,7 +38,7 @@ export function LecturerSkillFormModal({ isOpen, onClose, showToast, mode, lectu
   const isEdit = mode === 'edit'
   const { data: skill, isLoading, isError, error } = useLecturerSkill(lecturerSkillGuid, isOpen && isEdit)
   const { data: employees = [] } = useEmployees()
-  const { data: skillMasterData } = useSkillMasters()
+  const { data: skillMasterData } = useSkillMasters(isOpen)
   const skillMasters = skillMasterData?.items ?? []
 
   const [saved, setSaved]           = useState(false)

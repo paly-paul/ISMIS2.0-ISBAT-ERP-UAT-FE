@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   ApplicationPaymentInput,
   createApplicationPayment,
@@ -57,6 +57,29 @@ export function useUnconvertedEnquiries(intakeGuid: string, page: number, pageSi
     queryKey: [...APPLICATION_PAYMENTS_KEY, 'unconverted-enquiries', intakeGuid, page, pageSize],
     queryFn: () => getUnconvertedEnquiries(intakeGuid, page, pageSize),
     enabled: enabled && !!intakeGuid,
+  })
+}
+
+// Real server-paginated, scroll-to-load-more variant of the same endpoint —
+// backs the Payment page's Enquiry picker (EnquirySearchPicker), replacing
+// the old single pageSize=1000 "fetch nearly everything for this intake up
+// front" SearchSelect. Same useInfiniteQuery + fetch-next-on-scroll
+// mechanism as useSearchCourseUnitsInfinite (useCourseUnits.ts). searchTerm
+// is CONFIRMED real server-side (2026-09-08, see getUnconvertedEnquiries)
+// and part of the query key — each typed term's pages are cached
+// separately, no client-side re-filtering.
+export function useUnconvertedEnquiriesInfinite(intakeGuid: string, searchTerm: string, pageSize: number, enabled: boolean) {
+  return useInfiniteQuery({
+    queryKey: [...APPLICATION_PAYMENTS_KEY, 'unconverted-enquiries-infinite', intakeGuid, searchTerm, pageSize],
+    queryFn: ({ pageParam }) => getUnconvertedEnquiries(intakeGuid, pageParam, pageSize, searchTerm),
+    initialPageParam: 1,
+    getNextPageParam: (lastPage, allPages) => {
+      const fetched = allPages.reduce((sum, p) => sum + p.items.length, 0)
+      return fetched < lastPage.totalCount ? allPages.length + 1 : undefined
+    },
+    enabled: enabled && !!intakeGuid,
+    staleTime: Infinity,
+    gcTime: Infinity,
   })
 }
 

@@ -12,6 +12,10 @@ export interface VettingQueueItem {
   studentName: string
   programGuid: string
   programName: string
+  intakeGuid?: string
+  intakeName?: string
+  intakeCode?: string
+  intake?: string
   type: string
   documentsUploaded: number
   documentsTotal: number
@@ -78,11 +82,9 @@ export interface VettingApplicationDetail {
   programGuid: string
   programName: string
   intakeGuid: string
-  // Confirmed via a real authenticated response: the docs' sample shows
-  // `intakeName`, but the real payload has no such field at all — only
-  // `intakeCode` (e.g. "20222"), same shape as the queue list's own
-  // programName/programCode split elsewhere in this app.
-  intakeCode: string
+  intakeName?: string | null
+  intakeCode?: string | null
+  intake?: string | null
   campusGuid: string
   campusName: string
   submittedDate: string
@@ -132,11 +134,11 @@ export interface VetApplicationResponse {
 }
 
 const mockQueue: VettingQueueItem[] = [
-  { intApplication: 1041, applicationGuid: 'a1b2c3d4-vet-0000-0000-000000000041', appRefNo: 'APP-2025-0041', studentName: 'Nakato Sarah',     programGuid: 'prog-bscs', programName: 'BSc Computer Science',            type: 'Direct', documentsUploaded: 3, documentsTotal: 4, submittedDate: new Date(Date.now() - 6 * 3600_000).toISOString(), action: 1 },
-  { intApplication: 1042, applicationGuid: 'a1b2c3d4-vet-0000-0000-000000000042', appRefNo: 'APP-2025-0042', studentName: 'Ouma Brian',        programGuid: 'prog-bba',  programName: 'BBA Accounting',                   type: 'ODL',    documentsUploaded: 4, documentsTotal: 4, submittedDate: new Date(Date.now() - 5 * 3600_000).toISOString(), action: 1 },
-  { intApplication: 1043, applicationGuid: 'a1b2c3d4-vet-0000-0000-000000000043', appRefNo: 'APP-2025-0043', studentName: 'Ainembabazi Grace', programGuid: 'prog-bsit', programName: 'BSc Information Technology',      type: 'Direct', documentsUploaded: 4, documentsTotal: 4, submittedDate: new Date(Date.now() - 4 * 3600_000).toISOString(), action: 1 },
-  { intApplication: 1044, applicationGuid: 'a1b2c3d4-vet-0000-0000-000000000044', appRefNo: 'APP-2025-0044', studentName: 'Mugisha David',     programGuid: 'prog-dba',  programName: 'Diploma in Business Admin',       type: 'Direct', documentsUploaded: 2, documentsTotal: 4, submittedDate: new Date(Date.now() - 3 * 3600_000).toISOString(), action: 1 },
-  { intApplication: 1045, applicationGuid: 'a1b2c3d4-vet-0000-0000-000000000045', appRefNo: 'APP-2025-0045', studentName: 'Kyomuhendo Faith',  programGuid: 'prog-bscs', programName: 'BSc Computer Science',            type: 'Direct', documentsUploaded: 4, documentsTotal: 4, submittedDate: new Date(Date.now() - 1 * 3600_000).toISOString(), action: 1 },
+  { intApplication: 1041, applicationGuid: 'a1b2c3d4-vet-0000-0000-000000000041', appRefNo: 'APP-2025-0041', studentName: 'Nakato Sarah',     programGuid: 'prog-bscs', programName: 'BSc Computer Science',       intakeName: 'January 2026', intakeCode: '20261',     type: 'Direct', documentsUploaded: 3, documentsTotal: 4, submittedDate: new Date(Date.now() - 6 * 3600_000).toISOString(), action: 1 },
+  { intApplication: 1042, applicationGuid: 'a1b2c3d4-vet-0000-0000-000000000042', appRefNo: 'APP-2025-0042', studentName: 'Ouma Brian',        programGuid: 'prog-bba',  programName: 'BBA Accounting',              intakeName: 'January 2026', intakeCode: '20261',     type: 'ODL',    documentsUploaded: 4, documentsTotal: 4, submittedDate: new Date(Date.now() - 5 * 3600_000).toISOString(), action: 1 },
+  { intApplication: 1043, applicationGuid: 'a1b2c3d4-vet-0000-0000-000000000043', appRefNo: 'APP-2025-0043', studentName: 'Ainembabazi Grace', programGuid: 'prog-bsit', programName: 'BSc Information Technology', intakeName: 'May 2026',     intakeCode: '20262',     type: 'Direct', documentsUploaded: 4, documentsTotal: 4, submittedDate: new Date(Date.now() - 4 * 3600_000).toISOString(), action: 1 },
+  { intApplication: 1044, applicationGuid: 'a1b2c3d4-vet-0000-0000-000000000044', appRefNo: 'APP-2025-0044', studentName: 'Mugisha David',     programGuid: 'prog-dba',  programName: 'Diploma in Business Admin',  intakeName: 'January 2026', intakeCode: '20261',     type: 'Direct', documentsUploaded: 2, documentsTotal: 4, submittedDate: new Date(Date.now() - 3 * 3600_000).toISOString(), action: 1 },
+  { intApplication: 1045, applicationGuid: 'a1b2c3d4-vet-0000-0000-000000000045', appRefNo: 'APP-2025-0045', studentName: 'Kyomuhendo Faith',  programGuid: 'prog-bscs', programName: 'BSc Computer Science',       intakeName: 'May 2026',     intakeCode: '20262',     type: 'Direct', documentsUploaded: 4, documentsTotal: 4, submittedDate: new Date(Date.now() - 1 * 3600_000).toISOString(), action: 1 },
 ]
 
 const mockDetails: Record<string, VettingApplicationDetail> = Object.fromEntries(
@@ -156,7 +158,8 @@ const mockDetails: Record<string, VettingApplicationDetail> = Object.fromEntries
     programGuid: q.programGuid,
     programName: q.programName,
     intakeGuid: 'intake-mock',
-    intakeCode: '20261',
+    intakeName: q.intakeName ?? 'January 2026',
+    intakeCode: q.intakeCode ?? '20261',
     campusGuid: 'campus-mock',
     campusName: 'Main Campus',
     submittedDate: q.submittedDate,

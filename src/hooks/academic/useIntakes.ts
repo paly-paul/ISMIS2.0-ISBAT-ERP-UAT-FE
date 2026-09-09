@@ -9,7 +9,10 @@ const INTAKES_KEY = ['intakes']
 // page=1/pageSize=10 (which was silently hiding any row past the 10th).
 const INTAKES_PAGE_SIZE = 1000
 
-export function useIntakes() {
+// enabled defaults to true so every existing call site keeps eagerly
+// fetching exactly as before — only a caller that shouldn't hit the network
+// until it's actually open (e.g. a modal) needs to pass enabled={isOpen}.
+export function useIntakes(enabled = true) {
   return useQuery({
     queryKey: INTAKES_KEY,
     queryFn: () => getIntakes(1, INTAKES_PAGE_SIZE),
@@ -18,6 +21,7 @@ export function useIntakes() {
     // refetch once a create/update mutation actually changes this data.
     staleTime: Infinity,
     gcTime: Infinity,
+    enabled,
   })
 }
 
@@ -91,23 +95,25 @@ async function fetchCurrentIntake(queryClient: QueryClient, predicate: (intake: 
   })
 }
 
-export function useCurrentAcademicIntake() {
+export function useCurrentAcademicIntake(enabled = true) {
   const queryClient = useQueryClient()
   return useQuery({
     queryKey: [...INTAKES_KEY, 'current-academic'],
     queryFn: () => fetchCurrentIntake(queryClient, i => i.currentIntake),
     staleTime: Infinity,
     gcTime: Infinity,
+    enabled,
   })
 }
 
-export function useCurrentAdmissionIntake() {
+export function useCurrentAdmissionIntake(enabled = true) {
   const queryClient = useQueryClient()
   return useQuery({
     queryKey: [...INTAKES_KEY, 'current-admission'],
     queryFn: () => fetchCurrentIntake(queryClient, i => i.currentAdmissionIntake),
     staleTime: Infinity,
     gcTime: Infinity,
+    enabled,
   })
 }
 

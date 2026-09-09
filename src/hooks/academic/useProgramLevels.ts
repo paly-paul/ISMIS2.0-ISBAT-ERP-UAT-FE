@@ -3,7 +3,10 @@ import { createProgramLevel, deleteProgramLevel, getProgramLevelById, getProgram
 
 const PROGRAM_LEVELS_KEY = ['programLevels']
 
-export function useProgramLevels() {
+// enabled defaults to true so every existing call site keeps eagerly
+// fetching exactly as before — only a caller that shouldn't hit the network
+// until it's actually open (e.g. a modal) needs to pass enabled={isOpen}.
+export function useProgramLevels(enabled = true) {
   return useQuery({
     queryKey: PROGRAM_LEVELS_KEY,
     queryFn: () => getProgramLevels(),
@@ -12,6 +15,7 @@ export function useProgramLevels() {
     // instead of on every remount/window focus.
     staleTime: Infinity,
     gcTime: Infinity,
+    enabled,
   })
 }
 
