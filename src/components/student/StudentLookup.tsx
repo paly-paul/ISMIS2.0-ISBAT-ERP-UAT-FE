@@ -35,7 +35,7 @@ export function StudentLookup({ onLoad, onClear, loaded, placeholder, hint }: St
     studentName: !/^\d+$/.test(trimmed) && trimmed ? trimmed : null,
     pageNumber: 1,
     pageSize: 8,
-  }, true)
+  }, Boolean(trimmed))
   const matches = data?.items ?? []
 
   function handleSelect(id: string) {

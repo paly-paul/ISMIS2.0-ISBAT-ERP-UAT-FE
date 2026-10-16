@@ -37,7 +37,7 @@ export default function StaffLoginPage() {
 
     try {
       const result = await staffLogin(staffId, password, trust)
-      if (result.requiresOtp) {
+      if ('challengeId' in result) {
         setFlowState({
           challengeId: result.challengeId,
           otpChannel: result.otpChannel,
@@ -46,7 +46,11 @@ export default function StaffLoginPage() {
         })
         router.push('/login/otp')
       } else {
-        if (result.displayName) setSessionIdentity({ displayName: result.displayName })
+        setSessionIdentity({
+          displayName: result.displayName || '',
+          employeeGuid: result.employeeGuid,
+          userGuid: result.userGuid,
+        })
         setSuccessState({ displayName: result.displayName, redirect: result.redirect })
       }
     } catch (err) {

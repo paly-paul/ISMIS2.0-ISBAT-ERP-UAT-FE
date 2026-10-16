@@ -51,8 +51,10 @@ export function useCreateIaStructure() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (input: CreateIaStructureRequest) => createIaStructure(input),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: IA_STRUCTURE_KEY })
+    // 201 already carries the fresh row set — render it directly, no second
+    // GET /structure (assessment-structure-page.md, step 4).
+    onSuccess: (rows, input) => {
+      queryClient.setQueryData([...IA_STRUCTURE_KEY, input.programGuid, input.semesterGuid, input.intakeGuid], rows)
     },
   })
 }

@@ -9,6 +9,7 @@ import { ProcBankStatus, STATUS_LABELS, STATUS_VALUES } from '@/lib/api/finance/
 import { useBankBranch } from '@/hooks/finance/useBankBranches'
 import { useBanks } from '@/hooks/finance/useBanks'
 import { AuthError } from '@/lib/api/client'
+import { scrollToFirstError } from '@/lib/scrollToFirstError'
 
 // Add and Edit share this form — differ in prefill and which mutation runs.
 interface BankBranchFormModalProps extends ModalProps {
@@ -74,6 +75,7 @@ export function BankBranchFormModal({ isOpen, onClose, showToast, mode, bankBran
     if (!bankGuid) e.bankGuid = 'Bank is required'
     if (!sortCode.trim()) e.sortCode = 'Sort Code is required'
     setErrors(e)
+    scrollToFirstError(e)
     return Object.keys(e).length === 0
   }
 
@@ -171,7 +173,7 @@ export function BankBranchFormModal({ isOpen, onClose, showToast, mode, bankBran
               onChange={val => { setBankGuid(val); clearError('bankGuid') }}
               placeholder="Select bank"
             />
-            {errors.bankGuid && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.bankGuid}</p>}
+            {errors.bankGuid && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.bankGuid}</p>}
           </div>
           <div className="fg">
             <div className="lbl">Short Code <span className="req">*</span></div>
@@ -184,7 +186,7 @@ export function BankBranchFormModal({ isOpen, onClose, showToast, mode, bankBran
               onChange={e => { setShortCode(e.target.value.toUpperCase()); clearError('shortCode') }}
               style={errors.shortCode ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.shortCode && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.shortCode}</p>}
+            {errors.shortCode && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.shortCode}</p>}
           </div>
           <div className="fg">
             <div className="lbl">Branch Name <span className="req">*</span></div>
@@ -197,7 +199,7 @@ export function BankBranchFormModal({ isOpen, onClose, showToast, mode, bankBran
               onChange={e => { setBranchName(e.target.value); clearError('branchName') }}
               style={errors.branchName ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.branchName && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.branchName}</p>}
+            {errors.branchName && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.branchName}</p>}
           </div>
           <div className="fg">
             <div className="lbl">Sort Code <span className="req">*</span></div>
@@ -210,7 +212,7 @@ export function BankBranchFormModal({ isOpen, onClose, showToast, mode, bankBran
               onChange={e => { setSortCode(e.target.value.toUpperCase()); clearError('sortCode') }}
               style={errors.sortCode ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.sortCode && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.sortCode}</p>}
+            {errors.sortCode && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.sortCode}</p>}
           </div>
           <div className="fg">
             <div className="lbl">Company Code</div>

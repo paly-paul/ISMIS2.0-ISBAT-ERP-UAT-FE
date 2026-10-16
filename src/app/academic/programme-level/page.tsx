@@ -12,9 +12,9 @@ import { FilterTh } from '@/components/FilterTh'
 import { EmptyState } from '@/components/EmptyState'
 import { TableLoadingState } from '@/components/TableLoadingState'
 import { Pagination } from '@/components/Pagination'
-import { usePagination } from '@/hooks/usePagination'
-import { useCreateProgramLevel, useDeleteProgramLevel, useProgramLevels, useProgramLevelSearch, useUpdateProgramLevel, ProgramLevel } from '@/hooks/academic/useProgramLevels'
+import { useCreateProgramLevel, useDeleteProgramLevel, useProgramLevelsPaged, useUpdateProgramLevel, ProgramLevel } from '@/hooks/academic/useProgramLevels'
 import { usePagePermissions } from '@/hooks/users/usePagePermissions'
+import { AuthError } from '@/lib/api/client'
 
 const PAGE_SIZE = 10
 // Don't narrow the table (or open the search dropdown) until the user's
@@ -33,6 +33,7 @@ export default function Page() {
   const [editingProgramLevelGuid, setEditingProgramLevelGuid] = useState<string | null>(null)
   const [viewingProgramLevelGuid, setViewingProgramLevelGuid] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<ProgramLevel | null>(null)
+  const [page, setPage] = useState(1)
 
   function nav(id: string) { router.push('/academic/' + id) }
   function openModal(id: string) { setOpenModals(prev => new Set(prev).add(id)) }
@@ -48,8 +49,6 @@ export default function Page() {
     return () => document.removeEventListener('click', closeFilter)
   }, [])
 
-  const { data: rows = [], isLoading } = useProgramLevels()
-
   // Debounced so the backend's ?search= isn't hit on every keystroke, and
   // held at '' (falling back to the unfiltered list) until MIN_SEARCH_CHARS
   // is met — same convention as Intake/Skill/Repetition Tag's search boxes.
@@ -61,10 +60,14 @@ export default function Page() {
     return () => clearTimeout(t)
   }, [search])
 
-  const { data: searchResults, isFetching: isSearching } = useProgramLevelSearch(debouncedSearch)
-  const baseRows = debouncedSearch ? (searchResults ?? []) : rows
+  const { data, isLoading, isFetching } = useProgramLevelsPaged(page, PAGE_SIZE, debouncedSearch)
+  const baseRows = data?.items ?? []
   const searchTrimmed = search.trim()
-  const searchPending = searchTrimmed.length >= MIN_SEARCH_CHARS && (debouncedSearch !== searchTrimmed || isSearching)
+  const searchPending = searchTrimmed.length >= MIN_SEARCH_CHARS && (debouncedSearch !== searchTrimmed || isFetching)
+
+  useEffect(() => {
+    setPage(1)
+  }, [debouncedSearch])
 
   const createProgramLevel = useCreateProgramLevel()
   const updateProgramLevel = useUpdateProgramLevel()
@@ -90,7 +93,10 @@ export default function Page() {
     ? baseRows.filter(r => `${r.levelCode} ${r.levelName}`.toLowerCase().includes(searchTrimmed.toLowerCase())).slice(0, 8)
     : []
 
-  const { page, setPage, totalPages, totalCount, pageItems } = usePagination(filteredRows, PAGE_SIZE)
+  const totalCount = data?.totalCount ?? 0
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE))
+  const safePage = Math.min(page, totalPages)
+  const pageItems = filteredRows
 
   function openEditModal(guid: string) {
     setEditingProgramLevelGuid(guid)
@@ -107,7 +113,16 @@ export default function Page() {
     if (!deleteTarget) return
     deleteProgramLevel.mutate(deleteTarget.programLevelGuid, {
       onSuccess: () => { setDeleteTarget(null); showToast('Programme Level deleted successfully') },
-      onError: (error: Error) => showToast(error.message || 'Failed to delete programme level', 'error'),
+      onError: (error: Error) => {
+        // The backend blocks the delete while programme groups or programmes
+        // still reference this level.
+        if (error instanceof AuthError && error.code === 'level_in_use') {
+          setDeleteTarget(null)
+          showToast(`${deleteTarget.levelCode} is still used by programme groups or programmes. Move or delete those first.`, 'error')
+          return
+        }
+        showToast(error.message || 'Failed to delete programme level', 'error')
+      },
     })
   }
 
@@ -218,7 +233,7 @@ export default function Page() {
               </tbody>
             </table>
           </ScrollTable>
-          <Pagination page={page} totalPages={totalPages} totalCount={totalCount} itemLabel="programme levels" onPageChange={setPage} />
+          <Pagination page={safePage} totalPages={totalPages} totalCount={totalCount} itemLabel="programme levels" onPageChange={setPage} />
         </div>
       </div>
       <ViewProgrammeLevelModal
@@ -258,7 +273,7 @@ export default function Page() {
             <div className="perm-delete-icon"><i className="lni lni-trash-can"></i></div>
             <div className="perm-delete-title">Delete {deleteTarget.levelName}?</div>
             <div className="perm-delete-sub">
-              This will permanently delete this programme level. This can&apos;t be undone.
+              This will delete this programme level. You can only delete a level that no programme group or programme uses.
             </div>
             <div className="perm-delete-actions">
               <button className="btn btn-neu" onClick={() => setDeleteTarget(null)}>Cancel</button>

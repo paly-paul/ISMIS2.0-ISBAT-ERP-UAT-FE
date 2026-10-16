@@ -21,7 +21,23 @@ export interface EmployeeListResponse {
   pageSize: number
 }
 
-// Full employee record returned by the API.
+// Full employee record returned by the API — confirmed against a real
+// EmployeeDto response (get-employee-by-guid.md, 2026-09-11 changelog
+// entry): countryGuid/deptGuid/designationGuid/campusGuids replaced the
+// earlier intCountryCode/intDept/intDesignation/campusIds ints, per request
+// (2026-09-15) with a confirmed live payload sample.
+//
+// NOTE: departmentName/designationName are resolved server-side and
+// returned alongside the guids here — prefer them for display. The
+// Department/Designation MASTER list endpoints themselves
+// (get-departments.md/get-designations.md) are still documented as
+// int-keyed only with no guid field — EmployeeFormModal's own Department/
+// Designation pickers are still built off those int-keyed masters, so
+// there's currently no confirmed way to resolve a *different* department/
+// designation's guid than the one an employee record already carries. Fine
+// for prefilling Edit (the guid comes straight off the record being
+// edited), but Add/re-picking a different department on Edit has no real
+// guid source yet — flagged in EmployeeFormModal itself.
 export interface Employee {
   employeeGuid: string
   shortCode: string
@@ -34,19 +50,30 @@ export interface Employee {
   sex: number
   birthDate: string
   placeOfBirth: string
-  intCountryCode: number
+  countryGuid: string | null
   natId: string
   nationalId: string | null
   emailId: string
+  // Not in the documented EmployeeDto field table (post-employee.md /
+  // get-employee-by-guid.md) — kept optional/unconfirmed rather than
+  // dropped, same caution SEXES/MARITAL_STATUSES/RELIGIONS already carry
+  // in EmployeeFormModal.
   intReligion?: number | null
   maritalStatus: number
   countryName: string | null
   isApproved?: boolean
-  intDept?: number | null
-  intDesignation?: number | null
+  deptGuid?: string | null
+  departmentName?: string | null
+  designationGuid?: string | null
+  designationName?: string | null
+  // GUIDs of campuses assigned to this employee (T_USER_CAMPUS) — confirmed
+  // via post-employee.md/put-employee.md's "UI notes: Campus field" section.
+  campusGuids?: string[]
 }
 
-// Payload used when creating a new employee.
+// Payload used when creating/updating an employee — confirmed field-for-
+// field against a real SaveEmployeeRequest sample (post-employee.md,
+// put-employee.md; PUT uses the identical shape), per request (2026-09-15).
 export interface CreateEmployeeInput {
   category: number
   categoryPrefix: string
@@ -54,17 +81,21 @@ export interface CreateEmployeeInput {
   surname: string
   firstName: string
   otherName: string | null
+  designationGuid: string
+  deptGuid: string
   sex: number
   birthDate: string
   placeOfBirth: string
-  intCountryCode: number
+  countryGuid: string
   natId: string
   nationalId: string | null
   emailId: string
-  intReligion: number | null
   maritalStatus: number
-  intDept: number
-  intDesignation: number
+  campusGuids: string[]
+  // Not in the documented SaveEmployeeRequest field table — kept optional/
+  // unconfirmed (see the note on Employee.intReligion above) rather than
+  // silently dropping data the form still collects.
+  intReligion?: number | null
 }
 
 // In-memory employee list used while mock auth is enabled.
@@ -105,6 +136,25 @@ export function getEmployees(page = 1, pageSize = 10, search = ''): Promise<Empl
   const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) })
   if (q) params.set('search', q)
   return apiGet<EmployeeListResponse | null>(`/api/v1/users/employees?${params}`).then(data => data?.items ?? [])
+}
+
+// Preserve the response envelope for server-side infinite dropdowns while
+// keeping getEmployees() compatible with existing list consumers.
+export function getEmployeesPaged(page = 1, pageSize = 10, search = ''): Promise<EmployeeListResponse> {
+  if (MOCK_AUTH) {
+    const q = search.trim().toLowerCase()
+    const filtered = q ? mockEmployees.filter(e => e.empName.toLowerCase().includes(q) || e.shortCode.toLowerCase().includes(q)) : mockEmployees
+    const start = (page - 1) * pageSize
+    return Promise.resolve({ items: filtered.slice(start, start + pageSize), totalCount: filtered.length, pageNumber: page, pageSize })
+  }
+  const q = search.trim()
+  // The employee endpoints in deployed environments have used both names:
+  // keep them in sync so an infinite dropdown cannot silently receive page 1
+  // again when the server reads pageNumber instead of page.
+  const params = new URLSearchParams({ page: String(page), pageNumber: String(page), pageSize: String(pageSize) })
+  if (q) params.set('search', q)
+  return apiGet<EmployeeListResponse | null>(`/api/v1/users/employees?${params}`)
+    .then(data => data ?? { items: [], totalCount: 0, pageNumber: page, pageSize })
 }
 
 export interface EmployeeDropdownItemDto {
@@ -156,15 +206,16 @@ export function getEmployee(id: string): Promise<Employee> {
       sex: listItem.sex,
       birthDate: '1990-01-01T00:00:00',
       placeOfBirth: '',
-      intCountryCode: 1,
+      countryGuid: null,
       natId: '',
       nationalId: null,
       emailId: '',
       maritalStatus: 1,
       countryName: null,
       isApproved: listItem.isApproved,
-      intDept: 1,
-      intDesignation: 1,
+      deptGuid: null,
+      designationGuid: null,
+      campusGuids: [],
     }
     return Promise.resolve(employee)
   }
@@ -186,7 +237,7 @@ export function createEmployee(input: CreateEmployeeInput): Promise<Employee> {
       sex: input.sex,
       birthDate: input.birthDate,
       placeOfBirth: input.placeOfBirth,
-      intCountryCode: input.intCountryCode,
+      countryGuid: input.countryGuid,
       natId: input.natId,
       nationalId: input.nationalId,
       emailId: input.emailId,
@@ -194,8 +245,9 @@ export function createEmployee(input: CreateEmployeeInput): Promise<Employee> {
       maritalStatus: input.maritalStatus,
       countryName: null,
       isApproved: false,
-      intDept: input.intDept,
-      intDesignation: input.intDesignation,
+      deptGuid: input.deptGuid,
+      designationGuid: input.designationGuid,
+      campusGuids: input.campusGuids,
     }
     mockEmployees.push({
       employeeGuid: employee.employeeGuid,
@@ -269,7 +321,7 @@ export function updateEmployee(id: string, input: CreateEmployeeInput): Promise<
       sex: input.sex,
       birthDate: input.birthDate,
       placeOfBirth: input.placeOfBirth,
-      intCountryCode: input.intCountryCode,
+      countryGuid: input.countryGuid,
       natId: input.natId,
       nationalId: input.nationalId,
       emailId: input.emailId,
@@ -277,8 +329,9 @@ export function updateEmployee(id: string, input: CreateEmployeeInput): Promise<
       maritalStatus: input.maritalStatus,
       countryName: null,
       isApproved: listItem.isApproved,
-      intDept: input.intDept,
-      intDesignation: input.intDesignation,
+      deptGuid: input.deptGuid,
+      designationGuid: input.designationGuid,
+      campusGuids: input.campusGuids,
     }
     return Promise.resolve(employee)
   }

@@ -3,7 +3,7 @@ import { createInterestLevel, deleteInterestLevel, getInterestLevelById, getInte
 
 const INTEREST_LEVELS_KEY = ['interest-levels']
 
-export function useInterestLevels() {
+export function useInterestLevels(enabled = true) {
   return useQuery({
     queryKey: INTEREST_LEVELS_KEY,
     queryFn: () => getInterestLevels(),
@@ -12,6 +12,7 @@ export function useInterestLevels() {
     // instead of on every remount/window focus.
     staleTime: Infinity,
     gcTime: Infinity,
+    enabled,
   })
 }
 

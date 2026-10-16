@@ -4,8 +4,9 @@ import { ModalProps } from '../types'
 import { FailurePopup } from '../shared/FailurePopup'
 import { SearchSelect } from '@/components/SearchSelect'
 import { applicantProfileHref } from '@/lib/applicantProfileLink'
-import { useRegistrationDetail, useRegistrationTypes, useRegisterStudent, RegisterStudentResponse } from '@/hooks/admission/useRegistrarDesk'
+import { useRegistrationDetail, useRegisterStudent, RegisterStudentResponse } from '@/hooks/admission/useRegistrarDesk'
 import { AuthError } from '@/lib/api/client'
+import { scrollToFirstError } from '@/lib/scrollToFirstError'
 
 interface Props extends ModalProps {
   applicationGuid: string | null
@@ -26,7 +27,6 @@ function fmtDate(iso: string | null): string {
 // Refugee ID — the actual POST /register body.
 export function CompleteRegistrationModal({ isOpen, onClose, showToast, applicationGuid, onRegistered }: Props) {
   const { data: detail, isLoading, isError, error } = useRegistrationDetail(applicationGuid, isOpen && !!applicationGuid)
-  const { data: registrationTypes = [] } = useRegistrationTypes()
   const registerStudent = useRegisterStudent()
 
   const [registrationTypeId, setRegistrationTypeId] = useState('')
@@ -34,6 +34,7 @@ export function CompleteRegistrationModal({ isOpen, onClose, showToast, applicat
   const [refugeeId, setRefugeeId] = useState('')
   const [aptech, setAptech] = useState(false)
   const [failure, setFailure] = useState<string | null>(null)
+  const [errors, setErrors] = useState<Record<string, string>>({})
 
   // Prefill from whatever's already on file for this application — the
   // registrar can still change these before submitting.
@@ -49,16 +50,19 @@ export function CompleteRegistrationModal({ isOpen, onClose, showToast, applicat
   if (!isOpen || !applicationGuid) return null
 
   function handleClose() {
-    setRegistrationTypeId(''); setIsRefugee(false); setRefugeeId(''); setAptech(false); setFailure(null)
+    setRegistrationTypeId(''); setIsRefugee(false); setRefugeeId(''); setAptech(false); setFailure(null); setErrors({})
     onClose()
   }
 
-  const registrationTypeOptions = registrationTypes.map(t => ({ value: String(t.intType), label: t.registrationType }))
+  const registrationTypeOptions = (detail?.admissionTypes ?? []).map(t => ({ value: String(t.intType), label: t.registrationType }))
 
   function handleSubmit() {
     if (!applicationGuid) return
-    if (!registrationTypeId) { showToast('Please select a Registration Type', 'error'); return }
-    if (isRefugee && !refugeeId.trim()) { showToast('Please enter the Refugee ID', 'error'); return }
+    const e: Record<string, string> = {}
+    if (!registrationTypeId) e.registrationTypeId = 'Please select a Registration Type'
+    if (isRefugee && !refugeeId.trim()) e.refugeeId = 'Please enter the Refugee ID'
+    setErrors(e)
+    if (Object.keys(e).length) { scrollToFirstError(e); return }
     registerStudent.mutate(
       {
         applicationGuid,
@@ -237,13 +241,15 @@ export function CompleteRegistrationModal({ isOpen, onClose, showToast, applicat
               )}
               <div className="fg">
                 <label className="lbl">Registration Type <span className="req">*</span></label>
-                <SearchSelect placeholder="-- Select Registration Type --" options={registrationTypeOptions} value={registrationTypeId} onChange={setRegistrationTypeId} />
+                <SearchSelect placeholder="-- Select Registration Type --" options={registrationTypeOptions} value={registrationTypeId} onChange={v => { setRegistrationTypeId(v); setErrors(p => ({ ...p, registrationTypeId: '' })) }} />
+                {errors.registrationTypeId && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.registrationTypeId}</p>}
               </div>
 
               {isRefugee && (
                 <div className="fg mt-2">
                   <label className="lbl">Refugee ID <span className="req">*</span></label>
-                  <input className="ctrl" placeholder="Refugee ID number" value={refugeeId} onChange={e => setRefugeeId(e.target.value)} />
+                  <input className="ctrl" placeholder="Refugee ID number" value={refugeeId} onChange={e => { setRefugeeId(e.target.value); setErrors(p => ({ ...p, refugeeId: '' })) }} style={errors.refugeeId ? { borderColor: 'var(--red)' } : undefined} />
+                  {errors.refugeeId && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.refugeeId}</p>}
                 </div>
               )}
 

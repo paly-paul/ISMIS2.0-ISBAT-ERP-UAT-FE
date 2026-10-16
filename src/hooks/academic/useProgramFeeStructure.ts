@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useInfiniteQuery, useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import {
   getProgramFeeStructures,
   getProgramFeeLines,
@@ -12,36 +12,49 @@ import {
   ProgramFeeStructureUpdateInput,
 } from '@/lib/api/academic/programFeeStructure'
 import { PROGRAM_MASTERS_KEY } from './useProgramMaster'
+import { getNextPageParam } from '@/lib/pagination'
 
 const PROGRAM_FEE_STRUCTURES_KEY = ['programFeeStructures']
 
-// Backs the standalone /academic/fee-structure page's main table — real now
-// (see the note on getProgramFeeStructures). Loaded at a large pageSize and
-// paginated/searched client-side, same "load it all once" convention as
-// batch-management/employee-master, rather than a second server round-trip
-// per page click.
-export function useProgramFeeStructures(pageNumber = 1, pageSize = 1000, programGuid?: string) {
+// Full/large-page fetch — still used by every OTHER consumer of this list
+// that genuinely needs it all in memory at once (FeeStructureModal's own
+// "Copy Fee Code" source list across every programme, Admission Filing/
+// Payment/Payment Refund's cross-reference lookups), unlike the standalone
+// /academic/fee-structure page's own table, which now uses
+// useProgramFeeStructuresPaged below instead of paginating this client-side.
+export function useProgramFeeStructures(pageNumber = 1, pageSize = 1000, programGuid?: string, enabled = true) {
   return useQuery({
     queryKey: [...PROGRAM_FEE_STRUCTURES_KEY, pageNumber, pageSize, programGuid ?? null],
     queryFn: () => getProgramFeeStructures(pageNumber, pageSize, programGuid),
+    staleTime: Infinity,
+    gcTime: Infinity,
+    enabled,
   })
 }
 
-// Server-side search for Fee Structure's search box — hits the same list
-// endpoint with the backend's own ?search= param instead of filtering the
-// already-fetched full list client-side. Kept as its own hook/query key so
-// useProgramFeeStructures() above still stays the plain unfiltered, cached
-// list — only enabled while the search box actually has a query in it, at
-// which point the page falls back to that shared unfiltered list instead of
-// issuing a redundant identical request. Not confirmed against a spec (see
-// the note on getProgramFeeStructures), so the caller re-filters client-side
-// too.
-export function useProgramFeeStructureSearch(search: string, pageSize: number) {
-  const q = search.trim()
+// Real server-side pagination (2026-09-10) for the standalone
+// /academic/fee-structure page's own table — replaces the
+// useProgramFeeStructures(1, 1000)/useProgramFeeStructureSearch() pair (a
+// full 1000-row fetch + a separate page-1-only search query, paginated
+// client-side) with one hook, same consolidation Programme Master/Batches/
+// Lecturer Skills already went through. getProgramFeeStructures is already
+// confirmed to genuinely support pageNumber/pageSize/search together with a
+// real totalCount envelope — see its own comment.
+export function useProgramFeeStructuresPaged(page: number, pageSize: number, search: string) {
   return useQuery({
-    queryKey: [...PROGRAM_FEE_STRUCTURES_KEY, 'search', q],
-    queryFn: () => getProgramFeeStructures(1, pageSize, undefined, q),
-    enabled: q.length > 0,
+    queryKey: [...PROGRAM_FEE_STRUCTURES_KEY, 'paged', page, pageSize, search],
+    queryFn: () => getProgramFeeStructures(page, pageSize, undefined, search),
+    placeholderData: keepPreviousData,
+  })
+}
+
+export function useSearchProgramFeeStructuresInfinite(search: string, pageSize: number, enabled: boolean) {
+  return useInfiniteQuery({
+    queryKey: [...PROGRAM_FEE_STRUCTURES_KEY, 'search-infinite', search, pageSize],
+    queryFn: ({ pageParam }) => getProgramFeeStructures(pageParam, pageSize, undefined, search),
+    initialPageParam: 1,
+    getNextPageParam,
+    enabled,
     staleTime: Infinity,
     gcTime: Infinity,
   })
@@ -65,8 +78,7 @@ export function useSaveProgramFeeStructureComplete() {
   return useMutation({
     mutationFn: (input: ProgramFeeStructureSaveCompleteInput) => saveProgramFeeStructureComplete(input),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: PROGRAM_FEE_STRUCTURES_KEY })
-      queryClient.invalidateQueries({ queryKey: ['programMasters'] })
+      queryClient.invalidateQueries({ queryKey: [...PROGRAM_FEE_STRUCTURES_KEY, 'paged'] })
     },
   })
 }
@@ -76,8 +88,7 @@ export function useUpdateProgramFeeStructureComplete() {
   return useMutation({
     mutationFn: ({ feeHdGuid, input }: { feeHdGuid: string; input: ProgramFeeStructureUpdateInput }) => updateProgramFeeStructureComplete(feeHdGuid, input),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: PROGRAM_FEE_STRUCTURES_KEY })
-      queryClient.invalidateQueries({ queryKey: ['programMasters'] })
+      queryClient.invalidateQueries({ queryKey: [...PROGRAM_FEE_STRUCTURES_KEY, 'paged'] })
     },
   })
 }

@@ -1,30 +1,19 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { CreateLecturerSkillInput, LecturerSkill, createSkill, deleteSkill, getSkillById, getSkills, updateSkill } from '@/lib/api/users/skills'
 
 const LECTURER_SKILLS_KEY = ['lecturer-skills']
 
-export function useLecturerSkills() {
+// Real server-side pagination (2026-09-09, now that the backend supports
+// it — see getSkills' own comment) — only PAGE_SIZE rows are ever requested
+// for the page on screen. Replaces the old useLecturerSkills()/
+// useLecturerSkillSearch() pair (full 1000-row fetch + a separate page-1-only
+// search query) with one hook, same consolidation useBatches went through.
+// keepPreviousData avoids a loading flash between pages/searches.
+export function useLecturerSkills(page: number, pageSize: number, search = '') {
   return useQuery({
-    queryKey: LECTURER_SKILLS_KEY,
-    queryFn: () => getSkills(),
-    staleTime: Infinity,
-    gcTime: Infinity,
-  })
-}
-
-// Server-side search for Skill Master's search box — hits the same list
-// endpoint with the backend's own ?search= param instead of filtering the
-// already-fetched full list client-side. Kept as its own hook/query key so
-// useLecturerSkills() above still stays the plain unfiltered, cached list —
-// only enabled while the search box actually has a query in it, at which
-// point the page falls back to that shared unfiltered list instead of
-// issuing a redundant identical request.
-export function useLecturerSkillSearch(search: string) {
-  const q = search.trim()
-  return useQuery({
-    queryKey: [...LECTURER_SKILLS_KEY, 'search', q],
-    queryFn: () => getSkills(q),
-    enabled: q.length > 0,
+    queryKey: [...LECTURER_SKILLS_KEY, page, pageSize, search],
+    queryFn: () => getSkills(page, pageSize, search),
+    placeholderData: keepPreviousData,
     staleTime: Infinity,
     gcTime: Infinity,
   })
@@ -43,10 +32,8 @@ export function useLecturerSkill(guid: string | null, enabled: boolean) {
 // mutationFn resolves to an array — one call now creates a skill entry per
 // guid in input.skillGuids (see CreateLecturerSkillInput).
 export function useCreateLecturerSkill() {
-  const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (input: CreateLecturerSkillInput) => createSkill(input),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: LECTURER_SKILLS_KEY }),
   })
 }
 

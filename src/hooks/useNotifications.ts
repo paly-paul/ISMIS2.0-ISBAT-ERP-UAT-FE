@@ -26,7 +26,6 @@ export function useUnreadCount() {
     queryFn: getUnreadCount,
     staleTime: Infinity,
     gcTime: Infinity,
-    refetchOnWindowFocus: false,
   })
 }
 
@@ -58,7 +57,6 @@ export function useNotificationsPreview() {
     queryFn: () => getNotifications({ page: 1, size: PREVIEW_SIZE, unreadOnly: true }),
     staleTime: Infinity,
     gcTime: Infinity,
-    refetchOnWindowFocus: false,
   })
 }
 

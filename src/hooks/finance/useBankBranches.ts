@@ -30,6 +30,7 @@ export function useBankBranch(guid: string | null, enabled: boolean) {
   return useQuery({
     queryKey: [...BANK_BRANCHES_KEY, guid],
     queryFn: () => getBankBranchById(guid as string),
+    staleTime: 5 * 60 * 1000,
     enabled: enabled && !!guid,
   })
 }

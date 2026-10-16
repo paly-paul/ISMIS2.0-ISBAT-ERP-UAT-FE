@@ -12,6 +12,9 @@ interface PaymentSuccessModalProps extends ModalProps {
   // shown same as the receipt card's own info-box treatment. Optional;
   // NCHE/Guild have none of these.
   notices?: string[]
+  // Optional second button beside OK — e.g. "View Student Statement" so the
+  // user can go straight to the student's updated payment details.
+  secondaryAction?: { label: string; icon: string; onClick: () => void }
 }
 
 // Success confirmation for every payment category's submit — replaces the
@@ -19,11 +22,11 @@ interface PaymentSuccessModalProps extends ModalProps {
 // guildSubmit's own onError). Tuition's printable receipt card in Column 3
 // is unchanged by this — this modal is the immediate "it worked" moment,
 // the card underneath is the lasting/printable record.
-export function PaymentSuccessModal({ isOpen, onClose, title, rows, notices }: PaymentSuccessModalProps) {
+export function PaymentSuccessModal({ isOpen, onClose, title, rows, notices, secondaryAction }: PaymentSuccessModalProps) {
   if (!isOpen) return null
 
   return (
-    <div className="modal-overlay open" onClick={onClose}>
+    <div className="modal-overlay open">
       <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
         <div className="modal-hdr" style={{ background: 'var(--green-bg)' }}>
           <div className="modal-title"><i className="lni lni-checkmark-circle" style={{ color: 'var(--green)' }}></i> {title}</div>
@@ -40,6 +43,11 @@ export function PaymentSuccessModal({ isOpen, onClose, title, rows, notices }: P
         </div>
 
         <div className="modal-footer">
+          {secondaryAction && (
+            <button className="btn btn-neu flex-1 justify-center" onClick={secondaryAction.onClick}>
+              <i className={`lni ${secondaryAction.icon}`}></i> {secondaryAction.label}
+            </button>
+          )}
           <button className="btn btn-primary flex-1 justify-center" onClick={onClose}>OK</button>
         </div>
       </div>

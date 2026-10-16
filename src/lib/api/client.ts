@@ -19,6 +19,9 @@ export class AuthError extends Error {
   constructor(
     public readonly code: string,
     message?: string,
+    // Every entry of the envelope's errors[] — `message` only carries the
+    // first. Set by apiPost; e.g. a bulk import's per-row problems.
+    public readonly errors?: string[],
   ) {
     super(message ?? code)
     this.name = 'AuthError'
@@ -34,6 +37,10 @@ function isAuthEndpoint(path: string): boolean {
 
 interface RefreshData {
   displayName?: string
+  employeeGuid?: string
+  userGuid?: string
+  userId?: string
+  uuid?: string
 }
 
 // Prevent duplicate refresh calls when several requests fail at once.
@@ -215,10 +222,25 @@ function extractErrorInfo(envelope: unknown): { code: string; message?: string }
     const firstField = Object.keys(fieldErrors)[0]
     return { code: 'validation_error', message: (firstField ? fieldErrors[firstField]?.[0] : undefined) ?? e.title ?? undefined }
   }
-  return { code: 'unknown', message: e.title ?? undefined }
+  // An app envelope with a null `code` but a populated errors[]/message
+  // (seen on a 400 from announcements create) — surface that text rather
+  // than a bare 'unknown'.
+  return { code: 'unknown', message: (Array.isArray(e.errors) ? e.errors[0] : undefined) ?? e.message ?? e.title ?? undefined }
 }
 
-export async function apiPost<T>(path: string, body: unknown, retried = false): Promise<T> {
+export async function apiPost<T>(path: string, body: unknown): Promise<T> {
+  const { data, message } = await apiPostWithMessage<T>(path, body)
+  if (data && typeof data === 'object' && !Array.isArray(data) && message) {
+    (data as any).message = message
+  }
+  return data
+}
+
+// Same as apiPost, but also returns the envelope's `message` — for endpoints
+// whose success message carries meaning a primitive `data` can't hold, e.g.
+// hall ticket issue's `data: true` with "Hall ticket already issued."
+// (post-issue.md).
+export async function apiPostWithMessage<T>(path: string, body: unknown, retried = false): Promise<{ data: T; message: string | null }> {
   const res = await fetch(buildUrl(path), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...NGROK_HEADERS },
@@ -231,22 +253,22 @@ export async function apiPost<T>(path: string, body: unknown, retried = false): 
 
   if (unauthorized && !isAuthEndpoint(path) && !retried) {
     await handleUnauthorized(path)
-    return apiPost<T>(path, body, true)
+    return apiPostWithMessage<T>(path, body, true)
   }
 
   if (res.ok) {
     // Some endpoints (e.g. login) authenticate purely via Set-Cookie and
     // respond 2xx with no parseable JSON body — that's a legitimate success,
     // not an error, so resolve with null data rather than throwing.
-    if (!envelope) return null as T
+    if (!envelope) return { data: null as T, message: null }
     if (!envelope.success) {
-      throw new AuthError(envelope.code ?? 'unknown', envelope.errors?.[0] ?? envelope.message ?? undefined)
+      throw new AuthError(envelope.code ?? 'unknown', envelope.errors?.[0] ?? envelope.message ?? undefined, Array.isArray(envelope.errors) ? envelope.errors : undefined)
     }
-    return envelope.data as T
+    return { data: envelope.data as T, message: envelope.message }
   }
 
   const { code, message } = extractErrorInfo(envelope)
-  throw new AuthError(code, message)
+  throw new AuthError(code, message, Array.isArray(envelope?.errors) ? envelope.errors : undefined)
 }
 
 // multipart/form-data variant of apiPost — for endpoints that accept a file
@@ -278,7 +300,12 @@ export async function apiPostForm<T>(path: string, formData: FormData, retried =
   const responseText = await res.text()
   console.log(`📄 Response body: ${responseText || '(empty)'}`)
 
-  const envelope = responseText ? (JSON.parse(responseText) as ApiEnvelope<T>) : null
+  let envelope: ApiEnvelope<T> | null = null
+  try {
+    envelope = responseText ? (JSON.parse(responseText) as ApiEnvelope<T>) : null
+  } catch {
+    envelope = null
+  }
   const unauthorized = res.status === 401 || (envelope != null && !envelope.success && envelope.code === 'unauthorized')
 
   if (unauthorized && !isAuthEndpoint(path) && !retried) {
@@ -289,13 +316,13 @@ export async function apiPostForm<T>(path: string, formData: FormData, retried =
   if (res.ok) {
     if (!envelope) return null as T
     if (!envelope.success) {
-      throw new AuthError(envelope.code ?? 'unknown', envelope.errors?.[0] ?? envelope.message ?? undefined)
+      throw new AuthError(envelope.code ?? 'unknown', envelope.errors?.[0] ?? envelope.message ?? undefined, Array.isArray(envelope.errors) ? envelope.errors : undefined)
     }
     return envelope.data as T
   }
 
   const { code, message } = extractErrorInfo(envelope)
-  throw new AuthError(code, message)
+  throw new AuthError(code, message || responseText || `HTTP ${res.status}`, Array.isArray(envelope?.errors) ? envelope.errors : undefined)
 }
 
 // multipart/form-data variant of apiPut — mirrors apiPostForm for endpoints
@@ -372,13 +399,13 @@ export async function apiPut<T>(path: string, body: unknown, retried = false): P
   if (res.ok) {
     if (!envelope) return null as T
     if (!envelope.success) {
-      throw new AuthError(envelope.code ?? 'unknown', envelope.errors?.[0] ?? envelope.message ?? undefined)
+      throw new AuthError(envelope.code ?? 'unknown', envelope.errors?.[0] ?? envelope.message ?? undefined, Array.isArray(envelope.errors) ? envelope.errors : undefined)
     }
     return envelope.data as T
   }
 
   const { code, message } = extractErrorInfo(envelope)
-  throw new AuthError(code, message || responseText || `HTTP ${res.status}`)
+  throw new AuthError(code, message || responseText || `HTTP ${res.status}`, Array.isArray(envelope?.errors) ? envelope.errors : undefined)
 }
 
 export async function apiPatch<T>(path: string, body: unknown, retried = false): Promise<T> {
@@ -409,7 +436,15 @@ export async function apiPatch<T>(path: string, body: unknown, retried = false):
   throw new AuthError(code, message)
 }
 
-export async function apiDelete<T>(path: string, retried = false): Promise<T> {
+export async function apiDelete<T>(path: string): Promise<T> {
+  return (await apiDeleteWithMessage<T>(path)).data
+}
+
+// Same as apiDelete, but also returns the envelope's `message` — for
+// endpoints whose message carries meaning, e.g. a confirm-before-delete
+// first call answering `{ data: false, message: "You are about to delete
+// … Do you want to continue?" }` (resit-question-print/delete-*.md).
+export async function apiDeleteWithMessage<T>(path: string, retried = false): Promise<{ data: T; message: string | null }> {
   const res = await fetch(buildUrl(path), {
     method: 'DELETE',
     headers: NGROK_HEADERS,
@@ -421,15 +456,15 @@ export async function apiDelete<T>(path: string, retried = false): Promise<T> {
 
   if (unauthorized && !isAuthEndpoint(path) && !retried) {
     await handleUnauthorized(path)
-    return apiDelete<T>(path, true)
+    return apiDeleteWithMessage<T>(path, true)
   }
 
   if (res.ok) {
-    if (!envelope) return null as T
+    if (!envelope) return { data: null as T, message: null }
     if (!envelope.success) {
       throw new AuthError(envelope.code ?? 'unknown', envelope.errors?.[0] ?? envelope.message ?? undefined)
     }
-    return envelope.data as T
+    return { data: envelope.data as T, message: envelope.message }
   }
 
   const { code, message } = extractErrorInfo(envelope)

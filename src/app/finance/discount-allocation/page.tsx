@@ -1,9 +1,10 @@
 'use client'
-import { useEffect, useRef, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { Suspense, useEffect, useRef, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { Toast } from '@/components/Toast'
 import { SearchSelect } from '@/components/SearchSelect'
 import { useSearchStudentsInfinite, useStudentProfile } from '@/hooks/finance/usePaymentConsole'
+import { refugeeLabel, studCategoryLabel, searchStudents } from '@/lib/api/finance/paymentConsole'
 import { useCampuses } from '@/hooks/config/useCampuses'
 import { useProgramMasters } from '@/hooks/academic/useProgramMaster'
 import { useBatches } from '@/hooks/academic/useBatches'
@@ -20,6 +21,7 @@ import {
 } from '@/hooks/student/useStudentDiscount'
 import { CALC_TYPE_VALUES, CALC_TYPE_LABELS } from '@/lib/api/finance/discount'
 import { usePagePermissions } from '@/hooks/users/usePagePermissions'
+import { scrollToFirstError } from '@/lib/scrollToFirstError'
 
 // Sketch: a Payment-Console-style split — Student Master search on the
 // left, an "Apply Discount" form on the right with Edit/Cancel Discount
@@ -37,6 +39,11 @@ import { usePagePermissions } from '@/hooks/users/usePagePermissions'
 // StudentDiscountDto to begin with (studentDiscount.ts), and Programme/
 // Semester are already shown on the profile hero card to the left, so
 // repeating them in the form was redundant.
+
+const MIN_SEARCH_CHARS = 3
+// remarks: max 500 chars on both assign and update (post-assign-student-
+// discount.md, put-student-discount.md).
+const REMARKS_MAX = 500
 
 function applicantName(a: { firstName: string | null; lastName: string | null }) {
   return `${a.firstName ?? ''}${a.lastName ? ` ${a.lastName}` : ''}`.trim() || '—'
@@ -83,7 +90,7 @@ function isCancelledStatus(status: number | null | undefined) {
   return status !== DISCOUNT_STATUS_VALUES.Active
 }
 
-export default function DiscountAllocationPage() {
+function DiscountAllocationContent() {
   const permissions = usePagePermissions()
   const router = useRouter()
   const [toast, setToast] = useState<{ msg: string; type: string } | null>(null)
@@ -96,8 +103,49 @@ export default function DiscountAllocationPage() {
   const [committedSearch, setCommittedSearch] = useState('')
   const [searchFocused, setSearchFocused] = useState(false)
   const searchBoxRef = useRef<HTMLDivElement>(null)
-  const [selectedApplicationGuid, setSelectedApplicationGuid] = useState<string | null>(null)
-  const [selectedStudentGuidHint, setSelectedStudentGuidHint] = useState<string | null>(null)
+  // Student Profile's read-only Discount field links here as
+  // ?studentGuid=&studentName=[&applicationGuid=] — the student is loaded
+  // straight away, same as picking them from search, and the params are
+  // cleared below so a refresh doesn't reload them. applicationGuid is only
+  // present when GET /students/{guid} carried an applicationSummary (it
+  // often doesn't); otherwise it's resolved here by running this page's own
+  // search on the name and taking the hit whose studentGuid matches.
+  const searchParams = useSearchParams()
+  const applicationGuidParam = searchParams.get('applicationGuid')
+  const [selectedApplicationGuid, setSelectedApplicationGuid] = useState<string | null>(applicationGuidParam)
+  const [selectedStudentGuidHint, setSelectedStudentGuidHint] = useState<string | null>(() => searchParams.get('studentGuid'))
+  // True while the name search above is resolving the applicationGuid —
+  // the profile query hasn't started yet, so this drives the loader alone.
+  const [isResolvingPrefill, setIsResolvingPrefill] = useState(() => !!searchParams.get('studentGuid') && !applicationGuidParam)
+  useEffect(() => {
+    const studentGuidParam = searchParams.get('studentGuid')
+    if (!studentGuidParam) return
+    const name = searchParams.get('studentName') ?? ''
+    setSearch(name)
+    router.replace('/finance/discount-allocation')
+    if (applicationGuidParam) return
+    let cancelled = false
+    searchStudents(name, 1, 50)
+      .then(res => {
+        if (cancelled) return
+        // Search hits don't reliably carry the same studentGuid (seen null/
+        // mismatched live), so fall back to an exact, unambiguous name match,
+        // then to a lone result.
+        const norm = (s: string | null | undefined) => (s ?? '').trim().replace(/\s+/g, ' ').toLowerCase()
+        const byGuid = res.items.find(a => norm(a.studentGuid) === norm(studentGuidParam))
+        const byName = res.items.filter(a => norm(searchResultName(a)) === norm(name))
+        const hit = byGuid ?? (byName.length === 1 ? byName[0] : res.items.length === 1 ? res.items[0] : undefined)
+        if (hit) {
+          setSelectedApplicationGuid(hit.applicationGuid)
+          if (hit.studentGuid) setSelectedStudentGuidHint(hit.studentGuid)
+        }
+        else showToast('Could not pre-load this student — please search for them.', 'warn')
+      })
+      .catch(() => { if (!cancelled) showToast('Could not pre-load this student — please search for them.', 'warn') })
+      .finally(() => { if (!cancelled) setIsResolvingPrefill(false) })
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     const t = setTimeout(() => setCommittedSearch(search.trim()), 400)
@@ -113,15 +161,18 @@ export default function DiscountAllocationPage() {
     return () => document.removeEventListener('mousedown', handle)
   }, [searchFocused])
 
+  // The backend's search currently only returns results from 3 characters
+  // (its documented minimum of 2 errors out live), so gate at 3 here.
   const searchTermLen = committedSearch.trim().length
+  const searchTooShort = searchTermLen > 0 && searchTermLen < MIN_SEARCH_CHARS
   const {
     data: searchPages, fetchNextPage, hasNextPage, isFetchingNextPage,
     isFetching: isSearching, isError: isSearchError, error: searchError,
   } = useSearchStudentsInfinite(
     committedSearch, 20,
-    searchFocused && (searchTermLen === 0 || searchTermLen >= 2),
+    searchFocused && !searchTooShort,
   )
-  const matches = searchPages?.pages.flatMap(p => p.items) ?? []
+  const matches = searchTooShort ? [] : searchPages?.pages.flatMap(p => p.items) ?? []
 
   function handleSearchResultsScroll(e: React.UIEvent<HTMLDivElement>) {
     if (!hasNextPage || isFetchingNextPage) return
@@ -135,18 +186,18 @@ export default function DiscountAllocationPage() {
   // Client-side name resolution for the profile's guid FKs — same fallback
   // pattern as Payment Console (prefer the server-resolved name, fall back
   // to the client-side lookup only when the server sends null).
-  const { data: campuses = [] } = useCampuses()
-  const { data: programs = [] } = useProgramMasters()
-  const { data: allBatchesData } = useBatches(1, 1000)
+  const { data: campuses = [] } = useCampuses(!!profile)
+  const { data: programs = [] } = useProgramMasters(!profile?.programName && !!profile)
+  const { data: allBatchesData } = useBatches(1, 1000, '', !profile?.batchCode && !!profile)
   const batches = allBatchesData?.items ?? []
-  const { data: semesters = [] } = useSemestersForProgram(profile?.programGuid ?? '', !!profile?.programGuid)
+  const { data: semesters = [] } = useSemestersForProgram(profile?.programGuid ?? '', !profile?.semesterName && !!profile?.programGuid)
   const campusName = campuses.find(c => c.campusGuid === profile?.campusGuid)?.campusName
   const programName = profile?.programName ?? programs.find(p => p.programGuid === profile?.programGuid)?.programName
   const batchCode = profile?.batchCode ?? batches.find(b => b.batchGuid === profile?.batchGuid)?.batchCode
   const semName = profile?.semesterName ?? semesters.find(s => s.semesterGuid === profile?.semesterGuid)?.semName
 
   // ── Discount catalogue + this student's current assignment. ──
-  const { data: discountCatalogue = [] } = useDiscounts()
+  const { data: discountCatalogue = [] } = useDiscounts(!!selectedApplicationGuid)
   const { data: discountDetail, isLoading: isDiscountLoading, isError: isDiscountError } = useStudentDiscount(studentGuid, !!selectedApplicationGuid && !!studentGuid)
   const assignDiscount = useAssignStudentDiscount()
   const updateDiscount = useUpdateStudentDiscount()
@@ -155,7 +206,7 @@ export default function DiscountAllocationPage() {
   // (/finance/cooperates) rather than free text — the value stored/sent as
   // `cop` is the cooperate's GUID (confirmed 2026-09-02 — a cooperate NAME
   // sent as `cop` 400'd on assign; the field wants cooperateGuid).
-  const { data: cooperates = [] } = useCooperates()
+  const { data: cooperates = [] } = useCooperates(!!selectedApplicationGuid)
 
   const [editing, setEditing] = useState(false)
   const [showCancelConfirm, setShowCancelConfirm] = useState(false)
@@ -165,6 +216,14 @@ export default function DiscountAllocationPage() {
   const [amtPer, setAmtPer] = useState('')
   const [corporate, setCorporate] = useState('')
   const [remarks, setRemarks] = useState('')
+  // Inline field errors for the assign/edit forms: discountGuid, amtPer, remarks.
+  const [errors, setErrors] = useState<Record<string, string>>({})
+  function clearError(field: string) {
+    setErrors(prev => (prev[field] ? { ...prev, [field]: '' } : prev))
+  }
+  function fieldErr(field: string) {
+    return errors[field] ? <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors[field]}</p> : null
+  }
 
   function resetForm() {
     setDiscountChoice('')
@@ -172,8 +231,44 @@ export default function DiscountAllocationPage() {
     setAmtPer('')
     setCorporate('')
     setRemarks('')
+    setErrors({})
     setEditing(false)
     setShowCancelConfirm(false)
+  }
+
+  // AssignStudentDiscountCommandValidator / UpdateStudentDiscountCommand-
+  // Validator (post-assign-student-discount.md, put-student-discount.md) —
+  // identical except that only assign takes a discountGuid. Amount/% are
+  // read-only (copied from the discount), so a failure there points at the
+  // discount's own configuration rather than anything typed here.
+  function validateTerms(requireDiscount: boolean): Record<string, string> {
+    const e: Record<string, string> = {}
+    if (requireDiscount && !discountChoice) e.discountGuid = 'Please select a discount.'
+    const amt = amtPer.trim() ? Number(amtPer) : null
+    if (amt != null && isNaN(amt)) e.amtPer = 'Amount/Percentage must be a number.'
+    else if (amt != null && amt <= 0) e.amtPer = 'Amount/Percentage must be greater than 0.'
+    else if (amt != null && calcType === 'Percentage' && amt > 100) e.amtPer = 'Percentage cannot be more than 100.'
+    if (remarks.trim().length > REMARKS_MAX) e.remarks = `Remarks must be ${REMARKS_MAX} characters or fewer.`
+    return e
+  }
+
+  // Field a 400 validation_error belongs to, by its message; null = toast.
+  function errorField(msg: string): string | null {
+    if (/percentage|amtper|amount/i.test(msg)) return 'amtPer'
+    if (/remarks/i.test(msg)) return 'remarks'
+    if (/discount ?guid|select a discount/i.test(msg)) return 'discountGuid'
+    return null
+  }
+
+  function showServerError(error: Error, fallback: string) {
+    const field = errorField(error.message || '')
+    if (field) {
+      const e = { [field]: error.message }
+      setErrors(prev => ({ ...prev, ...e }))
+      scrollToFirstError(e)
+      return
+    }
+    showToast(error.message || fallback, 'error')
   }
 
   // Seeds the form from the just-loaded assignment the moment it's editable
@@ -185,6 +280,7 @@ export default function DiscountAllocationPage() {
     setAmtPer(discountDetail.amtPer != null ? String(discountDetail.amtPer) : '')
     setCorporate(discountDetail.cop ?? '')
     setRemarks(discountDetail.remarks ?? '')
+    setErrors({})
     setEditing(true)
   }
 
@@ -208,17 +304,13 @@ export default function DiscountAllocationPage() {
   }
 
   function handleAssign() {
+    if (!permissions.add) { showToast('You do not have permission to assign discounts.', 'warn'); return }
     if (!profile || !selectedApplicationGuid) { showToast('Please select a student first.', 'warn'); return }
     if (!studentGuid) { showToast("This applicant hasn't been registered as a student yet — discounts can only be assigned to enrolled students.", 'warn'); return }
-    if (!discountChoice) { showToast('Please select a discount.', 'warn'); return }
+    const errs = validateTerms(true)
+    setErrors(errs)
+    if (Object.keys(errs).length) { scrollToFirstError(errs); return }
     const amt = amtPer.trim() ? Number(amtPer) : null
-    // Mirrors AssignStudentDiscountCommandValidator (post-assign-student-
-    // discount.md): amtPer must be > 0 when supplied, and ≤ 100 when
-    // calcType is Percentage — catching both client-side avoids a round
-    // trip for a 400 validation_error the server would reject anyway.
-    if (amt != null && isNaN(amt)) { showToast('Amount/Percentage must be a number.', 'warn'); return }
-    if (amt != null && amt <= 0) { showToast('Amount/Percentage must be greater than 0.', 'warn'); return }
-    if (amt != null && calcType === 'Percentage' && amt > 100) { showToast('Percentage cannot be more than 100.', 'warn'); return }
 
     assignDiscount.mutate(
       {
@@ -240,31 +332,29 @@ export default function DiscountAllocationPage() {
       },
       {
         onSuccess: () => showToast('Discount assigned.', 'success'),
-        onError: (error: Error) => showToast(error.message || 'Could not assign discount.', 'error'),
+        onError: (error: Error) => showServerError(error, 'Could not assign discount.'),
       },
     )
   }
 
   function handleSaveEdit() {
-    if (!studentGuid) return
+    if (!permissions.edit || !studentGuid) return
+    const errs = validateTerms(false)
+    setErrors(errs)
+    if (Object.keys(errs).length) { scrollToFirstError(errs); return }
     const amt = amtPer.trim() ? Number(amtPer) : null
-    // Same UpdateStudentDiscountCommandValidator rules as assign — see the
-    // comment in handleAssign above.
-    if (amt != null && isNaN(amt)) { showToast('Amount/Percentage must be a number.', 'warn'); return }
-    if (amt != null && amt <= 0) { showToast('Amount/Percentage must be greater than 0.', 'warn'); return }
-    if (amt != null && calcType === 'Percentage' && amt > 100) { showToast('Percentage cannot be more than 100.', 'warn'); return }
 
     updateDiscount.mutate(
       { studentGuid, payload: { calcType: CALC_TYPE_VALUES[calcType], amtPer: amt, cop: showCorporateForAssigned ? (corporate.trim() || null) : null, remarks: remarks.trim() || null } },
       {
         onSuccess: () => { showToast('Discount updated.', 'success'); setEditing(false) },
-        onError: (error: Error) => showToast(error.message || 'Could not update discount.', 'error'),
+        onError: (error: Error) => showServerError(error, 'Could not update discount.'),
       },
     )
   }
 
   function handleCancelDiscount(includeCurrentSemester: boolean) {
-    if (!studentGuid) return
+    if (!permissions.delete || !studentGuid) return
     cancelDiscount.mutate(
       { studentGuid, includeCurrentSemester },
       {
@@ -336,9 +426,7 @@ export default function DiscountAllocationPage() {
           <div>
             <div className="pg-title">Discount Allocation</div>
             <div className="pg-sub">Search student → review current discount → assign, edit, or cancel an allocation</div>
-          </div>
-          <button className="btn btn-neu" onClick={() => router.push('/finance/dashboard')}><i className="lni lni-arrow-left"></i> Back</button>
-        </div>
+          </div>        </div>
 
         {/* Student Search — same bar/dropdown as Payment Console. */}
         <div className="card">
@@ -374,13 +462,16 @@ export default function DiscountAllocationPage() {
                 }}
                 onScroll={handleSearchResultsScroll}
               >
-                {isSearching && matches.length === 0 && <div className="text-g400 px-3 py-2" style={{ fontSize: 12.5 }}>Searching…</div>}
-                {!isSearching && isSearchError && matches.length === 0 && (
+                {searchTooShort && (
+                  <div className="text-g400 px-3 py-2" style={{ fontSize: 12.5 }}>Type at least {MIN_SEARCH_CHARS} characters to search.</div>
+                )}
+                {!searchTooShort && isSearching && matches.length === 0 && <div className="text-g400 px-3 py-2" style={{ fontSize: 12.5 }}>Searching…</div>}
+                {!searchTooShort && !isSearching && isSearchError && matches.length === 0 && (
                   <div className="text-clr-red px-3 py-2" style={{ fontSize: 12.5 }}>
                     <i className="lni lni-warning"></i> {searchError instanceof Error ? searchError.message : 'Search failed. Please try again.'}
                   </div>
                 )}
-                {!isSearching && !isSearchError && matches.length === 0 && (
+                {!searchTooShort && !isSearching && !isSearchError && matches.length === 0 && (
                   <div className="text-g400 px-3 py-2" style={{ fontSize: 12.5 }}>
                     {committedSearch ? 'No matching applications found.' : 'No applications found.'}
                   </div>
@@ -404,15 +495,27 @@ export default function DiscountAllocationPage() {
             )}
           </div>
 
-          {isProfileLoading && selectedApplicationGuid && (
-            <div className="mt-4 text-g400" style={{ fontSize: 12.5 }}>Loading applicant profile…</div>
-          )}
           {isProfileError && selectedApplicationGuid && (
             <div className="mt-4 text-clr-red" style={{ fontSize: 12.5 }}>
               <i className="lni lni-warning"></i> {profileError instanceof Error ? profileError.message : "Couldn't load this applicant's profile."}
             </div>
           )}
         </div>
+
+        {(isResolvingPrefill || (isProfileLoading && selectedApplicationGuid)) && (
+          <div className="card mt-4" style={{ padding: '48px 24px', textAlign: 'center' }}>
+            <div className="tbl-empty-inner">
+              <div className="tbl-loading-icon-wrap"><i className="lni lni-reload" /></div>
+              <div className="tbl-empty-title">Loading profile…</div>
+              <div className="tbl-empty-sub">Fetching the student&apos;s details and current discount, just a moment.</div>
+              <div className="tbl-loading-dots">
+                <span className="tbl-loading-dot" />
+                <span className="tbl-loading-dot" />
+                <span className="tbl-loading-dot" />
+              </div>
+            </div>
+          </div>
+        )}
 
         {selectedApplicationGuid && profile && (
           <div className="pc-body">
@@ -433,6 +536,9 @@ export default function DiscountAllocationPage() {
                     <div className="pc-hero-fact"><span className="pc-hero-fact-lbl">Semester</span><span className="pc-hero-fact-val" title={semName ?? '—'}>{semName ?? '—'}</span></div>
                     <div className="pc-hero-fact"><span className="pc-hero-fact-lbl">Batch</span><span className="pc-hero-fact-val" title={batchCode ?? '—'}>{batchCode ?? '—'}</span></div>
                     <div className="pc-hero-fact"><span className="pc-hero-fact-lbl">Year</span><span className="pc-hero-fact-val" title={profile.yearCode ?? '—'}>{profile.yearCode ?? '—'}</span></div>
+                    <div className="pc-hero-fact"><span className="pc-hero-fact-lbl">Reg Status</span><span className="pc-hero-fact-val" title={profile.regStatusName ?? '—'}>{profile.regStatusName ?? '—'}</span></div>
+                    <div className="pc-hero-fact"><span className="pc-hero-fact-lbl">Refugee</span><span className="pc-hero-fact-val">{refugeeLabel(profile.refugee)}</span></div>
+                    <div className="pc-hero-fact"><span className="pc-hero-fact-lbl">Category</span><span className="pc-hero-fact-val">{studCategoryLabel(profile.studCategory)}</span></div>
                   </div>
                 </div>
                 <div className="text-g500 flex items-center gap-1.5 px-5 py-4" style={{ fontSize: 11.5 }}>
@@ -504,8 +610,11 @@ export default function DiscountAllocationPage() {
                         placeholder="— Select Discount —"
                         options={discountCatalogue.map(d => ({ value: d.discountGuid, label: `${d.discountCode} — ${d.discountName}` }))}
                         value={discountChoice}
-                        onChange={v => { setDiscountChoice(v); setCorporate('') }}
+                        // A new discount brings its own amount/% — any error on
+                        // the previous one's no longer applies.
+                        onChange={v => { setDiscountChoice(v); setCorporate(''); clearError('discountGuid'); clearError('amtPer') }}
                       />
+                      {fieldErr('discountGuid')}
                     </div>
                     <div className="g2 mb-[14px]">
                       <div className="fg">
@@ -514,7 +623,9 @@ export default function DiscountAllocationPage() {
                       </div>
                       <div className="fg">
                         <div className="lbl">{calcType === 'Percentage' ? 'Percentage (%)' : 'Amount'}</div>
-                        <input className="ctrl" readOnly value={discountChoice ? (amtPer || '—') : ''} placeholder="Select a discount first" />
+                        <input className="ctrl" readOnly value={discountChoice ? (amtPer || '—') : ''} placeholder="Select a discount first"
+                          style={errors.amtPer ? { borderColor: 'var(--red)' } : undefined} />
+                        {fieldErr('amtPer')}
                       </div>
                     </div>
                     {/* Only shown for discounts flagged cop === "1" — see
@@ -532,15 +643,17 @@ export default function DiscountAllocationPage() {
                     )}
                     <div className="fg mb-4">
                       <div className="lbl">Remarks</div>
-                      <textarea className="ctrl" rows={2} maxLength={500} placeholder="Optional notes" value={remarks} onChange={e => setRemarks(e.target.value)} />
+                      <textarea className="ctrl" rows={2} maxLength={REMARKS_MAX} placeholder="Optional notes" value={remarks} onChange={e => { setRemarks(e.target.value); clearError('remarks') }}
+                        style={errors.remarks ? { borderColor: 'var(--red)' } : undefined} />
+                      {fieldErr('remarks')}
                     </div>
 
                     <div className="flex gap-[10px] justify-end">
-                      {/* permissions.add && ( */}
+                      {permissions.add && (
                         <button className="btn btn-primary btn-lg" disabled={assignDiscount.isPending} onClick={handleAssign}>
                           <i className="lni lni-checkmark"></i> {assignDiscount.isPending ? 'Assigning…' : 'Assign Discount'}
                         </button>
-                      {/* )} */}
+                      )}
                     </div>
                   </>
                 ) : !editing ? (
@@ -567,8 +680,8 @@ export default function DiscountAllocationPage() {
                     </div>
 
                     <div className="flex gap-[10px] justify-end mt-4">
-                      <button className="btn btn-neu" disabled={busy} onClick={() => setShowCancelConfirm(true)}><i className="lni lni-close"></i> Cancel Discount</button>
-                      {/* {permissions.edit && <button className="btn btn-primary" disabled={busy} onClick={startEdit}><i className="lni lni-pencil"></i> Edit Discount</button>} */}
+                      {permissions.delete && <button className="btn btn-neu" disabled={busy} onClick={() => setShowCancelConfirm(true)}><i className="lni lni-close"></i> Cancel Discount</button>}
+                      {permissions.edit && <button className="btn btn-primary" disabled={busy} onClick={startEdit}><i className="lni lni-pencil"></i> Edit Discount</button>}
                     </div>
                   </>
                 ) : (
@@ -589,7 +702,8 @@ export default function DiscountAllocationPage() {
                       </div>
                       <div className="fg">
                         <div className="lbl">{calcType === 'Percentage' ? 'Percentage (%)' : 'Amount'}</div>
-                        <input className="ctrl" readOnly value={amtPer || '—'} />
+                        <input className="ctrl" readOnly value={amtPer || '—'} style={errors.amtPer ? { borderColor: 'var(--red)' } : undefined} />
+                        {fieldErr('amtPer')}
                       </div>
                     </div>
                     {showCorporateForAssigned && (
@@ -605,19 +719,21 @@ export default function DiscountAllocationPage() {
                     )}
                     <div className="fg mb-4">
                       <div className="lbl">Remarks</div>
-                      <textarea className="ctrl" rows={2} maxLength={500} value={remarks} onChange={e => setRemarks(e.target.value)} />
+                      <textarea className="ctrl" rows={2} maxLength={REMARKS_MAX} value={remarks} onChange={e => { setRemarks(e.target.value); clearError('remarks') }}
+                        style={errors.remarks ? { borderColor: 'var(--red)' } : undefined} />
+                      {fieldErr('remarks')}
                     </div>
                     <div className="info-box mb-4">
                       <i className="lni lni-information" style={{ color: 'var(--b700)', fontSize: 15, flexShrink: 0 }}></i>
                       <div style={{ fontSize: 12 }}>The discount and its effective-from semester can&apos;t be changed here — cancel this assignment and assign again to change either.</div>
                     </div>
                     <div className="flex gap-[10px] justify-end">
-                      <button className="btn btn-neu" disabled={updateDiscount.isPending} onClick={() => setEditing(false)}>Discard</button>
-                      {/* permissions.edit && ( */}
+                      <button className="btn btn-neu" disabled={updateDiscount.isPending} onClick={() => { setEditing(false); setErrors({}) }}>Discard</button>
+                      {permissions.edit && (
                         <button className="btn btn-primary" disabled={updateDiscount.isPending} onClick={handleSaveEdit}>
                           <i className="lni lni-checkmark"></i> {updateDiscount.isPending ? 'Saving…' : 'Save Changes'}
                         </button>
-                      {/* )} */}
+                      )}
                     </div>
                   </>
                 )}
@@ -632,7 +748,7 @@ export default function DiscountAllocationPage() {
           vs. from next semester has real financial consequences either
           way. */}
       {showCancelConfirm && discountDetail && (
-        <div className="modal-overlay open" onClick={() => setShowCancelConfirm(false)}>
+        <div className="modal-overlay open">
           <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
             <div className="modal-hdr modal-hdr-blue">
               <div className="modal-title"><i className="lni lni-warning"></i> Cancel Discount</div>
@@ -662,5 +778,13 @@ export default function DiscountAllocationPage() {
       )}
       <Toast toast={toast} />
     </>
+  )
+}
+
+export default function DiscountAllocationPage() {
+  return (
+    <Suspense>
+      <DiscountAllocationContent />
+    </Suspense>
   )
 }

@@ -8,10 +8,14 @@ export const MENU_KEY = ['menu']
 
 // Permissions don't change within a session, so cache indefinitely — same
 // convention as useFaculties etc.
-export function useMenu() {
+// `enabled` lets pages outside the signed-in shell (e.g. the 404 page) skip
+// the /me/menu call for signed-out visitors; same key, so it shares the
+// sidebar's cached result.
+export function useMenu(enabled = true) {
   return useQuery({
     queryKey: MENU_KEY,
     queryFn: getMenu,
+    enabled,
     staleTime: Infinity,
     gcTime: Infinity,
   })

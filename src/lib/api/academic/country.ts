@@ -75,7 +75,43 @@ export function dialCode(country: Pick<Country, 'countryCode'>): string {
   return `+${country.countryCode.replace(/^0+(?=\d)/, '')}`
 }
 
-interface CountryListResponse {
+// The home country (Uganda). Never "first row" — the list's order isn't
+// meaningful. The defaultCountry flag alone isn't enough either: the live
+// master has it set on BOTH Equatorial Guinea and Uganda, with Equatorial
+// Guinea returned first. So Uganda wins whenever it's flagged (or nothing
+// is); otherwise the first flagged country. countryCode is the dialling
+// code ("256"), not an ISO code.
+export function findDefaultCountry(countryList: Country[]): Country | undefined {
+  const isUganda = (c: Country) => c.countryName?.trim().toLowerCase() === 'uganda' || c.countryCode?.replace(/^0+/, '') === '256'
+  const flagged = countryList.filter(c => Number(c.defaultCountry) === 1)
+  return flagged.find(isUganda) ?? flagged[0] ?? countryList.find(isUganda)
+}
+
+// Options for a phone dial-code picker whose value is the country's GUID
+// (sent as e.g. mobileCountryGuid), labelled "+256 · Uganda". Built from the
+// picker's current search page; the selected country is kept listed (from
+// the full list) so the closed picker never renders blank. The label uses
+// dialCode() rather than countryPrefix, which isn't a dial code ("UG", "IND").
+export function phoneCountryOptions(pageCountries: Country[], allCountries: Country[], selectedGuid: string): { value: string; label: string }[] {
+  const label = (c: Country) => `${dialCode(c)} · ${c.countryName}`
+  const options = pageCountries.map(c => ({ value: c.countryGuid, label: label(c) }))
+  const selected = selectedGuid && !options.some(o => o.value === selectedGuid)
+    ? allCountries.find(c => c.countryGuid === selectedGuid)
+    : undefined
+  return selected ? [{ value: selected.countryGuid, label: label(selected) }, ...options] : options
+}
+
+// Options for a plain country picker (value = GUID, label = name), with the
+// selected country kept listed the same way as phoneCountryOptions above.
+export function countryPickerOptions(pageCountries: Country[], allCountries: Country[], selectedGuid: string): { value: string; label: string }[] {
+  const options = pageCountries.map(c => ({ value: c.countryGuid, label: c.countryName }))
+  const selected = selectedGuid && !options.some(o => o.value === selectedGuid)
+    ? allCountries.find(c => c.countryGuid === selectedGuid)
+    : undefined
+  return selected ? [{ value: selected.countryGuid, label: selected.countryName }, ...options] : options
+}
+
+export interface CountryListResponse {
   items: Country[]
   totalCount: number
   pageNumber: number
@@ -97,6 +133,21 @@ const mockCountries: Country[] = [
 export function getCountries(page = 1, pageSize = 10): Promise<Country[]> {
   if (MOCK_AUTH) return Promise.resolve(mockCountries)
   return apiGet<CountryListResponse | null>(`/api/v1/users/countries?page=${page}&pageSize=${pageSize}`).then(data => data?.items ?? [])
+}
+
+export function getCountriesPaged(page = 1, pageSize = 20, search = ''): Promise<CountryListResponse> {
+  if (MOCK_AUTH) {
+    const query = search.trim().toLowerCase()
+    const filtered = query
+      ? mockCountries.filter(c => `${c.countryCode} ${c.countryName} ${c.nationality}`.toLowerCase().includes(query))
+      : mockCountries
+    const start = (page - 1) * pageSize
+    return Promise.resolve({ items: filtered.slice(start, start + pageSize), totalCount: filtered.length, pageNumber: page, pageSize })
+  }
+  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) })
+  if (search.trim()) params.set('search', search.trim())
+  return apiGet<CountryListResponse | null>(`/api/v1/users/countries?${params.toString()}`)
+    .then(data => data ?? { items: [], totalCount: 0, pageNumber: page, pageSize })
 }
 
 export function createCountry(input: CountryInput): Promise<Country> {

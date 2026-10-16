@@ -78,7 +78,7 @@ export function QuestionFaqFormModal({ isOpen, onClose, showToast, editingGuid }
   }
 
   return (
-    <div className="modal-overlay open" onClick={onClose}>
+    <div className="modal-overlay open">
       <div className="modal modal-md flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="modal-hdr modal-hdr-blue shrink-0">
           <div className="modal-title">{isEdit ? 'Edit Question FAQ' : 'New Question FAQ'}</div>

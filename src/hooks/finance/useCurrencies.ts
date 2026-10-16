@@ -1,5 +1,6 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Currency, CurrencyInput, createCurrency, deleteCurrency, getCurrencies, getCurrencyById, updateCurrency } from '@/lib/api/finance/currencyMaster'
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Currency, CurrencyInput, createCurrency, deleteCurrency, getCurrencies, getCurrenciesPaged, getCurrencyById, updateCurrency } from '@/lib/api/finance/currencyMaster'
+import { getNextPageParam } from '@/lib/pagination'
 
 const CURRENCIES_KEY = ['currencies']
 
@@ -20,12 +21,25 @@ export function useCurrencies(enabled = true) {
   })
 }
 
+export function useSearchCurrenciesInfinite(search: string, pageSize: number, enabled: boolean) {
+  return useInfiniteQuery({
+    queryKey: [...CURRENCIES_KEY, 'search-infinite', search, pageSize],
+    queryFn: ({ pageParam }) => getCurrenciesPaged(pageParam, pageSize, search),
+    initialPageParam: 1,
+    getNextPageParam,
+    enabled,
+    staleTime: Infinity,
+    gcTime: Infinity,
+  })
+}
+
 // Fetch-by-guid convention, same as every other real master's Edit modal —
 // only enabled while the Edit modal is actually open with a guid.
 export function useCurrency(guid: string | null, enabled: boolean) {
   return useQuery({
     queryKey: [...CURRENCIES_KEY, guid],
     queryFn: () => getCurrencyById(guid as string),
+    staleTime: 5 * 60 * 1000,
     enabled: enabled && !!guid,
   })
 }

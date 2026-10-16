@@ -5,6 +5,7 @@ import { SuccessPopup } from '../shared/SuccessPopup'
 import { FailurePopup } from '../shared/FailurePopup'
 import { Campus, CampusInput } from '@/lib/api/academic/campus'
 import { AuthError } from '@/lib/api/client'
+import { scrollToFirstError } from '@/lib/scrollToFirstError'
 
 // Add and Edit share this form — differ in prefill and which mutation runs.
 interface CampusFormModalProps extends ModalProps {
@@ -55,6 +56,7 @@ export function CampusFormModal({ isOpen, onClose, showToast, mode, campus, crea
     if (!campusName.trim()) e.campusName = 'Campus Name is required'
     if (!location.trim())   e.location   = 'Location is required'
     setErrors(e)
+    scrollToFirstError(e)
     return Object.keys(e).length === 0
   }
 
@@ -131,7 +133,7 @@ export function CampusFormModal({ isOpen, onClose, showToast, mode, campus, crea
               onChange={e => { setCampusCode(e.target.value); if (errors.campusCode) setErrors(p => ({ ...p, campusCode: '' })) }}
               style={errors.campusCode ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.campusCode && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.campusCode}</p>}
+            {errors.campusCode && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.campusCode}</p>}
           </div>
           <div className="fg">
             <div className="lbl">Campus Name <span className="req">*</span></div>
@@ -143,7 +145,7 @@ export function CampusFormModal({ isOpen, onClose, showToast, mode, campus, crea
               onChange={e => { setCampusName(e.target.value); if (errors.campusName) setErrors(p => ({ ...p, campusName: '' })) }}
               style={errors.campusName ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.campusName && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.campusName}</p>}
+            {errors.campusName && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.campusName}</p>}
           </div>
           <div className="fg span2">
             <div className="lbl">Location <span className="req">*</span></div>
@@ -155,7 +157,7 @@ export function CampusFormModal({ isOpen, onClose, showToast, mode, campus, crea
               onChange={e => { setLocation(e.target.value); if (errors.location) setErrors(p => ({ ...p, location: '' })) }}
               style={errors.location ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.location && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.location}</p>}
+            {errors.location && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.location}</p>}
           </div>
           <div className="fg span2">
             <div className="lbl">Address</div>

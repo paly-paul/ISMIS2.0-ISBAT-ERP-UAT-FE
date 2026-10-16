@@ -99,7 +99,7 @@ export default function Page() {
       </div>
 
       {activeTicket && (
-        <div className="modal-overlay open" onClick={() => setActiveTicket(null)}>
+        <div className="modal-overlay open">
           <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
             <div className="modal-hdr"><div className="modal-title"><i className="lni lni-ticket" style={{ color: 'var(--b700)' }}></i> Ticket Response — {activeTicket.id}</div><button className="modal-close" onClick={() => setActiveTicket(null)}>✕</button></div>
             <div>

@@ -6,6 +6,7 @@ import { FailurePopup } from '../shared/FailurePopup'
 import { WeekdayInput } from '@/lib/api/academic/weekday'
 import { useWeekday } from '@/hooks/config/useWeekdays'
 import { AuthError } from '@/lib/api/client'
+import { scrollToFirstError } from '@/lib/scrollToFirstError'
 
 interface WeekdayFormModalProps extends ModalProps {
   mode: 'new' | 'edit'
@@ -55,6 +56,7 @@ export function WeekdayFormModal({ isOpen, onClose, showToast, mode, weekDayGuid
     if (!dayCode.trim()) e.dayCode = 'Day Code is required'
     if (!dayName.trim()) e.dayName = 'Day Name is required'
     setErrors(e)
+    scrollToFirstError(e)
     return Object.keys(e).length === 0
   }
 
@@ -146,7 +148,7 @@ export function WeekdayFormModal({ isOpen, onClose, showToast, mode, weekDayGuid
               onChange={e => { setDayCode(e.target.value.toUpperCase()); clearError('dayCode') }}
               style={errors.dayCode ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.dayCode && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.dayCode}</p>}
+            {errors.dayCode && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.dayCode}</p>}
           </div>
           <div className="fg">
             <div className="lbl">Day Name <span className="req">*</span></div>
@@ -158,7 +160,7 @@ export function WeekdayFormModal({ isOpen, onClose, showToast, mode, weekDayGuid
               onChange={e => { setDayName(e.target.value); clearError('dayName') }}
               style={errors.dayName ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.dayName && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.dayName}</p>}
+            {errors.dayName && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.dayName}</p>}
           </div>
         </div>
         <div className="modal-footer">

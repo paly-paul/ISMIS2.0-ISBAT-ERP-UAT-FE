@@ -1,7 +1,6 @@
 'use client'
 import { Dispatch, SetStateAction, useMemo } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
 import { useMenu } from '@/hooks/users/useMenu'
 import { MenuNode } from '@/lib/api/users/menu'
 
@@ -99,6 +98,7 @@ const ORDER_PRIORITY = [
   'nche-guild-payment',
   'advanced-payments',
   'discount-allocation',
+  'refugee-status',
   'payment-refund',
   'payment-history',
   'exchange-rates',
@@ -110,6 +110,17 @@ function orderIndex(item: MenuNode): number {
   return i === -1 ? ORDER_PRIORITY.length : i
 }
 
+const HIDDEN_SECTION_NAMES = new Set<string>([
+  'lecture master',
+  'lecturer master',
+])
+
+function isHiddenMenuNode(node: MenuNode): boolean {
+  if (HIDDEN_SECTION_NAMES.has(node.name.trim().toLowerCase())) return true
+  if (node.url && HIDDEN_ITEM_IDS.has(idFromUrl(node.url))) return true
+  return false
+}
+
 // railId scopes ORDER_PRIORITY's re-sort to Finance only — several other
 // modules have their own "Dashboard" leaf sharing the exact slug ORDER_
 // PRIORITY matches on, and re-sorting every module just because Finance's
@@ -117,7 +128,7 @@ function orderIndex(item: MenuNode): number {
 // to change. The hide-filter has no such collision risk (HIDDEN_ITEM_IDS is
 // currently Finance-only anyway) so it stays applied everywhere.
 function visibleChildren(children: MenuNode[], railId: RailId): MenuNode[] {
-  const filtered = children.filter(c => !c.url || !HIDDEN_ITEM_IDS.has(idFromUrl(c.url)))
+  const filtered = children.filter(c => !isHiddenMenuNode(c))
   if (railId !== 'finance') return filtered
   // Array.prototype.sort is a stable sort in every engine this app ships
   // to (spec-guaranteed since ES2019) — items tied on orderIndex (i.e.
@@ -126,7 +137,6 @@ function visibleChildren(children: MenuNode[], railId: RailId): MenuNode[] {
 }
 
 export function Sidebar({ panelOpen, setPanelOpen, currentPage, collapsedSections, toggleCollapse, activeRail, setActiveRail }: SidebarProps) {
-  const router = useRouter()
   const { data, isLoading, isError, refetch } = useMenu()
   const menu = data?.menu
   const isFallback = data?.isFallback ?? false
@@ -160,6 +170,10 @@ export function Sidebar({ panelOpen, setPanelOpen, currentPage, collapsedSection
       )
     }
     const id = idFromUrl(item.url)
+    const displayName =
+      item.name === 'IA Creation' || id === 'ia-creation'
+        ? 'Assessment Scheduler'
+        : item.name
     const href = resolveHref(item.url, railId)
     const badge = BADGES[id]
     return (
@@ -171,7 +185,7 @@ export function Sidebar({ panelOpen, setPanelOpen, currentPage, collapsedSection
       // the item the user actually points at needs warming.
       <Link key={href} href={href} prefetch={false} className={`sb-item${currentPage === id ? ' active' : ''}`}>
         <span className="sb-icon"><i className={iconClass}></i></span>
-        {item.name}
+        {displayName}
         {badge && <span className={`sb-badge${badge.variant ? ' ' + badge.variant : ''}`}>{badge.text}</span>}
       </Link>
     )
@@ -192,13 +206,15 @@ export function Sidebar({ panelOpen, setPanelOpen, currentPage, collapsedSection
     )
   }
 
+  // Switching modules only swaps which menu the panel shows — it doesn't
+  // navigate, so the page you're on stays put until you pick an item from
+  // the new module's panel.
   function clickRail(rail: RailId) {
     if (activeRail === rail) {
       setPanelOpen(p => !p)
     } else {
       setActiveRail(rail)
       setPanelOpen(true)
-      router.push(`/${rail}`)
     }
   }
 

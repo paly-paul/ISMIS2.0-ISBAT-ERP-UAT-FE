@@ -36,6 +36,10 @@ const IDENTITY_KEY = 'isbat_session_identity'
 
 export interface SessionIdentity {
   displayName: string
+  employeeGuid?: string
+  userGuid?: string
+  userId?: string
+  uuid?: string
 }
 
 export function getSessionIdentity(): SessionIdentity | null {
@@ -48,12 +52,34 @@ export function getSessionIdentity(): SessionIdentity | null {
   }
 }
 
-export function setSessionIdentity(identity: SessionIdentity) {
+export function setSessionIdentity(identity: Partial<SessionIdentity>) {
   if (typeof window === 'undefined') return
-  sessionStorage.setItem(IDENTITY_KEY, JSON.stringify(identity))
+  const current = getSessionIdentity() ?? { displayName: '' }
+  sessionStorage.setItem(IDENTITY_KEY, JSON.stringify({ ...current, ...identity }))
 }
 
 export function clearSessionIdentity() {
   if (typeof window === 'undefined') return
   sessionStorage.removeItem(IDENTITY_KEY)
+}
+
+export function getLoggedInUserGuid(): string {
+  if (typeof window === 'undefined') return ''
+  try {
+    const identity = getSessionIdentity()
+    if (identity) {
+      const guid =
+        identity.employeeGuid ||
+        identity.userGuid ||
+        identity.uuid ||
+        identity.userId ||
+        (identity as any).id
+      if (guid) return String(guid)
+    }
+    for (const key of ['employeeGuid', 'userGuid', 'uuid', 'userId', 'user_id', 'isbat_user_guid']) {
+      const val = sessionStorage.getItem(key) || localStorage.getItem(key)
+      if (val) return val
+    }
+  } catch {}
+  return ''
 }

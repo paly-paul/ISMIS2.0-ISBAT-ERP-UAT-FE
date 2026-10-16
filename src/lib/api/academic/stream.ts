@@ -13,7 +13,7 @@ export interface Stream {
 export type StreamInput = Omit<Stream, 'streamGuid'>
 
 // Response wrapper for the paginated stream list endpoint.
-interface StreamListResponse {
+export interface StreamListResponse {
   items: Stream[]
   totalCount: number
   pageNumber: number
@@ -30,9 +30,31 @@ const mockStreams: Stream[] = [
 ]
 
 // Fetch the stream list, using mock data when the mock auth flag is enabled.
-export function getStreams(page = 1, pageSize = 10): Promise<Stream[]> {
+// search forwarded to the backend's own ?search= param (confirmed live
+// 2026-09-10, same as programs/intakes/faculties) rather than filtered
+// client-side — omitted from the query string entirely when blank.
+export function getStreams(page = 1, pageSize = 10, search = ''): Promise<Stream[]> {
   if (MOCK_AUTH) return Promise.resolve(mockStreams)
-  return apiGet<StreamListResponse | null>(`/api/v1/academic/specializations?page=${page}&pageSize=${pageSize}`).then(data => data?.items ?? [])
+  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) })
+  if (search.trim()) params.set('search', search.trim())
+  return apiGet<StreamListResponse | null>(`/api/v1/academic/specializations?${params.toString()}`).then(data => data?.items ?? [])
+}
+
+// Real server-side pagination variant (2026-09-10), for
+// StreamMultiSearchPicker's infinite scroll — keeps the totalCount/
+// pageNumber/pageSize envelope getStreams() above discards, same convention
+// as getProgramMastersPage/getIntakesPaged/getFacultiesPaged.
+export function getStreamsPaged(page = 1, pageSize = 10, search = ''): Promise<StreamListResponse> {
+  if (MOCK_AUTH) {
+    const q = search.trim().toLowerCase()
+    const filtered = q ? mockStreams.filter(s => s.streamName.toLowerCase().includes(q) || s.streamCode.toLowerCase().includes(q)) : mockStreams
+    const start = (page - 1) * pageSize
+    return Promise.resolve({ items: filtered.slice(start, start + pageSize), totalCount: filtered.length, pageNumber: page, pageSize })
+  }
+  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) })
+  if (search.trim()) params.set('search', search.trim())
+  return apiGet<StreamListResponse | null>(`/api/v1/academic/specializations?${params.toString()}`)
+    .then(data => data ?? { items: [], totalCount: 0, pageNumber: page, pageSize })
 }
 
 // Create a new stream and return the saved record.

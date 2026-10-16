@@ -34,9 +34,13 @@ const mockDiscounts: Discount[] = [
   { discountGuid: 'd49f90ee-38cc-4291-9279-9404fd9a179b', discountCode: 'DIS-001', discountName: 'Discount code 1', calcType: null, amtPer: null, carry: 1, cop: null },
 ]
 
+// GET /discounts is paged (get-discounts.md: pageSize defaults to 10, no
+// upper bound). Callers want the whole catalogue, so ask for it in one page.
+const ALL_DISCOUNTS_PAGE_SIZE = 1000
+
 export function getDiscounts(): Promise<Discount[]> {
   if (MOCK_AUTH) return Promise.resolve(mockDiscounts)
-  return apiGet<DiscountListResponse | null>('/api/v1/finance/discounts').then(data => data?.items ?? [])
+  return apiGet<DiscountListResponse | null>(`/api/v1/finance/discounts?page=1&pageSize=${ALL_DISCOUNTS_PAGE_SIZE}`).then(data => data?.items ?? [])
 }
 
 export function createDiscount(input: DiscountInput): Promise<Discount> {

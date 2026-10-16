@@ -7,9 +7,7 @@ const MOCK_AUTH = process.env.NEXT_PUBLIC_AUTH_MOCK === 'true'
 // enquiryStatus/followUpStatus/enquirySource into name strings server-side
 // rather than leaving raw ints — so unlike enquiry.ts, there's nothing to
 // resolve client-side here. There is no numeric id on this DTO at all
-// (no intEnquiry) — the Create endpoint's five int-typed fields
-// (intEnquiry/followUpStatus/followUpMode/enquiryStatus/interestLevel)
-// remain unconfirmed and unimplemented; this file only covers the list.
+// (no intEnquiry).
 export interface EnquiryFollowUpListItem {
   enquiryGuid: string
   enquiryCode: string
@@ -69,27 +67,19 @@ export function getEnquiryFollowUpsByAdvisor(page = 1, pageSize = 10): Promise<E
     .then(data => data ?? { items: [], totalCount: 0, pageNumber: page, pageSize })
 }
 
-// Confirmed via Create.bru. intEnquiry/followUpStatus/followUpMode/
-// enquiryStatus/interestLevel are all typed as numbers on the wire, but
-// none of the corresponding masters (Enquiry, FollowUpStatus, FollowUpMode,
-// EnquiryStatus, InterestLevel) expose a numeric id anywhere confirmed —
-// every one of their real GET responses was checked and only ever returns
-// a guid. Until the backend confirms the real mapping, NewFollowUpLogModal
-// sends each field as that option's 1-based position within its fetched
-// list — a guess, not a confirmed value. Wrong-but-in-range numbers here
-// won't error, they'll just silently point at the wrong status/mode/level,
-// so treat anything created through this form as unverified until the
-// real mapping is confirmed.
+// CreateEnquiryFollowUpRequest (post-enquiry-followup.md): every reference is
+// the master's guid. followUpDate must be today's UTC date; nextFollowDate,
+// when sent, today or later; remarks at most 300 chars.
 export interface EnquiryFollowUpInput {
-  intEnquiry: number
+  enquiryGuid: string
   advisorGuid: string
   followUpDate: string
-  followUpStatus: number
-  followUpMode: number
-  enquiryStatus: number
-  interestLevel: number | null
+  followUpStatusGuid: string
+  followUpModeGuid: string
+  enquiryStatusGuid: string
+  interestLevelGuid: string | null
   nextFollowDate: string | null
-  remarks: string
+  remarks: string | null
 }
 
 export function createEnquiryFollowUp(input: EnquiryFollowUpInput): Promise<unknown> {

@@ -1,7 +1,6 @@
 'use client'
 import { ModalProps } from '../types'
 import { useProgramGroup } from '@/hooks/academic/useProgramGroups'
-import { useProgramLevels } from '@/hooks/academic/useProgramLevels'
 import { AuthError } from '@/lib/api/client'
 import { FailurePopup } from '../shared/FailurePopup'
 
@@ -18,14 +17,14 @@ function Field({ label, value, mono, wide }: { label: string; value: React.React
       {/* Monospace renders visually larger than the app's usual sans body
           text at the same px size — dial it down a notch so the Code field
           doesn't read as oversized next to the other plain-text fields. */}
-      <div className={mono ? 'font-mono' : undefined} style={{ fontSize: mono ? '13px' : '14px', color: 'var(--g900)', fontWeight: 500 }}>{value}</div>
+      {/* Mono at 500 reads thinner than the sans values beside it, hence 600. */}
+      <div className={mono ? 'font-mono' : undefined} style={{ fontSize: mono ? '13px' : '14px', color: 'var(--g900)', fontWeight: mono ? 600 : 500, lineHeight: 1.45 }}>{value}</div>
     </div>
   )
 }
 
 export function ViewProgrammeGroupModal({ isOpen, onClose, programGroupGuid, onEdit, canEdit }: ViewProgrammeGroupModalProps) {
   const { data: programGroup, isLoading, isError, error } = useProgramGroup(programGroupGuid, isOpen)
-  const { data: programLevels = [] } = useProgramLevels()
 
   if (!isOpen) return null
 
@@ -59,7 +58,8 @@ export function ViewProgrammeGroupModal({ isOpen, onClose, programGroupGuid, onE
     )
   }
 
-  const levelName = programLevels.find(l => l.programLevelGuid === programGroup.programLevelGuid)?.levelName || '—'
+  // GET /program-groups/{guid} already includes the level's name.
+  const levelName = programGroup.programLevelName || '—'
 
   return (
     <div className="modal-overlay open" id="view-proggroup-modal">
@@ -70,10 +70,12 @@ export function ViewProgrammeGroupModal({ isOpen, onClose, programGroupGuid, onE
         </div>
 
         <div style={{ padding: '20px clamp(14px, 4vw, 22px)' }}>
-          <div className="view-detail-grid">
-            <Field label="Group Code" value={programGroup.groupCode} mono />
-            <Field label="Group Name" value={programGroup.groupName} />
+          {/* Two short values side by side, then the long name on its own
+              full-width row, so it doesn't wrap into a narrow third column. */}
+          <div className="view-detail-grid" style={{ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}>
+            <Field label="Group Code" value={programGroup.groupCode} />
             <Field label="Programme Level" value={levelName} />
+            <Field label="Group Name" value={programGroup.groupName} wide />
           </div>
         </div>
 

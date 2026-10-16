@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import { ModalProps } from '../types'
 import { SuccessPopup } from '../shared/SuccessPopup'
 import { SearchSelect } from '@/components/SearchSelect'
+import { scrollToFirstError } from '@/lib/scrollToFirstError'
 
 export interface FollowupRecord {
   ref: string; name: string; assignedTo: string; followupDate: string; priority: string; status: string
@@ -33,6 +34,7 @@ export function LogFollowupModal({ isOpen, onClose, record, onLog }: Props) {
     if (!outcome)       e.outcome = 'Please select an outcome'
     if (!notes.trim())  e.notes   = 'Follow-up notes are required'
     setErrors(e)
+    scrollToFirstError(e)
     return Object.keys(e).length === 0
   }
 
@@ -72,7 +74,7 @@ export function LogFollowupModal({ isOpen, onClose, record, onLog }: Props) {
             value={outcome}
             onChange={v => { setOutcome(v); if (errors.outcome) setErrors(p => ({ ...p, outcome: '' })) }}
           />
-          {errors.outcome && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.outcome}</p>}
+          {errors.outcome && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.outcome}</p>}
         </div>
 
         <div className="fg mb-3">
@@ -80,7 +82,7 @@ export function LogFollowupModal({ isOpen, onClose, record, onLog }: Props) {
           <textarea className="ctrl" rows={3} placeholder="Summarize the conversation..." value={notes}
             onChange={e => { setNotes(e.target.value); if (errors.notes) setErrors(p => ({ ...p, notes: '' })) }}
             style={errors.notes ? { borderColor: 'var(--red)' } : undefined} />
-          {errors.notes && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.notes}</p>}
+          {errors.notes && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.notes}</p>}
         </div>
 
         <label className="chk-item mb-3" style={{ cursor: 'pointer' }}>

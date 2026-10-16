@@ -13,9 +13,9 @@ interface ViewProcGlAccountModalProps extends ModalProps {
 
 function Field({ label, value, mono, wide }: { label: string; value: React.ReactNode; mono?: boolean; wide?: boolean }) {
   return (
-    <div style={{ gridColumn: wide ? '1 / -1' : undefined }}>
+    <div style={{ gridColumn: wide ? '1 / -1' : undefined, minWidth: 0 }}>
       <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--g500)', marginBottom: '4px' }}>{label}</div>
-      <div className={mono ? 'font-mono' : undefined} style={{ fontSize: mono ? '13px' : '14px', color: 'var(--g900)', fontWeight: 500 }}>{value}</div>
+      <div className={mono ? 'font-mono' : undefined} style={{ fontSize: mono ? '13px' : '14px', color: 'var(--g900)', fontWeight: 500, wordBreak: 'break-word' }}>{value}</div>
     </div>
   )
 }
@@ -77,7 +77,7 @@ export function ViewProcGlAccountModal({ isOpen, onClose, procGlAccountGuid, onE
               account.blocked
                 ? <span className="badge badge-red">Blocked</span>
                 : <span className="badge badge-grey">No</span>
-            } wide />
+            } />
           </div>
         </div>
 

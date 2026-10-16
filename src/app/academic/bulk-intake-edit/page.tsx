@@ -9,6 +9,7 @@ import { SuccessPopup } from '@/components/modals/shared/SuccessPopup'
 import { useCalendarBatch, useBulkUpdateCalendarBatch } from '@/hooks/academic/useCalendarBatch'
 import { AcademicCalendarBatchEntryDto } from '@/lib/api/academic/intake'
 import { formatDate } from '@/lib/date'
+import { scrollToFirstError } from '@/lib/scrollToFirstError'
 
 // This page is a client for PATCH /api/v1/academic/intakes/calendar-batch
 // (see patch-calendar-batch-bulk.md) — it does NOT bulk-edit arbitrary
@@ -27,11 +28,7 @@ interface BulkField {
 
 // Every date field is always editable at once through the single edit panel
 // below — there's no separate "which fields am I bulk-editing" picker
-// anymore. The backend does still require semesterStartDate/EndDate and
-// term1/term2 Start/EndDate to be non-null on every entry it receives (see
-// patch-calendar-batch-bulk.md), but that's only ever a problem if a row's
-// existing data is already missing one of those, which editing an unrelated
-// field can't cause — so it's left to the backend's own 400 to report.
+// anymore.
 const BULK_FIELDS: BulkField[] = [
   { key: 'semesterStartDate', label: 'Semester Start Date' },
   { key: 'semesterEndDate', label: 'Semester End Date' },
@@ -70,9 +67,18 @@ function originalValueFor(entry: AcademicCalendarBatchEntryDto, fieldKey: FieldK
   return toDateInputValue(entry[fieldKey])
 }
 
+// Non-null on every entry the backend receives (see the Validation table in
+// patch-calendar-batch-bulk.md) — only reachable by clearing one of these in
+// the edit panel, but that's enough to need the check.
+const REQUIRED_FIELDS = new Set<FieldKey>([
+  'semesterStartDate', 'semesterEndDate',
+  'term1StartDate', 'term1EndDate',
+  'term2StartDate', 'term2EndDate',
+])
+
 // Every ≥ pair the backend validator enforces (see the Validation table in
 // patch-calendar-batch-bulk.md) — [start, end] fields where end must be on
-// or after start whenever both are present.
+// or after start whenever both are present. The error lands on the end field.
 const DATE_ORDER_RULES: [FieldKey, FieldKey, string][] = [
   ['term1StartDate', 'term1EndDate', 'Term 1 End Date must be on or after Term 1 Start Date'],
   ['term2StartDate', 'term2EndDate', 'Term 2 End Date must be on or after Term 2 Start Date'],
@@ -84,20 +90,24 @@ const DATE_ORDER_RULES: [FieldKey, FieldKey, string][] = [
   ['finalExamStartDate', 'finalExamEndDate', 'Final Exam End Date must be on or after Final Exam Start Date'],
 ]
 
-// Mirrors the backend's ≥ pair rules above (checked only when both sides of
-// the pair are present, same as the backend does) — not the required-field
-// rule, which is intentionally left to the backend's own 400 (see the
-// BULK_FIELDS comment above). Returns the first violation found, or null if
-// the entry is clean. Dates are all plain "yyyy-mm-ddT00:00:00" strings, so
-// string comparison sorts them correctly.
-function validateCalendarEntry(entry: AcademicCalendarBatchEntryDto): string | null {
-  const label = `Intake ${entry.intakeCode} Sem ${entry.semCode}`
+type EntryErrors = Partial<Record<FieldKey, string>>
+
+// Mirrors the backend validator's per-entry rules: the required fields, then
+// the ≥ pairs (checked only when both sides are present, same as the
+// backend). Returns every violation keyed by field, empty when the entry is
+// clean. Dates are all plain "yyyy-mm-ddT00:00:00" strings, so string
+// comparison sorts them correctly.
+function validateCalendarEntry(entry: AcademicCalendarBatchEntryDto): EntryErrors {
+  const errors: EntryErrors = {}
+  for (const field of BULK_FIELDS) {
+    if (REQUIRED_FIELDS.has(field.key) && !entry[field.key]) errors[field.key] = `${field.label} is required`
+  }
   for (const [startKey, endKey, message] of DATE_ORDER_RULES) {
     const start = entry[startKey]
     const end = entry[endKey]
-    if (start && end && end < start) return `${label}: ${message}`
+    if (start && end && end < start && !errors[endKey]) errors[endKey] = message
   }
-  return null
+  return errors
 }
 
 interface FieldDiff {
@@ -210,6 +220,30 @@ export default function Page() {
   // value actually differs from what the entry already has.
   const changedSelectedRows = batch.filter(e => selectedGuids.has(e.academicCalendarGuid) && rowHasChanges(e))
 
+  // Live validation of exactly what Save Changes would submit, keyed by
+  // pendingKey(guid, field) — recomputed every render, so an error shows up
+  // (or clears) the moment the offending date is picked.
+  const cellErrors: Record<string, string> = {}
+  for (const row of changedSelectedRows) {
+    const errors = validateCalendarEntry(buildSubmitEntry(row))
+    for (const [field, message] of Object.entries(errors) as [FieldKey, string][]) {
+      cellErrors[pendingKey(row.academicCalendarGuid, field)] = message
+    }
+  }
+
+  // A panel edit applies to every selected row, so a panel field's error can
+  // come from any of them, not just the one whose values the panel shows.
+  // Prefers the active row's own error; otherwise names the row it's from.
+  function panelError(fieldKey: FieldKey): string | null {
+    const hits = changedSelectedRows.filter(r => cellErrors[pendingKey(r.academicCalendarGuid, fieldKey)])
+    if (hits.length === 0) return null
+    const first = hits.find(r => r.academicCalendarGuid === activeRow?.academicCalendarGuid) ?? hits[0]
+    const message = cellErrors[pendingKey(first.academicCalendarGuid, fieldKey)]
+    const prefix = selectedGuids.size > 1 ? `Intake ${first.intakeCode} Sem ${first.semCode}: ` : ''
+    const more = hits.length > 1 ? ` (+${hits.length - 1} more row${hits.length === 2 ? '' : 's'})` : ''
+    return `${prefix}${message}${more}`
+  }
+
   // Edits made in the panel apply to every currently selected row at once —
   // this page is a bulk editor, so there's no separate "Apply" step.
   function updateSelectedField(fieldKey: FieldKey, value: string) {
@@ -269,8 +303,8 @@ export default function Page() {
   /*
   function saveRow(row: AcademicCalendarBatchEntryDto) {
     const entry = buildSubmitEntry(row)
-    const invalid = validateCalendarEntry(entry)
-    if (invalid) { showToast(invalid, 'error'); return }
+    const invalid = Object.values(validateCalendarEntry(entry))[0]
+    if (invalid) { showToast(`Intake ${row.intakeCode} Sem ${row.semCode}: ${invalid}`, 'error'); return }
     setConfirmAction({ kind: 'row', row, entry })
   }
   */
@@ -314,18 +348,15 @@ export default function Page() {
   function handleSave() {
     if (changedSelectedRows.length === 0) return
 
-    const entries = changedSelectedRows.map(buildSubmitEntry)
-
-    // Mirrors the backend validator's shape-level rules (see the Validation
-    // table in patch-calendar-batch-bulk.md) so a bad edit gets caught here
-    // rather than round-tripping to a 400. Dates are all "yyyy-mm-ddT00:00:00"
-    // strings, so plain string comparison sorts them correctly.
-    const invalidEntry = entries.map(validateCalendarEntry).find(msg => msg !== null)
-    if (invalidEntry) {
-      showToast(invalidEntry, 'error')
+    // cellErrors mirrors the backend validator's shape-level rules, so a bad
+    // edit gets caught here rather than round-tripping to a 400. The errors
+    // are already on screen; just bring the first one into view.
+    if (Object.keys(cellErrors).length > 0) {
+      scrollToFirstError(cellErrors)
       return
     }
 
+    const entries = changedSelectedRows.map(buildSubmitEntry)
     setConfirmAction({ kind: 'bulk', rows: changedSelectedRows, entries })
   }
 
@@ -395,15 +426,20 @@ export default function Page() {
                 {selectedGuids.size > 1 && ` — changes apply to all ${selectedGuids.size} selected rows`}
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 14 }}>
-                {BULK_FIELDS.map(field => (
-                  <div className="fg" key={field.key}>
-                    <div className="lbl">{field.label}</div>
-                    <DatePicker
-                      value={pendingValues[pendingKey(activeRow.academicCalendarGuid, field.key)] ?? originalValueFor(activeRow, field.key)}
-                      onChange={v => updateSelectedField(field.key, v)}
-                    />
-                  </div>
-                ))}
+                {BULK_FIELDS.map(field => {
+                  const error = panelError(field.key)
+                  return (
+                    <div className="fg" key={field.key}>
+                      <div className="lbl">{field.label}{REQUIRED_FIELDS.has(field.key) && <> <span className="req">*</span></>}</div>
+                      <DatePicker
+                        value={pendingValues[pendingKey(activeRow.academicCalendarGuid, field.key)] ?? originalValueFor(activeRow, field.key)}
+                        onChange={v => updateSelectedField(field.key, v)}
+                        hasError={!!error}
+                      />
+                      {error && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{error}</p>}
+                    </div>
+                  )
+                })}
               </div>
             </div>
           )}
@@ -550,7 +586,10 @@ export default function Page() {
                           )
                         }
                         const value = pending !== undefined ? (pending ? formatDate(`${pending}T00:00:00`) : '—') : displayValue(row, field)
-                        return <td key={field.key}>{value}</td>
+                        const cellError = cellErrors[pendingKey(row.academicCalendarGuid, field.key)]
+                        return cellError
+                          ? <td key={field.key} title={cellError} style={{ color: 'var(--red)', fontWeight: 600 }}>{value} <i className="lni lni-warning" style={{ fontSize: 12 }}></i></td>
+                          : <td key={field.key}>{value}</td>
                       })}
                     </tr>
                   )
@@ -566,7 +605,7 @@ export default function Page() {
         const dismiss = () => { if (!inFlight) setConfirmAction(null) }
         const closeSuccess = () => { setConfirmAction(null); setSuccessInfo(null) }
         return (
-        <div className="modal-overlay open confirm-modal-overlay" onClick={successInfo ? undefined : dismiss}>
+        <div className="modal-overlay open confirm-modal-overlay">
           <div className="modal modal-sm confirm-modal-pop" onClick={e => e.stopPropagation()}>
             {successInfo ? (
               // Same swap-the-modal-body-to-SuccessPopup pattern used across

@@ -101,7 +101,7 @@ export default function Page() {
       </div>
 
       {confirmTarget && (
-        <div className="modal-overlay open confirm-modal-overlay" onClick={successInfo ? undefined : () => setConfirmTarget(null)}>
+        <div className="modal-overlay open confirm-modal-overlay">
           <div className="modal modal-sm confirm-modal-pop" onClick={e => e.stopPropagation()}>
             {successInfo ? (
               <SuccessPopup title={successInfo.title} subtitle={successInfo.subtitle} onClose={closeSuccess} />

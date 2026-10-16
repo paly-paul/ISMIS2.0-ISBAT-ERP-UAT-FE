@@ -1,7 +1,10 @@
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   deleteQualification,
   exportApplicationsCsv,
+  getApplicants,
+  getApplicationByGuid,
+  getApplicationByPaymentGuid,
   getApplications,
   getFilingApplicationsPage,
   getFilingCountries,
@@ -27,39 +30,48 @@ export function useApplications(page: number, pageSize: number, search = '') {
   })
 }
 
-export function useFilingCountries() {
+// Backs /admission/applicants since ADM-027 — every application, any status
+// (get-applicants.md). Keeps the current page on screen while the next loads.
+export function useApplicants(page: number, pageSize: number, search = '') {
   return useQuery({
-    queryKey: [...FILING_KEY, 'countries'],
-    queryFn: () => getFilingCountries(),
+    queryKey: [...FILING_KEY, 'applicants', page, pageSize, search],
+    queryFn: () => getApplicants(page, pageSize, search),
+    placeholderData: keepPreviousData,
+  })
+}
+
+export function useFilingCountries(search = '') {
+  return useQuery({
+    queryKey: [...FILING_KEY, 'countries', search],
+    queryFn: () => getFilingCountries(search),
     staleTime: Infinity,
     gcTime: Infinity,
   })
 }
 
-// intakeCode scopes the fetch to one intake (see the note on
-// searchApplicationsForFiling) — pass the current academic intake's code so
-// this doesn't pull every intake's applications at once.
-export function useSearchApplicationsForFiling(searchTerm: string, pageNumber: number, pageSize: number, enabled: boolean, intakeCode?: number | string) {
+// Backed by payment-search (see searchApplicationsForFiling's own comment) —
+// intentionally unscoped by intake, searches across every intake.
+export function useSearchApplicationsForFiling(searchTerm: string, pageNumber: number, pageSize: number, enabled: boolean) {
   return useQuery({
-    queryKey: [...FILING_KEY, 'search', searchTerm, pageNumber, pageSize, intakeCode ?? ''],
-    queryFn: () => searchApplicationsForFiling(searchTerm, pageNumber, pageSize, intakeCode),
+    queryKey: [...FILING_KEY, 'search', searchTerm, pageNumber, pageSize],
+    queryFn: () => searchApplicationsForFiling(searchTerm, pageNumber, pageSize),
     enabled,
   })
 }
-
 // Real server-paginated, scroll-to-load-more variant for the Filing page's
 // interactive applicant-search dropdown — same useInfiniteQuery +
 // fetch-next-on-scroll mechanism as useSearchCourseUnitsInfinite
 // (useCourseUnits.ts) and useSearchStudentsInfinite (usePaymentConsole.ts).
-// searchTerm is CONFIRMED real server-side (2026-09-08, see
-// getApplicationPayments) and part of the query key, same convention as
-// those two — each typed term's pages are cached separately rather than
-// re-filtered client-side. intakeCode still scopes every page server-side
-// too, combined with whatever term is typed.
-export function useSearchApplicationsForFilingInfinite(searchTerm: string, pageSize: number, enabled: boolean, intakeCode?: number | string) {
+// Backed by GET /api/v1/admissions/application-payments/current-intake,
+// which scopes to the current academic intake server-side and matches
+// searchTerm against both name and AppRefNo — no client-passed intakeCode
+// needed any more (see getApplicationPaymentsCurrentIntake). searchTerm is
+// part of the query key, same convention as those two hooks — each typed
+// term's pages are cached separately rather than re-filtered client-side.
+export function useSearchApplicationsForFilingInfinite(searchTerm: string, pageSize: number, enabled: boolean) {
   return useInfiniteQuery({
-    queryKey: [...FILING_KEY, 'search-infinite', searchTerm, pageSize, intakeCode ?? ''],
-    queryFn: ({ pageParam }) => getFilingApplicationsPage(pageParam, pageSize, intakeCode, searchTerm),
+    queryKey: [...FILING_KEY, 'search-infinite', searchTerm, pageSize],
+    queryFn: ({ pageParam }) => getFilingApplicationsPage(pageParam, pageSize, searchTerm),
     initialPageParam: 1,
     getNextPageParam: (lastPage, allPages) => {
       const fetched = allPages.reduce((sum, p) => sum + p.items.length, 0)
@@ -68,6 +80,30 @@ export function useSearchApplicationsForFilingInfinite(searchTerm: string, pageS
     enabled,
     staleTime: Infinity,
     gcTime: Infinity,
+  })
+}
+
+// Best-effort enrichment for the Filing page's Personal Info prefill — GET
+// /application-filling/by-payment/{paymentGuid} only returns data for a
+// genuinely COMPLETED application (see getApplicationByPaymentGuid's own
+// comment), so this 400s for the common "still mid-filing" case — a
+// deterministic business rule. Callers should read `isError` as "nothing
+// to enrich with" rather than surfacing it as a hard failure.
+export function useApplicationByPaymentGuid(paymentGuid: string | null | undefined, enabled: boolean) {
+  return useQuery({
+    queryKey: [...FILING_KEY, 'by-payment', paymentGuid],
+    queryFn: () => getApplicationByPaymentGuid(paymentGuid as string),
+    enabled: enabled && !!paymentGuid,
+  })
+}
+
+// Backs All Applicants' View modal. A 400 here means "not completed yet", so
+// callers keep showing the list row instead of an error screen.
+export function useApplicationByGuid(applicationGuid: string | null | undefined, enabled: boolean) {
+  return useQuery({
+    queryKey: [...FILING_KEY, 'by-guid', applicationGuid],
+    queryFn: () => getApplicationByGuid(applicationGuid as string),
+    enabled: enabled && !!applicationGuid,
   })
 }
 
@@ -114,6 +150,9 @@ export function useExportApplicationsCsv() {
 }
 
 export type {
+  ApplicantListItem,
+  ApplicantStatus,
+  ApplicationDetailDto,
   ApplicationListItem,
   CountryDropdownDto,
   ExportApplicationsCsvParams,

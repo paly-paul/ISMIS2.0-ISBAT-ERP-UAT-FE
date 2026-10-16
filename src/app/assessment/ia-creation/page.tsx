@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import Link from 'next/link'
 import { Toast } from '@/components/Toast'
 import { ScrollTable } from '@/components/ScrollTable'
@@ -30,7 +30,7 @@ function formatDateRange(start: string | null, end: string | null) {
     const m = d.getMinutes().toString().padStart(2, '0')
     return `${months[d.getMonth()]} ${d.getDate()} ${d.getFullYear()} ${h}:${m}${ampm}`
   }
-  
+
   const startStr = formatPart(s)
   if (!end) return startStr
   const e = new Date(end)
@@ -44,9 +44,9 @@ function formatDate(dateString: string | null) {
 
 export default function IaCreationPage() {
   const [toast, setToast] = useState<{ msg: string; type: string } | null>(null)
+  const toastTimerRef = useRef<NodeJS.Timeout | null>(null)
 
   // ── Selections ──────────────────────────────────
-  const [selectedIntakeGuid, setSelectedIntakeGuid] = useState<string>('')
   const [selectedProgramGuid, setSelectedProgramGuid] = useState<string>('')
   const [selectedSemesterGuid, setSelectedSemesterGuid] = useState<string>('')
 
@@ -58,6 +58,12 @@ export default function IaCreationPage() {
 
   // ── Data fetching ─────────────────────────────────
   const { data: initData, isLoading: initLoading } = useIaCreationInit()
+  // Structures are only created/edited for the current academic intake — the
+  // session is locked to it, not a choice. (assessment-structure-page.md lists
+  // every intake; locked at the product owner's request.)
+  const currentIntake = initData?.intakes?.find(i => i.currentIntake)
+  const selectedIntakeGuid = currentIntake?.intakeGuid ?? ''
+  const intakeLabel = currentIntake ? (currentIntake.description ?? `Intake ${currentIntake.intakeCode}`) : ''
   const { data: semesters, isLoading: semLoading } = useIaCreationSemesters(selectedProgramGuid || null)
   const {
     data: structureRows,
@@ -74,8 +80,16 @@ export default function IaCreationPage() {
 
 
   function showToast(msg: string, type = '') {
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current)
+    }
     setToast({ msg, type })
-    setTimeout(() => setToast(null), 3500)
+    const isErrorOrWarn = ['error', 'err', 'danger', 'warn', 'warning'].includes((type || '').toLowerCase().trim())
+    const duration = isErrorOrWarn ? 8000 : 4000
+    toastTimerRef.current = setTimeout(() => {
+      setToast(null)
+      toastTimerRef.current = null
+    }, duration)
   }
 
   function handleProgramChange(guid: string) {
@@ -85,7 +99,7 @@ export default function IaCreationPage() {
 
   function handleRefresh() {
     if (!selectedProgramGuid || !selectedSemesterGuid || !selectedIntakeGuid) {
-      showToast('Please select Programme, Semester, and Academic Session first.', 'error')
+      showToast(selectedIntakeGuid ? 'Please select Programme and Semester first.' : 'No current academic intake is set.', 'error')
       return
     }
     refetchStructure()
@@ -93,7 +107,7 @@ export default function IaCreationPage() {
 
   async function handleCreate() {
     if (!selectedProgramGuid || !selectedSemesterGuid || !selectedIntakeGuid) {
-      showToast('Please select Programme, Semester, and Academic Session first.', 'error')
+      showToast(selectedIntakeGuid ? 'Please select Programme and Semester first.' : 'No current academic intake is set.', 'error')
       return
     }
     try {
@@ -102,12 +116,13 @@ export default function IaCreationPage() {
         semesterGuid: selectedSemesterGuid,
         intakeGuid: selectedIntakeGuid,
       })
-      refetchStructure()
       showToast('IA Structure created successfully.', 'success')
     } catch (err: any) {
-      const status = err?.status ?? err?.response?.status
-      if (status === 409) {
+      // AuthError carries the envelope's code, not the HTTP status.
+      if (err?.code === 'conflict') {
+        // Informational, not an error — and load the grid so it's visible.
         showToast('IA Structure already exists for this combination.', '')
+        refetchStructure()
       } else {
         showToast(err.message || 'Failed to create IA Structure.', 'error')
       }
@@ -115,7 +130,7 @@ export default function IaCreationPage() {
   }
 
   const canRefresh = !!selectedProgramGuid && !!selectedSemesterGuid && !!selectedIntakeGuid
-  const is404 = (structureError as any)?.status === 404
+  const is404 = (structureError as { code?: string } | null)?.code === 'not_found'
 
   return (
     <div id="page-ia-creation">
@@ -154,18 +169,22 @@ export default function IaCreationPage() {
           {/* Academic Session */}
           <div className="fg mb-0">
             <label className="lbl">Academic Session</label>
-            <SearchSelect
-              placeholder="— Select Session —"
-              value={selectedIntakeGuid}
-              onChange={val => setSelectedIntakeGuid(val)}
-              disabled={initLoading}
-              options={(initData?.intakes ?? [])
-                .filter(i => i.currentIntake)
-                .map(i => ({
-                  value: i.intakeGuid,
-                  label: `${i.description ?? `Intake ${i.intakeCode}`} (Current)`,
-              }))}
-            />
+            {/* readOnly, not disabled — the grey .ctrl:disabled style reads as
+                "unavailable"; the lock icon says it's fixed. */}
+            <div className="inp-wrap">
+              <i className="lni lni-lock-alt inp-icon"></i>
+              <input
+                className="ctrl"
+                value={initLoading ? 'Loading…' : intakeLabel ? `${intakeLabel} (Current)` : 'No current intake set'}
+                readOnly
+                tabIndex={-1}
+                style={{ cursor: 'default', fontWeight: 600 }}
+                title="Assessment structures are set up for the current academic session only"
+              />
+            </div>
+            {!initLoading && !currentIntake && (
+              <p className="text-clr-red" style={{ fontSize: 11.5, marginTop: 4 }}>No intake is marked as the current academic intake. Set one in Intake Master to create assessment structures.</p>
+            )}
           </div>
 
           {/* Programme */}
@@ -277,9 +296,12 @@ export default function IaCreationPage() {
                       <td className="border-r border-slate-200 px-4 py-3 text-left">
                         {row.classTestGuid ? (
                           <div className="flex flex-wrap items-center gap-2">
-                            {/* Max mark removed as requested */}
                             {row.classTestStartDateTime ? (
-                              <span className="text-g900 font-medium text-[11px] leading-tight">
+                              <span
+                                className="text-g900 font-medium text-[11px] leading-tight"
+                                style={{ cursor: 'pointer', borderBottom: '1px dashed #9ca3af' }}
+                                onClick={() => setSelectedCbtData({ testGuid: row.classTestGuid!, unitCode: row.unitCode ?? '', unitName: row.unitName ?? '' })}
+                              >
                                 {formatDateRange(row.classTestStartDateTime, row.classTestEndDateTime)}
                               </span>
                             ) : (
@@ -300,9 +322,12 @@ export default function IaCreationPage() {
                       <td className="border-r border-slate-200 px-4 py-3 text-left">
                         {row.courseworkGuid ? (
                           <div className="flex flex-wrap items-center gap-2">
-                            {/* Max mark removed as requested */}
                             {row.courseworkStartDateTime ? (
-                              <span className="text-g900 font-medium text-[11px] leading-tight">
+                              <span
+                                className="text-g900 font-medium text-[11px] leading-tight"
+                                style={{ cursor: 'pointer', borderBottom: '1px dashed #9ca3af' }}
+                                onClick={() => setSelectedCwGuid(row.courseworkGuid)}
+                              >
                                 {formatDateRange(row.courseworkStartDateTime, row.courseworkEndDateTime)}
                               </span>
                             ) : (
@@ -345,7 +370,7 @@ export default function IaCreationPage() {
         )}
       </div>
 
-      <Toast toast={toast} />
+      <Toast toast={toast} onClose={() => setToast(null)} />
 
       {viewingRow && (
         <IaStructureViewModal

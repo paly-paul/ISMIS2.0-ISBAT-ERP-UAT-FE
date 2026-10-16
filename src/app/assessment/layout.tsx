@@ -3,6 +3,7 @@ import { useState, useRef, useEffect, useLayoutEffect } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { Header } from '@/components/Header'
 import { Sidebar, RailId } from '@/components/Sidebar'
+import { RouteGuard } from '@/components/RouteGuard'
 import { refreshSession } from '@/lib/auth'
 import { getSessionIdentity, setSessionIdentity } from '@/lib/session'
 
@@ -41,7 +42,13 @@ export default function AssessmentLayout({ children }: { children: React.ReactNo
       try {
         const result = await refreshSession()
         if (cancelled) return
-        if (result.displayName) setSessionIdentity({ displayName: result.displayName })
+        if (result.displayName || (result as any).employeeGuid || (result as any).userGuid) {
+          setSessionIdentity({
+            displayName: result.displayName || '',
+            ...((result as any).employeeGuid ? { employeeGuid: (result as any).employeeGuid } : {}),
+            ...((result as any).userGuid ? { userGuid: (result as any).userGuid } : {}),
+          })
+        }
         setDisplayName(result.displayName ?? null)
         setAuthChecked(true)
       } catch {
@@ -116,7 +123,7 @@ export default function AssessmentLayout({ children }: { children: React.ReactNo
           setActiveRail={setActiveRail}
         />
         <main className={`main${panelOpen ? ' panel-open' : ''}`}>
-          {children}
+          <RouteGuard>{children}</RouteGuard>
         </main>
       </div>
     </>

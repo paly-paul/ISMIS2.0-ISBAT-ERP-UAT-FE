@@ -6,9 +6,20 @@ interface ScrollTableProps {
   className?: string
   filters?: Record<string, string[]>
   onResetFilters?: () => void
+  maxHeight?: string | number
+  hideArrows?: boolean
+  style?: React.CSSProperties
 }
 
-export function ScrollTable({ children, className, filters, onResetFilters }: ScrollTableProps) {
+export function ScrollTable({
+  children,
+  className,
+  filters,
+  onResetFilters,
+  maxHeight,
+  hideArrows,
+  style,
+}: ScrollTableProps) {
   const hasActiveFilters = filters ? Object.values(filters).some(v => v.length > 0) : false
   const ref = useRef<HTMLDivElement>(null)
   const [canLeft, setCanLeft] = useState(false)
@@ -37,6 +48,11 @@ export function ScrollTable({ children, className, filters, onResetFilters }: Sc
     ref.current?.scrollBy({ left: dir === 'right' ? 240 : -240, behavior: 'smooth' })
   }
 
+  const wrapStyle: React.CSSProperties = {
+    ...(maxHeight ? { maxHeight, overflowY: 'auto' } : {}),
+    ...style,
+  }
+
   return (
     <div className="tbl-scroll-host">
       {hasActiveFilters && onResetFilters && (
@@ -50,15 +66,15 @@ export function ScrollTable({ children, className, filters, onResetFilters }: Sc
           </button>
         </div>
       )}
-      {canLeft && (
+      {!hideArrows && canLeft && (
         <button className="tbl-arrow tbl-arrow-l" onClick={() => scrollBy('left')} aria-label="Scroll left">
           <i className="lni lni-chevron-left" />
         </button>
       )}
-      <div ref={ref} className={`tbl-wrap${className ? ' ' + className : ''}`} onScroll={check}>
+      <div ref={ref} className={`tbl-wrap${className ? ' ' + className : ''}`} style={wrapStyle} onScroll={check}>
         {children}
       </div>
-      {canRight && (
+      {!hideArrows && canRight && (
         <button className="tbl-arrow tbl-arrow-r" onClick={() => scrollBy('right')} aria-label="Scroll right">
           <i className="lni lni-chevron-right" />
         </button>

@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { ScrollTable } from '@/components/ScrollTable'
 import { ActionMenu } from '@/components/ActionMenu'
@@ -9,11 +9,10 @@ import { FilterTh } from '@/components/FilterTh'
 import { EmptyState } from '@/components/EmptyState'
 import { TableLoadingState } from '@/components/TableLoadingState'
 import { Pagination } from '@/components/Pagination'
-import { usePagination } from '@/hooks/usePagination'
 import { LecturerSkillFormModal } from '@/components/modals/academic/LecturerSkillFormModal'
 import { ViewLecturerSkillModal } from '@/components/modals/academic/ViewLecturerSkillModal'
-import { useLecturerSkills, useLecturerSkillSearch, useCreateLecturerSkill, useUpdateLecturerSkill, useDeleteLecturerSkill, LecturerSkill } from '@/hooks/academic/useLecturerSkills'
-import { useEmployees } from '@/hooks/employee/useEmployees'
+import { useLecturerSkills, useCreateLecturerSkill, useUpdateLecturerSkill, useDeleteLecturerSkill, LecturerSkill } from '@/hooks/academic/useLecturerSkills'
+import { useEmployeeDropdown } from '@/hooks/employee/useEmployees'
 import { usePagePermissions } from '@/hooks/users/usePagePermissions'
 import { formatDate } from '@/lib/date'
 
@@ -85,33 +84,29 @@ export default function Page() {
   function closeModal(id: string) { setOpenModals(prev => { const s = new Set(prev); s.delete(id); return s }) }
   function showToast(msg: string, type = '') { setToast({ msg, type }); setTimeout(() => setToast(null), 3500) }
 
-  const { data: skills = [], isLoading } = useLecturerSkills()
-  const { data: employees = [] } = useEmployees()
+  // The backend's own pagination is now trusted for this list: the page does
+  // not need to pull a 1000-row snapshot just to render the current page.
+  // Search is still server-side when the term is long enough; the table itself
+  // stays page-scoped to the current page size.
+  const [page, setPage] = useState(1)
+  const searchTrimmed = search.trim()
+  const activeSearch = searchTrimmed.length >= MIN_SEARCH_CHARS ? searchTrimmed : ''
+  const { data, isLoading, isFetching } = useLecturerSkills(page, PAGE_SIZE, activeSearch)
+  const rows = data?.items ?? []
+  // Dataset-wide count for the stat card below — independent of the column
+  // filter/pagination math further down, which operates on filteredRows.
+  const totalCount = data?.totalCount ?? 0
+  const searchPending = searchTrimmed.length >= MIN_SEARCH_CHARS && isFetching
+  const { data: employees = [] } = useEmployeeDropdown()
   const employeeNameByGuid = useMemo(
-    () => new Map(employees.map(e => [e.employeeGuid, `${e.empName} (${e.shortCode})`])),
+    () => new Map(employees.map(e => [e.employeeGuid, e.displayName])),
     [employees],
   )
-  function employeeLabel(guid: string) { return employeeNameByGuid.get(guid) ?? guid }
+  function employeeLabel(guid: string) { return employeeNameByGuid.get(guid) ?? '—' }
 
-  // Debounced so the backend's ?search= isn't hit on every keystroke, and
-  // held at '' (falling back to the unfiltered list) until MIN_SEARCH_CHARS
-  // is met — same convention as Intake Master's search box.
-  const [debouncedSearch, setDebouncedSearch] = useState('')
-  useEffect(() => {
-    const trimmed = search.trim()
-    if (trimmed.length < MIN_SEARCH_CHARS) { setDebouncedSearch(''); return }
-    const t = setTimeout(() => setDebouncedSearch(trimmed), 400)
-    return () => clearTimeout(t)
-  }, [search])
-
-  const { data: searchResults, isFetching: isSearching } = useLecturerSkillSearch(debouncedSearch)
-  // Newest first. There's no date field on LecturerSkill to sort by — the
-  // API returns rows in creation order (oldest first, per a real sample),
-  // so reversing it is the only way to get newest-first without a backend
-  // change.
-  const baseRows = [...(debouncedSearch ? (searchResults ?? []) : skills)].reverse()
-  const searchTrimmed = search.trim()
-  const searchPending = searchTrimmed.length >= MIN_SEARCH_CHARS && (debouncedSearch !== searchTrimmed || isSearching)
+  // The list is already ordered by the backend for the current page, so we
+  // don't re-fetch a 1000-row snapshot just to reverse it client-side.
+  const baseRows = rows
 
   const createSkill = useCreateLecturerSkill()
   const updateSkill = useUpdateLecturerSkill()
@@ -148,14 +143,31 @@ export default function Page() {
   // minChars gate on when the dropdown is even allowed to open.
   const searchMatches = searchTrimmed.length >= MIN_SEARCH_CHARS ? baseRows.slice(0, 8) : []
 
-  const { page, setPage, totalPages, totalCount, pageItems } = usePagination(filteredRows, PAGE_SIZE)
+  // Paginated last, over the full filtered/sorted dataset — matches the
+  // pre-rollback usePagination(filteredRows, PAGE_SIZE) semantics exactly.
+  // filteredCount (not the dataset-wide totalCount above) is what
+  // Pagination itself renders, same as that hook's own totalCount return —
+  // it reflects the column filter, unlike the stat card's totalCount.
+  const filteredCount = filteredRows.length
+  const totalPages = Math.max(1, Math.ceil(filteredCount / PAGE_SIZE))
+  const safePage = Math.min(page, totalPages)
+  const pageItems = filteredRows.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE)
 
+  // Only reflects the current page now (server-paginated above), not the
+  // whole table — same trade-off as everywhere else stats/filters were
+  // derived from a now-paginated list. No dedicated counts endpoint exists
+  // for this domain (unlike get-enquiries-counts.md) to keep these
+  // dataset-wide instead.
+  // Computed off allSkills (the full loaded list), not the current page's
+  // own skills slice — accurate across the whole dataset now that the
+  // client-side pagination rollback above means the full list is already
+  // sitting in memory anyway.
   const stats = useMemo(() => ({
-    total: skills.length,
-    approved: skills.filter(s => s.approvalStatus === 'Approved').length,
-    pending: skills.filter(s => s.approvalStatus === 'Pending').length,
-    employees: new Set(skills.map(s => s.employeeGuid)).size,
-  }), [skills])
+    total: totalCount,
+    approved: rows.filter(s => s.approvalStatus === 'Approved').length,
+    pending: rows.filter(s => s.approvalStatus === 'Pending').length,
+    employees: new Set(rows.map(s => s.employeeGuid)).size,
+  }), [rows, totalCount])
 
   function fth(label: string, col: string, opts: string[]) {
     return (
@@ -181,7 +193,7 @@ export default function Page() {
             <div className="pg-sub">Employee skill profiles · Proficiency levels · Dean approval status</div>
           </div>
           <div className="flex gap-2 flex-wrap">
-            <button className="btn btn-neu btn-sm" onClick={() => nav('allocation')}>→ Proceed to Allocation</button>
+            <button className="btn btn-neu btn-sm" onClick={() => nav('course-allocation')}>→ Proceed to Allocation</button>
             {permissions.add && <button className="btn btn-primary" onClick={() => openModal('add-skill-modal')}><i className="lni lni-plus"></i> Add Skill</button>}
           </div>
         </div>
@@ -200,8 +212,8 @@ export default function Page() {
               className="w-56"
               placeholder="Search skill or employee ID…"
               value={search}
-              onChange={setSearch}
-              results={searchMatches.map(s => ({ id: s.lecturerSkillGuid, primary: s.skillName || 'Unnamed skill', secondary: employeeLabel(s.employeeGuid) }))}
+              onChange={v => { setSearch(v); setPage(1) }}
+              results={searchMatches.map(s => ({ id: s.lecturerSkillGuid, primary: s.skillName || 'Unnamed skill' }))}
               loading={searchPending}
               minChars={MIN_SEARCH_CHARS}
               onSelect={(r) => openViewModal(r.id)}
@@ -224,7 +236,7 @@ export default function Page() {
                 {(isLoading || searchPending)
                   ? <TableLoadingState colSpan={999} />
                   : filteredRows.length === 0
-                    ? <EmptyState colSpan={999} hasFilters={!!search || Object.values(filters).some(v => v.length > 0)} onClearFilters={() => { setSearch(''); setFilters({}) }} />
+                    ? <EmptyState colSpan={999} hasFilters={!!search || Object.values(filters).some(v => v.length > 0)} onClearFilters={() => { setSearch(''); setFilters({}); setPage(1) }} />
                     : null}
                 {!(isLoading || searchPending) && pageItems.map(s => (
                   <tr key={s.lecturerSkillGuid}>
@@ -258,7 +270,7 @@ export default function Page() {
               </tbody>
             </table>
           </ScrollTable>
-          <Pagination page={page} totalPages={totalPages} totalCount={totalCount} itemLabel="skills" onPageChange={setPage} />
+          <Pagination page={safePage} totalPages={totalPages} totalCount={filteredCount} itemLabel="skills" onPageChange={setPage} />
         </div>
       </div>
 

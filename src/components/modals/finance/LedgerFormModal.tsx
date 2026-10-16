@@ -8,6 +8,7 @@ import { LedgerInput } from '@/lib/api/finance/ledger'
 import { useLedger } from '@/hooks/finance/useLedgers'
 import { useProcGlAccounts } from '@/hooks/finance/useProcGlAccounts'
 import { AuthError } from '@/lib/api/client'
+import { scrollToFirstError } from '@/lib/scrollToFirstError'
 
 // Add and Edit share this form — differ in prefill and which mutation runs.
 interface LedgerFormModalProps extends ModalProps {
@@ -66,6 +67,7 @@ export function LedgerFormModal({ isOpen, onClose, showToast, mode, ledgerGuid, 
     if (!ledgerCode.trim()) e.ledgerCode = 'Ledger Code is required'
     if (!ledgerName.trim()) e.ledgerName = 'Ledger Name is required'
     setErrors(e)
+    scrollToFirstError(e)
     return Object.keys(e).length === 0
   }
 
@@ -158,7 +160,7 @@ export function LedgerFormModal({ isOpen, onClose, showToast, mode, ledgerGuid, 
               onChange={e => { setLedgerCode(e.target.value.toUpperCase()); clearError('ledgerCode') }}
               style={errors.ledgerCode ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.ledgerCode && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.ledgerCode}</p>}
+            {errors.ledgerCode && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.ledgerCode}</p>}
           </div>
           <div className="fg">
             <div className="lbl">Ledger Name <span className="req">*</span></div>
@@ -171,7 +173,7 @@ export function LedgerFormModal({ isOpen, onClose, showToast, mode, ledgerGuid, 
               onChange={e => { setLedgerName(e.target.value); clearError('ledgerName') }}
               style={errors.ledgerName ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.ledgerName && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.ledgerName}</p>}
+            {errors.ledgerName && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.ledgerName}</p>}
           </div>
           <div className="fg span2">
             <div className="lbl">GL Account</div>

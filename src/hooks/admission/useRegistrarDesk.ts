@@ -54,10 +54,10 @@ export function useRegistrationDetail(applicationGuid: string | null, enabled: b
 
 // Dropdown source for registrationTypeId — small, static-ish lookup, same
 // staleTime:Infinity convention as the app's other little master lists.
-export function useRegistrationTypes() {
+export function useRegistrationTypes(search = '') {
   return useQuery({
-    queryKey: REGISTRATION_TYPES_KEY,
-    queryFn: () => getRegistrationTypes(),
+    queryKey: [...REGISTRATION_TYPES_KEY, search],
+    queryFn: () => getRegistrationTypes(search),
     staleTime: Infinity,
     gcTime: Infinity,
   })

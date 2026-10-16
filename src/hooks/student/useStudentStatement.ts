@@ -12,7 +12,7 @@ import { getStudentStatement, searchStudentStatement, StudentStatementSearchFilt
 // empty state until the first keystroke.
 import { useInfiniteQuery } from '@tanstack/react-query'
 
-export function useStudentStatementSearch(term: string) {
+export function useStudentStatementSearch(term: string, enabled = true) {
   const trimmed = term.trim()
   return useInfiniteQuery({
     queryKey: ['student-statement-search', trimmed],
@@ -22,6 +22,8 @@ export function useStudentStatementSearch(term: string) {
       const loaded = lastPage.page * lastPage.pageSize
       return loaded < lastPage.totalCount ? lastPage.page + 1 : undefined
     },
+    enabled,
+    staleTime: 60 * 1000,
   })
 }
 
@@ -30,7 +32,8 @@ export function useStudentStatement(studentGuid: string | null) {
     queryKey: ['student-statement', studentGuid],
     queryFn: () => getStudentStatement(studentGuid as string),
     enabled: !!studentGuid,
-    retry: false,
+    staleTime: 5 * 60 * 1000,
+    gcTime: Infinity,
   })
 }
 
@@ -39,7 +42,8 @@ export function useStudentFeeSummary(studentGuid: string | null) {
     queryKey: ['student-fee-summary', studentGuid],
     queryFn: () => getStudentFeeSummary(studentGuid as string),
     enabled: !!studentGuid,
-    retry: false,
+    staleTime: 5 * 60 * 1000,
+    gcTime: Infinity,
   })
 }
 

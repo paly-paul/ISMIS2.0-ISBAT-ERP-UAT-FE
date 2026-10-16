@@ -5,8 +5,8 @@ import { SuccessPopup } from '../shared/SuccessPopup'
 import { FailurePopup } from '../shared/FailurePopup'
 import { applicantProfileHref } from '@/lib/applicantProfileLink'
 import { useVettingApplicationDetail, useWaitApplication } from '@/hooks/admission/useVetting'
-import { useIntakes } from '@/hooks/academic/useIntakes'
-import { VetApplicationInput } from '@/lib/api/admission/vetting'
+import { NO_CURRENT_INTAKE_MESSAGE, NOT_CURRENT_INTAKE_MESSAGE, VetApplicationInput } from '@/lib/api/admission/vetting'
+import { useCurrentAdmissionIntake } from '@/hooks/academic/useIntakes'
 import { AuthError } from '@/lib/api/client'
 
 // A friendlier label than the raw documentType string from the wire
@@ -18,6 +18,13 @@ const DOCUMENT_LABELS: Record<string, string> = {
   Photo: 'Passport Photo',
 }
 
+// Display value for an optional text field: "—" for null, blank, or the
+// literal string "null" some admission endpoints send.
+function orDash(value: string | null | undefined): string {
+  const v = value?.trim()
+  return v && v.toLowerCase() !== 'null' ? v : '—'
+}
+
 interface Props extends ModalProps {
   applicationGuid: string | null
   vetApplication: {
@@ -25,22 +32,34 @@ interface Props extends ModalProps {
     isPending: boolean
   }
   onReject: () => void
+  // The vet and wait endpoints have no permission check server-side (see
+  // post-vet-application.md), so the UI is the only gate. Defaults to true.
+  canVet?: boolean
 }
 
-export function VettingReviewModal({ isOpen, onClose, showToast, applicationGuid, vetApplication, onReject }: Props) {
+const WAIT_REMARKS_MAX = 500
+
+export function VettingReviewModal({ isOpen, onClose, showToast, applicationGuid, vetApplication, onReject, canVet = true }: Props) {
   const { data: detail, isLoading, isError, error } = useVettingApplicationDetail(applicationGuid, isOpen)
   const waitApplication = useWaitApplication()
-  const { data: intakes = [] } = useIntakes()
-
-  function resolveIntakeLabel(guid?: string | null) {
-    if (!guid) return ''
-    const found = intakes.find(i => i.intakeGuid === guid)
-    return found ? (found.description ? `${found.intakeCode} — ${found.description}` : String(found.intakeCode)) : ''
-  }
 
   const intakeDisplay = detail
-    ? String(detail.intakeName || detail.intakeCode || detail.intake || resolveIntakeLabel(detail.intakeGuid) || '—')
+    ? String(detail.intakeName || detail.intakeCode || detail.intake || '—')
     : '—'
+
+  // Approve (action 2) is only accepted for the current admission intake
+  // (2026-10 handoff). Work it out up front so the button can say why it's
+  // off instead of failing on click. Only blocks on a confirmed answer — while
+  // loading or if the lookup fails, Approve stays on and the server decides
+  // (its message still shows in the failure popup).
+  const currentIntake = useCurrentAdmissionIntake(isOpen)
+  const approveBlockedReason: string | null = !detail || !currentIntake.isSuccess
+    ? null
+    : !currentIntake.data
+      ? NO_CURRENT_INTAKE_MESSAGE
+      : detail.intakeGuid && detail.intakeGuid !== currentIntake.data.intakeGuid
+        ? `${NOT_CURRENT_INTAKE_MESSAGE} This application is for ${intakeDisplay}; the current admission intake is ${currentIntake.data.intakeCode} — ${currentIntake.data.description}.`
+        : null
 
   const [remarks, setRemarks] = useState('')
   const [approved, setApproved] = useState(false)
@@ -163,7 +182,7 @@ export function VettingReviewModal({ isOpen, onClose, showToast, applicationGuid
                     type: detail.admissionType,
                     dob: detail.dob ?? undefined,
                     gender: detail.gender != null ? String(detail.gender) : undefined,
-                    nationality: detail.nationality ?? undefined,
+                    nationality: orDash(detail.nationality) !== '—' ? orDash(detail.nationality) : undefined,
                     nationalId: detail.nationalId ?? undefined,
                     phone: detail.phone ?? undefined,
                     email: detail.emailId ?? undefined,
@@ -185,15 +204,13 @@ export function VettingReviewModal({ isOpen, onClose, showToast, applicationGuid
                 <div className="fg"><label className="lbl">First Name</label><input className="ctrl" readOnly value={detail.firstName || ''} /></div>
                 <div className="fg"><label className="lbl">Last Name</label><input className="ctrl" readOnly value={detail.lastName || '—'} /></div>
                 <div className="fg"><label className="lbl">Date of Birth</label><input className="ctrl" readOnly value={detail.dob ? detail.dob.slice(0, 10) : '—'} /></div>
-                {/* Confirmed via a real response: a raw int (e.g. 0), not the
-                    "Male"/"Female"/"Other" string the docs describe — no
-                    confirmed label mapping, so this displays the raw code
-                    rather than guessing one (just without the "(code)"
-                    suffix in the label itself, per request). */}
+                {/* Shown as sent: the label ("Male") in current responses, a
+                    raw code in older ones (no confirmed code mapping). */}
                 <div className="fg"><label className="lbl">Gender</label><input className="ctrl" readOnly value={detail.gender != null ? String(detail.gender) : '—'} /></div>
-                {/* Nationality is confirmed always null on the wire today — shown for
-                    completeness, not expected to have a value yet (see vetting.ts). */}
-                <div className="fg"><label className="lbl">Nationality</label><input className="ctrl" readOnly value={detail.nationality || '—'} /></div>
+                {/* Both looked up from the application's country (vetting.ts):
+                    Nationality is the demonym, Country the country name. */}
+                <div className="fg"><label className="lbl">Nationality</label><input className="ctrl" readOnly value={orDash(detail.nationality)} /></div>
+                <div className="fg"><label className="lbl">Country</label><input className="ctrl" readOnly value={orDash(detail.countryName)} /></div>
                 <div className="fg"><label className="lbl">National ID</label><input className="ctrl" readOnly value={detail.nationalId || '—'} /></div>
                 <div className="fg"><label className="lbl">Phone</label><input className="ctrl" readOnly value={detail.phone || '—'} /></div>
                 <div className="fg"><label className="lbl">Email</label><input className="ctrl" readOnly value={detail.emailId || '—'} /></div>
@@ -263,24 +280,37 @@ export function VettingReviewModal({ isOpen, onClose, showToast, applicationGuid
               )}
 
               <div className="fg">
-                <label className="lbl">Vetting Remarks</label>
-                <textarea className="ctrl" rows={3} placeholder="Enter notes — used for the Wait action's remarks; Approve/Reject send their own justification separately." value={remarks} onChange={e => setRemarks(e.target.value)} />
+                <label className="lbl">Vetting Remarks <span className="text-g400" style={{ fontWeight: 400 }}>({remarks.trim().length}/{WAIT_REMARKS_MAX})</span></label>
+                {/* POST .../wait caps remarks at 500 chars. */}
+                <textarea className="ctrl" rows={3} maxLength={WAIT_REMARKS_MAX} placeholder="Enter notes — used for the Wait action's remarks; Approve/Reject send their own justification separately." value={remarks} onChange={e => setRemarks(e.target.value)} />
               </div>
             </div>
           </div>
         </div>
 
         <div className="modal-footer" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8 }}>
+          {approveBlockedReason && (
+            <div className="warn-box" role="note" style={{ fontSize: 13 }}>
+              <i className="lni lni-lock" aria-hidden="true" style={{ marginTop: 2 }}></i>
+              <span>{approveBlockedReason} You can still reject it or place it on hold.</span>
+            </div>
+          )}
+          {!canVet ? (
+            <div className="info-box" role="note" style={{ fontSize: 13 }}>
+              <i className="lni lni-eye" aria-hidden="true"></i>
+              <span>View only. You don&apos;t have permission to approve, reject or hold applications.</span>
+            </div>
+          ) : (
           <div className="grid grid-cols-3 gap-3">
             <button className="btn btn-amber w-full justify-center" disabled={waitApplication.isPending} onClick={handleWait}>
               <i className="lni lni-timer" /> {waitApplication.isPending ? 'Saving…' : 'Wait for Original Documents'}
             </button>
-            <button className="btn btn-success w-full justify-center" disabled={vetApplication.isPending} onClick={handleApprove}>
+            <button className="btn btn-success w-full justify-center" disabled={vetApplication.isPending || !!approveBlockedReason} title={approveBlockedReason ?? undefined} onClick={handleApprove}>
               <i className="lni lni-checkmark" /> {vetApplication.isPending ? 'Approving…' : 'Approve & Issue Provisional Letter'}
             </button>
             <button className="btn btn-danger w-full justify-center" onClick={onReject}><i className="lni lni-close" /> Reject Application</button>
           </div>
-          <p className="text-xs text-g400 text-center">Sets T_Application.Action = 0 (Wait) / 2 (Approved) / 3 (Rejected)</p>
+          )}
         </div>
       </div>
     </div>

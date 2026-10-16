@@ -4,6 +4,7 @@ import {
   CourseUnit, CourseUnitInput, CourseUnitListResponse, CourseUnitWithDetails, CourseUnitOutlineDetail, CourseUnitTopicDetail,
 } from '@/lib/api/academic/courseUnit'
 import { upsertCourseUnitOutlines, UpsertCourseUnitOutlineInput } from '@/lib/api/academic/courseUnitOutlines'
+import { getNextPageParam } from '@/lib/pagination'
 
 const COURSE_UNITS_KEY = ['courseUnits']
 
@@ -65,10 +66,7 @@ export function useSearchCourseUnitsInfinite(search: string, pageSize: number, e
     queryKey: [...COURSE_UNITS_KEY, 'search-infinite', search, pageSize],
     queryFn: ({ pageParam }) => getCourseUnits(pageParam, pageSize, search),
     initialPageParam: 1,
-    getNextPageParam: (lastPage, allPages) => {
-      const fetched = allPages.reduce((sum, p) => sum + p.items.length, 0)
-      return fetched < lastPage.totalCount ? allPages.length + 1 : undefined
-    },
+    getNextPageParam,
     enabled,
     staleTime: Infinity,
     gcTime: Infinity,
@@ -102,10 +100,8 @@ export function useCourseUnitsByGuids(guids: string[]) {
 }
 
 export function useCreateCourseUnit() {
-  const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (input: CourseUnitInput) => createCourseUnit(input),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: COURSE_UNITS_KEY }),
   })
 }
 

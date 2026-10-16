@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { FeeStructureModal } from '@/components/modals/academic/FeeStructureModal'
 import { ViewFeeStructureModal } from '@/components/modals/academic/ViewFeeStructureModal'
@@ -10,19 +10,13 @@ import { ActionMenu } from '@/components/ActionMenu'
 import { EmptyState } from '@/components/EmptyState'
 import { TableLoadingState } from '@/components/TableLoadingState'
 import { Pagination } from '@/components/Pagination'
-import { usePagination } from '@/hooks/usePagination'
-import { useProgramFeeStructures, useProgramFeeStructureSearch, ProgramFeeStructureHeader } from '@/hooks/academic/useProgramFeeStructure'
-import { useProgramMasters } from '@/hooks/academic/useProgramMaster'
+import { useProgramFeeStructuresPaged, ProgramFeeStructureHeader } from '@/hooks/academic/useProgramFeeStructure'
+import { useProgramMastersByGuids } from '@/hooks/academic/useProgramMaster'
 import { useProgramApprovals } from '@/hooks/academic/useProgramApproval'
-import { useIntakes } from '@/hooks/academic/useIntakes'
+import { useIntakesByGuids } from '@/hooks/academic/useIntakes'
 import { usePagePermissions } from '@/hooks/users/usePagePermissions'
 
 const PAGE_SIZE = 10
-// Load enough rows to cover the full list (348+ seen in practice) in one
-// request, same "load it all, search/paginate client-side" convention as
-// batch-management/employee-master — a search box only makes sense against
-// the whole dataset, not whatever 20-row server page happens to be loaded.
-const FEE_STRUCTURES_LOAD_SIZE = 1000
 // Don't narrow the table (or open the search dropdown) until the user's
 // typed at least this many characters — same convention as the other
 // academic master pages' search boxes.
@@ -40,32 +34,39 @@ export default function Page() {
   const [editRecord, setEditRecord] = useState<ProgramFeeStructureHeader | null>(null)
   const [viewRecord, setViewRecord] = useState<ProgramFeeStructureHeader | null>(null)
   const [search, setSearch] = useState('')
+  const [page, setPage] = useState(1)
 
-  const { data, isLoading } = useProgramFeeStructures(1, FEE_STRUCTURES_LOAD_SIZE)
-
-  // Debounced so the backend's ?search= isn't hit on every keystroke, and
-  // held at '' (falling back to the unfiltered list) until MIN_SEARCH_CHARS
-  // is met — same convention as the other academic master pages.
-  const [debouncedSearch, setDebouncedSearch] = useState('')
-  useEffect(() => {
-    const trimmed = search.trim()
-    if (trimmed.length < MIN_SEARCH_CHARS) { setDebouncedSearch(''); return }
-    const t = setTimeout(() => setDebouncedSearch(trimmed), 400)
-    return () => clearTimeout(t)
-  }, [search])
-
-  const { data: searchData, isFetching: isSearching } = useProgramFeeStructureSearch(debouncedSearch, FEE_STRUCTURES_LOAD_SIZE)
   const searchTrimmed = search.trim()
-  const searchPending = searchTrimmed.length >= MIN_SEARCH_CHARS && (debouncedSearch !== searchTrimmed || isSearching)
+  const activeSearch = searchTrimmed.length >= MIN_SEARCH_CHARS ? searchTrimmed : ''
+  // Real server-side pagination (2026-09-10) — only PAGE_SIZE rows are ever
+  // requested for the page on screen (see useProgramFeeStructuresPaged),
+  // not the whole table in one 1000-row shot, same conversion Programme
+  // Master's own table already went through.
+  const { data, isLoading, isFetching } = useProgramFeeStructuresPaged(page, PAGE_SIZE, activeSearch)
+  const records = data?.items ?? []
+  const totalCount = data?.totalCount ?? 0
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE))
+  const searchPending = searchTrimmed.length >= MIN_SEARCH_CHARS && isFetching
 
-  const { data: programs = [] } = useProgramMasters()
+  // Programme column — resolves only the guids actually on the current page
+  // (2026-09-10) instead of useProgramMasters()' full unconditional list
+  // fetched just to look up a handful of programGuids at a time, same
+  // batched-by-guid convention as the Intake column below.
+  const programGuidsOnPage = records.map(r => r.programGuid)
+  const { byGuid: programsByGuid, isLoading: programsByGuidLoading } = useProgramMastersByGuids(programGuidsOnPage)
   // GET /api/v1/academic/program-master only lists approved programmes — a
   // fee structure can already be attached to one still pending approval
   // (see programme-approval/page.tsx), which programmeFor() below silently
-  // showed as "—" for. Fall back to the not-approved list before giving up.
-  const { data: notApprovedData } = useProgramApprovals(1, 1000)
+  // showed as "—" for. Only fall back to the (still full-list, no by-guid
+  // endpoint exists to batch it) not-approved list once the batched lookup
+  // above has actually finished and a row is still unresolved, instead of
+  // always fetching all pending not-approved rows on every load — including
+  // while that batch is simply still in flight, which would otherwise fire
+  // this fallback on every fresh page load regardless of whether it's ever
+  // actually needed.
+  const needsNotApprovedFallback = !programsByGuidLoading && records.some(r => !programsByGuid.has(r.programGuid))
+  const { data: notApprovedData } = useProgramApprovals(1, PAGE_SIZE, '', needsNotApprovedFallback)
   const notApprovedPrograms = notApprovedData?.items ?? []
-  const { data: intakes = [] } = useIntakes()
 
   function nav(id: string) { router.push('/academic/' + id) }
   function openModal(id: string)  { setOpenModals(prev => new Set(prev).add(id)) }
@@ -79,13 +80,8 @@ export default function Page() {
   }
 
   function programmeFor(programGuid: string) {
-    return programs.find(p => p.programGuid === programGuid)
+    return programsByGuid.get(programGuid)
       ?? notApprovedPrograms.find(p => p.programGuid === programGuid)
-  }
-  function intakeCodeFor(intakeGuid: string | null) {
-    if (!intakeGuid) return '—'
-    const intake = intakes.find(i => i.intakeGuid === intakeGuid)
-    return intake ? String(intake.intakeCode) : '—'
   }
 
   // No delete endpoint is confirmed for this resource yet (only
@@ -98,29 +94,36 @@ export default function Page() {
     showToast("Delete isn't wired to a real endpoint yet.", 'error')
   }
 
-  const records = data?.items ?? []
-  const baseRecords = debouncedSearch ? (searchData?.items ?? []) : records
-
   // Live preview shown in the search dropdown as the user types — reads the
-  // same server-scoped baseRecords, capped to a handful of rows. Empty below
+  // current server-scoped page of records, capped to a handful. Empty below
   // MIN_SEARCH_CHARS, matching TableSearch's own minChars gate on when the
-  // dropdown is even allowed to open.
+  // dropdown is even allowed to open. Same "reflects the current page only"
+  // trade-off Programme Master's own search preview accepted.
   const searchMatches = useMemo(
     () => searchTrimmed.length >= MIN_SEARCH_CHARS
-      ? baseRecords.filter(r => `${r.feeCode} ${r.feeDesc}`.toLowerCase().includes(searchTrimmed.toLowerCase())).slice(0, 8)
+      ? records.filter(r => `${r.feeCode} ${r.feeDesc}`.toLowerCase().includes(searchTrimmed.toLowerCase())).slice(0, 8)
       : [],
-    [baseRecords, searchTrimmed],
+    [records, searchTrimmed],
   )
 
   // Re-filter client-side on top of whatever the server sent back, so
   // results stay correct even if the backend doesn't actually honor
   // ?search= (see the note on getProgramFeeStructures).
-  const filteredRecords = useMemo(
-    () => baseRecords.filter(r => searchTrimmed.length < MIN_SEARCH_CHARS || `${r.feeCode} ${r.feeDesc}`.toLowerCase().includes(searchTrimmed.toLowerCase())),
-    [baseRecords, searchTrimmed],
+  const pageItems = useMemo(
+    () => records.filter(r => searchTrimmed.length < MIN_SEARCH_CHARS || `${r.feeCode} ${r.feeDesc}`.toLowerCase().includes(searchTrimmed.toLowerCase())),
+    [records, searchTrimmed],
   )
 
-  const { page, setPage, totalPages, totalCount, pageItems } = usePagination(filteredRecords, PAGE_SIZE)
+  // Intake column — resolves only the guids actually on the current page
+  // (2026-09-10) instead of useIntakes()' full 1000-row snapshot fetched
+  // just to look up a handful of intakeGuids at a time, same batched-by-guid
+  // convention as Programme Master's own table (see useIntakesByGuids).
+  const intakesByGuid = useIntakesByGuids(pageItems.map(r => r.intakeGuid).filter((g): g is string => !!g))
+  function intakeCodeFor(intakeGuid: string | null) {
+    if (!intakeGuid) return '—'
+    const intake = intakesByGuid.get(intakeGuid)
+    return intake ? String(intake.intakeCode) : '—'
+  }
 
   return (
     <>
@@ -151,12 +154,12 @@ export default function Page() {
             className="w-56"
             placeholder="Search by fee code or description…"
             value={search}
-            onChange={setSearch}
+            onChange={v => { setSearch(v); setPage(1) }}
             results={searchMatches.map(r => ({ id: r.feeHdGuid, primary: r.feeCode, secondary: r.feeDesc }))}
             loading={searchPending}
             minChars={MIN_SEARCH_CHARS}
             onSelect={(r) => {
-              const rec = baseRecords.find(x => x.feeHdGuid === r.id)
+              const rec = records.find(x => x.feeHdGuid === r.id)
               if (rec) openViewModal(rec)
             }}
           />
@@ -178,8 +181,8 @@ export default function Page() {
             <tbody>
               {(isLoading || searchPending)
                 ? <TableLoadingState colSpan={999} />
-                : filteredRecords.length === 0
-                  ? <EmptyState colSpan={999} hasFilters={!!search} onClearFilters={() => setSearch('')} />
+                : pageItems.length === 0
+                  ? <EmptyState colSpan={999} hasFilters={!!search} onClearFilters={() => { setSearch(''); setPage(1) }} />
                   : null}
               {!(isLoading || searchPending) && pageItems.map(r => {
                 const programme = programmeFor(r.programGuid)
@@ -215,19 +218,25 @@ export default function Page() {
         <Pagination page={page} totalPages={totalPages} totalCount={totalCount} itemLabel="fee structures" onPageChange={setPage} />
       </div>
 
-      <FeeStructureModal isOpen={openModals.has('new-fee-structure-modal')} onClose={() => closeModal('new-fee-structure-modal')} showToast={showToast} nav={nav} />
-      <FeeStructureModal isOpen={openModals.has('edit-fee-structure-modal')} onClose={() => closeModal('edit-fee-structure-modal')} showToast={showToast} nav={nav} mode="edit" editData={editRecord ?? undefined} />
-      <ViewFeeStructureModal 
-        isOpen={openModals.has('view-fee-structure-modal')} 
-        onClose={() => closeModal('view-fee-structure-modal')} 
-        showToast={showToast} 
-        feeStructure={viewRecord ?? undefined} 
-        onEdit={(r) => {
-          closeModal('view-fee-structure-modal')
-          setEditRecord(r)
-          openModal('edit-fee-structure-modal')
-        }}
-      />
+      {openModals.has('new-fee-structure-modal') && (
+        <FeeStructureModal isOpen onClose={() => closeModal('new-fee-structure-modal')} showToast={showToast} nav={nav} />
+      )}
+      {openModals.has('edit-fee-structure-modal') && (
+        <FeeStructureModal isOpen onClose={() => closeModal('edit-fee-structure-modal')} showToast={showToast} nav={nav} mode="edit" editData={editRecord ?? undefined} />
+      )}
+      {openModals.has('view-fee-structure-modal') && (
+        <ViewFeeStructureModal 
+          isOpen
+          onClose={() => closeModal('view-fee-structure-modal')} 
+          showToast={showToast} 
+          feeStructure={viewRecord ?? undefined} 
+          onEdit={(r) => {
+            closeModal('view-fee-structure-modal')
+            setEditRecord(r)
+            openModal('edit-fee-structure-modal')
+          }}
+        />
+      )}
       <Toast toast={toast} />
     </>
   )

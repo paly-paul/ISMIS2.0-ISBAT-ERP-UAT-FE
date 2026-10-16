@@ -7,6 +7,7 @@ import { SearchSelect } from '@/components/SearchSelect'
 import { Designation, DesignationInput } from '@/lib/api/academic/designation'
 import { useDepartments } from '@/hooks/config/useDepartments'
 import { AuthError } from '@/lib/api/client'
+import { scrollToFirstError } from '@/lib/scrollToFirstError'
 
 // Not part of the real GET /api/v1/users/designations response (which
 // references departments by numeric intDept, not a name string) — kept for
@@ -65,6 +66,7 @@ export function DesignationFormModal({ isOpen, onClose, showToast, mode, designa
     if (!designationName.trim()) e.designationName = 'Designation Name is required'
     if (!department)             e.department      = 'Please select a department'
     setErrors(e)
+    scrollToFirstError(e)
     return Object.keys(e).length === 0
   }
 
@@ -137,7 +139,7 @@ export function DesignationFormModal({ isOpen, onClose, showToast, mode, designa
               onChange={e => { setDesignationName(e.target.value); if (errors.designationName) setErrors(p => ({ ...p, designationName: '' })) }}
               style={errors.designationName ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.designationName && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.designationName}</p>}
+            {errors.designationName && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.designationName}</p>}
           </div>
           <div className="fg span2">
             <div className="lbl">Department <span className="req">*</span></div>
@@ -147,7 +149,7 @@ export function DesignationFormModal({ isOpen, onClose, showToast, mode, designa
               onChange={v => { setDepartment(v); if (errors.department) setErrors(p => ({ ...p, department: '' })) }}
               options={departmentOptions}
             />
-            {errors.department && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.department}</p>}
+            {errors.department && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.department}</p>}
           </div>
         </div>
         <div className="modal-footer">

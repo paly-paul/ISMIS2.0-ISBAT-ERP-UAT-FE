@@ -8,6 +8,8 @@ import { useMarkNotificationRead, useNotificationsPreview, useUnreadCount } from
 import { notificationHref, notificationVisual, NotificationItem } from '@/lib/api/notifications'
 import { endNotificationsSession } from '@/lib/notificationsHub'
 import { timeAgo } from '@/lib/date'
+import { HeaderDownloads } from '@/components/HeaderDownloads'
+import { useCurrentAcademicIntake } from '@/hooks/academic/useIntakes'
 
 interface HeaderProps {
   panelOpen: boolean
@@ -21,13 +23,22 @@ interface HeaderProps {
 
 function initialsOf(name: string): string {
   const parts = name.trim().split(/\s+/)
-  return ((parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? '')).toUpperCase() || 'U'
+  return ((parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? '')).toUpperCase()
 }
 
-export function Header({ panelOpen, setPanelOpen, profileOpen, setProfileOpen, profileRef, onSignOut, displayName = 'Administrator' }: HeaderProps) {
+// No made-up name when the session hasn't supplied one — the avatar falls
+// back to a plain user icon and the name is simply left out.
+export function Header({ panelOpen, setPanelOpen, profileOpen, setProfileOpen, profileRef, onSignOut, displayName }: HeaderProps) {
+  const name = displayName?.trim() ?? ''
+  const initials = initialsOf(name)
   const [signingOut, setSigningOut] = useState(false)
   const queryClient = useQueryClient()
   const router = useRouter()
+
+  // Whichever intake is flagged current in Intake Master — left out of the
+  // header until it loads (or if none is flagged) rather than showing a
+  // hardcoded one.
+  const { data: currentIntake } = useCurrentAcademicIntake()
 
   const { data: unreadCount = 0 } = useUnreadCount()
   const markRead = useMarkNotificationRead()
@@ -91,11 +102,12 @@ export function Header({ panelOpen, setPanelOpen, profileOpen, setProfileOpen, p
       <div className="hdr-body">
         <div className="hdr-title-wrap">
           <div className="hdr-title">ISBAT University ERP</div>
-          <div className="hdr-sub">Enterprise Resource Planning · Spring 2026</div>
+          <div className="hdr-sub">Enterprise Resource Planning{currentIntake ? ` · ${currentIntake.description}` : ''}</div>
         </div>
         <div className="hdr-right">
           <div className="hdr-module-pill acad"><i className="lni lni-graduation"></i> Academic</div>
-          <div className="hdr-intake">Spring 2026 (20261)</div>
+          {currentIntake && <div className="hdr-intake">{currentIntake.description} ({currentIntake.intakeCode})</div>}
+          <HeaderDownloads />
           <div
             className="hdr-bell-wrap"
             onMouseEnter={() => setBellOpen(true)}
@@ -150,12 +162,12 @@ export function Header({ panelOpen, setPanelOpen, profileOpen, setProfileOpen, p
             )}
           </div>
           <div className="hdr-user" ref={profileRef} onClick={() => setProfileOpen(p => !p)}>
-            <div className="hdr-avatar">{initialsOf(displayName)}</div>
-            <span>{displayName}</span>
+            <div className="hdr-avatar">{initials || <i className="lni lni-user"></i>}</div>
+            {name && <span>{name}</span>}
             {profileOpen && (
               <div className="profile-dropdown">
                 <div className="profile-dropdown-info">
-                  <div className="profile-dropdown-name">{displayName}</div>
+                  {name && <div className="profile-dropdown-name">{name}</div>}
                   <div className="profile-dropdown-role">System Admin · Academic</div>
                 </div>
                 <div className="profile-dropdown-divider" />

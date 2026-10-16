@@ -1,20 +1,23 @@
 'use client'
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { ModalProps } from '../types'
 import { SuccessPopup } from '../shared/SuccessPopup'
 import { FailurePopup } from '../shared/FailurePopup'
 import { SearchSelect } from '@/components/SearchSelect'
-import { useProgramMasters } from '@/hooks/academic/useProgramMaster'
-import { useIntakes, useCurrentAcademicIntake } from '@/hooks/academic/useIntakes'
-import { useCurrencies } from '@/hooks/finance/useCurrencies'
+import { stripLeadingZeros } from '@/lib/errorMessages'
+import { useSearchProgramMastersInfinite } from '@/hooks/academic/useProgramMaster'
+import { useIntakesByGuids, useCurrentAcademicIntake } from '@/hooks/academic/useIntakes'
+import { IntakeSearchPicker } from '@/components/IntakeSearchPicker'
+import { useSearchCurrenciesInfinite } from '@/hooks/finance/useCurrencies'
 import { useFinanceCurrencies } from '@/hooks/finance/useFinanceCurrencies'
 import { useSemestersForProgram } from '@/hooks/academic/useSemesters'
 import { useLedgers } from '@/hooks/finance/useLedgers'
+import { flattenUniquePages } from '@/lib/pagination'
 import {
   useSaveProgramFeeStructureComplete,
   useUpdateProgramFeeStructureComplete,
   useProgramFeeLines,
-  useProgramFeeStructures,
+  useSearchProgramFeeStructuresInfinite,
   ProgramFeeLineSaveInput,
   ProgramFeeStructureHeader,
 } from '@/hooks/academic/useProgramFeeStructure'
@@ -85,26 +88,28 @@ let nextId = 200
 let nextStructId = 100
 
 export function FeeStructureModal({ isOpen, onClose, showToast, mode, editData }: ModalProps & { mode?: 'edit'; editData?: ProgramFeeStructureHeader }) {
-  const { data: programs = [] }   = useProgramMasters()
-  const { data: intakes = [] }    = useIntakes(isOpen)
-  const { data: currencies = [] } = useCurrencies(isOpen)
+  const [programSearch, setProgramSearch] = useState('')
+  const [committedProgramSearch, setCommittedProgramSearch] = useState('')
+  const [programPickerOpen, setProgramPickerOpen] = useState(false)
+  const [copySearch, setCopySearch] = useState('')
+  const [committedCopySearch, setCommittedCopySearch] = useState('')
+  const [copyPickerOpen, setCopyPickerOpen] = useState(false)
+  const [currencySearch, setCurrencySearch] = useState('')
+  const [committedCurrencySearch, setCommittedCurrencySearch] = useState('')
+  const [currencyPickerOpen, setCurrencyPickerOpen] = useState(false)
   const saveFeeStructureComplete   = useSaveProgramFeeStructureComplete()
   const updateFeeStructureComplete = useUpdateProgramFeeStructureComplete()
+  const programQuery = useSearchProgramMastersInfinite(committedProgramSearch, 20, isOpen && programPickerOpen)
+  const copyQuery = useSearchProgramFeeStructuresInfinite(committedCopySearch, 20, isOpen && copyPickerOpen)
+  const currencyQuery = useSearchCurrenciesInfinite(committedCurrencySearch, 20, isOpen && currencyPickerOpen)
   // Real fetch-by-guid now — GET fee-lines/:feeHdGuid, same convention as
   // the rest of the app's real Edit modals. Header fields (feeCode,
   // calcType, lef/cef/ace, intakeGuid, etc.) come from editData itself (the
   // list row the page already fetched), not from this endpoint — it only
   // ever returns the line items.
   const { data: feeLines, isLoading: feeLinesLoading, isError: feeLinesError } = useProgramFeeLines(editData?.feeHdGuid ?? null, isOpen && mode === 'edit' && !!editData)
-  // Copy Fee Code — real now: sourced from every existing fee structure via
-  // the same GET-all endpoint the main page's table uses, not the old
-  // session-only "other structures added in this modal" list. Fetched
-  // unconditionally (matches useProgramMasters above) — safe because it
-  // shares the exact same query key/args as the fee-structure page's own
-  // useProgramFeeStructures(1, FEE_STRUCTURES_LOAD_SIZE) call, so this just
-  // reuses that cached fetch instead of firing a second request on mount.
-  const { data: allFeeStructuresData } = useProgramFeeStructures(1, 1000)
-  const allFeeStructures = allFeeStructuresData?.items ?? []
+  const programs = useMemo(() => flattenUniquePages(programQuery.data?.pages ?? [], p => p.programGuid), [programQuery.data])
+  const allFeeStructures = useMemo(() => flattenUniquePages(copyQuery.data?.pages ?? [], f => f.feeHdGuid), [copyQuery.data])
   // Per-source-guid on-demand fetch of the picked structure's real fee
   // lines — the GET-all list only ever returns header fields, never the
   // lines themselves (see programFeeStructure.ts's ProgramFeeStructureHeader
@@ -118,15 +123,27 @@ export function FeeStructureModal({ isOpen, onClose, showToast, mode, editData }
   const { data: currentAcademicIntake } = useCurrentAcademicIntake(isOpen)
 
   const programOptions = programs.map(p => ({ value: p.programGuid, label: `${p.programName} (${p.programCode})` }))
-  // Same real intakeGuid convention as ProgrammeModal's Intake step. Still
-  // needed even though the field is now always read-only — SearchSelect
-  // resolves the display label for the selected guid from this list.
-  const intakeOptions  = intakes.map(i => ({ value: i.intakeGuid, label: `${i.intakeCode} — ${i.description}` }))
   // Currency.intCurrency (a number) is what the header payload's Lec/Cec/Acec
   // fields need — unconfirmed for save-complete specifically (the sample
   // payload showed them all null), kept as-is to match the one confirmed
   // header contract (ProgramFeeStructureHeaderInput) rather than guessed.
-  const currencyIntOptions = currencies.map(c => ({ value: String(c.intCurrency), label: `${c.currencyCode} — ${c.currencyName}` }))
+  const currencyIntOptions = useMemo(
+    () => flattenUniquePages(currencyQuery.data?.pages ?? [], c => String(c.intCurrency)).map(c => ({ value: String(c.intCurrency), label: `${c.currencyCode} — ${c.currencyName}` })),
+    [currencyQuery.data],
+  )
+
+  useEffect(() => {
+    const timer = setTimeout(() => setCommittedProgramSearch(programSearch.trim()), 300)
+    return () => clearTimeout(timer)
+  }, [programSearch])
+  useEffect(() => {
+    const timer = setTimeout(() => setCommittedCopySearch(copySearch.trim()), 300)
+    return () => clearTimeout(timer)
+  }, [copySearch])
+  useEffect(() => {
+    const timer = setTimeout(() => setCommittedCurrencySearch(currencySearch.trim()), 300)
+    return () => clearTimeout(timer)
+  }, [currencySearch])
 
   const [saved, setSaved]           = useState(false)
   const [failure, setFailure]       = useState<string | null>(null)
@@ -134,6 +151,24 @@ export function FeeStructureModal({ isOpen, onClose, showToast, mode, editData }
   const [structures, setStructures] = useState<Structure[]>(() => makeDefaultStructures())
   const [activeIdx, setActiveIdx]   = useState(0)
   const [activeAcc, setActiveAcc]   = useState(0)
+
+  // Intake is now IntakeSearchPicker's own infinite-scroll search (2026-09-10)
+  // instead of a SearchSelect fed by useIntakes(isOpen)'s capped 1000-row
+  // snapshot — confirmed live that GET /api/v1/academic/intakes genuinely
+  // supports page/pageSize/search together. Every structure's own picked
+  // intakeGuid still needs a label to display in the closed trigger though —
+  // resolved via a bounded batched-by-guid lookup (only however many
+  // distinct intakes are actually in play across this modal's structures),
+  // same convention as ProgrammeModal's own intakeLabel.
+  const intakesByGuid = useIntakesByGuids(structures.map(s => s.intake))
+  function intakeLabel(guid: string): string | null {
+    if (!guid) return null
+    if (currentAcademicIntake && currentAcademicIntake.intakeGuid === guid) {
+      return `${currentAcademicIntake.intakeCode} — ${currentAcademicIntake.description}`
+    }
+    const found = intakesByGuid.get(guid)
+    return found ? `${found.intakeCode} — ${found.description}` : null
+  }
 
   // Guards this prefill against running more than once per open-session —
   // same fix as ProgrammeModal's own fullDetails effect: neither
@@ -579,6 +614,12 @@ export function FeeStructureModal({ isOpen, onClose, showToast, mode, editData }
                 onChange={val => { updateStructureMeta('programme', val); setCopySourceId(''); appliedCopyRef.current = null }}
                 options={programOptions}
                 disabled={mode === 'edit'}
+                onSearch={setProgramSearch}
+                onOpenChange={setProgramPickerOpen}
+                isLoading={programQuery.isLoading}
+                hasNextPage={programQuery.hasNextPage}
+                isFetchingNextPage={programQuery.isFetchingNextPage}
+                onLoadMore={() => programQuery.fetchNextPage()}
               />
             </div>
 
@@ -631,6 +672,12 @@ export function FeeStructureModal({ isOpen, onClose, showToast, mode, editData }
                   value={copySourceId}
                   onChange={setCopySourceId}
                   options={copySourceOptions}
+                  onSearch={setCopySearch}
+                  onOpenChange={setCopyPickerOpen}
+                  isLoading={copyQuery.isLoading}
+                  hasNextPage={copyQuery.hasNextPage}
+                  isFetchingNextPage={copyQuery.isFetchingNextPage}
+                  onLoadMore={() => copyQuery.fetchNextPage()}
                 />
               </div>
               {/* Was always read-only (Fee_Structure_Change_Requests.md #3/#4)
@@ -638,11 +685,11 @@ export function FeeStructureModal({ isOpen, onClose, showToast, mode, editData }
                   Intake is a normal editable picker in both Create and Edit. */}
               <div className="fg m-0">
                 <div className="lbl">Intake</div>
-                <SearchSelect
+                <IntakeSearchPicker
                   placeholder="— Select intake —"
-                  value={active.intake}
-                  onChange={v => updateStructureMeta('intake', v)}
-                  options={intakeOptions}
+                  selectedLabel={intakeLabel(active.intake)}
+                  onSelect={i => updateStructureMeta('intake', i.intakeGuid)}
+                  onClear={() => updateStructureMeta('intake', '')}
                 />
               </div>
               <div className="fg m-0">
@@ -694,7 +741,17 @@ export function FeeStructureModal({ isOpen, onClose, showToast, mode, editData }
                     ProgrammeModal's identical section. */}
                 <div className="fg m-0">
                   <div className="lbl">Currency <span className="text-g400 font-normal normal-case">(Lateral Entry / Credit Exemption / Aptech Credit Exemption)</span></div>
-                  <SearchSelect options={currencyIntOptions} value={active.lefCurrency} onChange={updateSharedFeeCurrency} />
+                  <SearchSelect
+                    options={currencyIntOptions}
+                    value={active.lefCurrency}
+                    onChange={updateSharedFeeCurrency}
+                    onSearch={setCurrencySearch}
+                    onOpenChange={setCurrencyPickerOpen}
+                    isLoading={currencyQuery.isLoading}
+                    hasNextPage={currencyQuery.hasNextPage}
+                    isFetchingNextPage={currencyQuery.isFetchingNextPage}
+                    onLoadMore={() => currencyQuery.fetchNextPage()}
+                  />
                 </div>
               </div>
             </div>
@@ -743,7 +800,7 @@ export function FeeStructureModal({ isOpen, onClose, showToast, mode, editData }
                               </div>
                               <SearchSelect placeholder="— Select Ledger —" options={ledgerOptions} value={f.ledgerGuid} onChange={val => updateItem(sem.semesterGuid, f.id, 'ledgerGuid', val)} />
                               <input className="ctrl" value={f.ledgerPriority} onChange={e => updateItem(sem.semesterGuid, f.id, 'ledgerPriority', e.target.value)} type="number" min={0} placeholder="e.g. 1" />
-                              <input className="ctrl" value={f.amount} onChange={e => updateItem(sem.semesterGuid, f.id, 'amount', e.target.value)} type="number" min={0} placeholder="0" />
+                              <input className="ctrl" value={f.amount} onChange={e => updateItem(sem.semesterGuid, f.id, 'amount', stripLeadingZeros(e.target.value))} type="number" min={0} placeholder="0" />
                               <SearchSelect placeholder="— Currency —" options={financeCurrencyOptions} value={f.currencyGuid} onChange={val => updateItem(sem.semesterGuid, f.id, 'currencyGuid', val)} />
                               <button className="btn btn-danger btn-sm" style={{ width: 32, height: 32, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }} onClick={() => removeItem(sem.semesterGuid, f.id)}><i className="lni lni-trash-can"></i></button>
                             </div>
@@ -758,7 +815,7 @@ export function FeeStructureModal({ isOpen, onClose, showToast, mode, editData }
                 )
               })}
               {(anyCurrencyGaps || anyLedgerGaps) && (
-                <p style={{ color: 'var(--red)', fontSize: 12 }}>Select a currency and ledger for every fee item before saving.</p>
+                <p className="field-err" style={{ color: 'var(--red)', fontSize: 12 }}>Select a currency and ledger for every fee item before saving.</p>
               )}
               <div className="flex justify-end mt-2">
                 <button className="btn btn-primary" onClick={handleSubmitAll} disabled={!allComplete || submitting}>

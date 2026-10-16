@@ -46,7 +46,7 @@ export function ConfirmMovementModal({ isOpen, onClose, showToast, target, onCon
   }
 
   return (
-    <div className="modal-overlay open" onClick={onClose}>
+    <div className="modal-overlay open">
       <div className="modal modal-sm" id="confirm-movement-modal" onClick={e => e.stopPropagation()}>
         <div className="modal-hdr modal-hdr-blue">
           <div className="modal-title"><i className="lni lni-warning"></i> Confirm Session Movement</div>

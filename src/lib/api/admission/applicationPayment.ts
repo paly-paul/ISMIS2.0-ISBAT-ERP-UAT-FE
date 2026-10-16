@@ -1,4 +1,4 @@
-import { apiGet, apiPostForm } from '../client'
+import { apiGet, apiGetBlob, apiPostForm } from '../client'
 import { Enquiry } from './enquiry'
 
 const MOCK_AUTH = process.env.NEXT_PUBLIC_AUTH_MOCK === 'true'
@@ -16,15 +16,14 @@ const MOCK_AUTH = process.env.NEXT_PUBLIC_AUTH_MOCK === 'true'
 // same endpoint Country Master and Application-Filling's SaveGeneral now
 // use.
 //
-// enquiryGuid is CONFIRMED required despite Create.bru's docs explicitly
-// marking it "(optional)" — reproduced a real 400 by removing only this
-// field from an otherwise-working payload. Every payment must link to a
-// real enquiry (see useEnquiries() on the payment page).
+// enquiryGuid is optional, as Create.bru documents — null when the payment
+// isn't linked to an enquiry, and then left out of the form data entirely.
+// (An earlier backend build 400'd without it; that's no longer the case.)
 //
 // oDelIntApplication has no documented semantics beyond the sample value in
 // Create.bru — always sent as 0 until clarified.
 export interface ApplicationPaymentInput {
-  enquiryGuid: string
+  enquiryGuid: string | null
   oDelIntApplication: number
   studentName: string
   intakeGuid: string
@@ -37,7 +36,7 @@ export interface ApplicationPaymentInput {
   countryGuid: string
   mobile: string
   email: string | null
-  // Per Create.bru docs: when this is set, amount/currencyGuid/exRate/payType/
+  // Per Create.bru docs: when this is set, amount/currencyGuid/payType/
   // receiptBookGuid are not required server-side — all four are nullable here
   // and omitted from the multipart body entirely when null, rather than sent
   // as empty/zero values.
@@ -47,7 +46,10 @@ export interface ApplicationPaymentInput {
   payType: number | null
   amount: number | null
   currencyGuid: string | null
-  exRate: number | null
+  // No exRate: the server looks up Finance's rate for currencyGuid on payDate
+  // itself (post-application-payment.md, 2026-10) and ignores any sent value.
+  // A missing rate is a 400 bad_request "Exchange rate not found for the
+  // selected currency and date."
   // Per Create.bru docs: required when payType > 1 (non-cash payments).
   bankGuid: string | null
   receiptBookGuid: string | null
@@ -137,7 +139,8 @@ export interface CreateApplicationPaymentResponse {
   // For an exemption payment (exemptionTypeGuid provided as a real guid):
   // payType/exRate/currencyGuid come back null, amount/amountUsh come back
   // 0, and receiptNo comes back null — no receipt/bank is resolved for
-  // exemptions.
+  // exemptions. Otherwise exRate is the rate the server actually applied and
+  // amountUsh = amount × exRate — show these as the confirmed values.
   amount?: number
   amountUsh?: number
   currencyGuid?: string | null
@@ -165,9 +168,26 @@ const mockPaymentTypes: PaymentTypeDto[] = [
   { intPaymentType: 4, paymentTypeName: 'DD' },
 ]
 
-export function getApplicationPaymentBanks(): Promise<BankAccountInfoDto[]> {
-  if (MOCK_AUTH) return Promise.resolve(mockBanks)
-  return apiGet<BankAccountInfoDto[] | null>('/api/v1/admissions/application-payments/dropdowns/banks').then((data: any) => Array.isArray(data) ? data : (data && typeof data === 'object' ? (data.items || Object.values(data).find(Array.isArray) || []) : []))
+// Optional ?search= (case-insensitive "contains") on the dropdown endpoints
+// below, added server-side 2026-10. Omitted = unchanged behaviour. Builds the
+// query string with any existing params so search can't clobber them.
+function withSearch(path: string, params: Record<string, string>, search?: string): string {
+  const qs = new URLSearchParams(params)
+  if (search?.trim()) qs.set('search', search.trim())
+  const q = qs.toString()
+  return q ? `${path}?${q}` : path
+}
+
+// Mock-only stand-in for the server's case-insensitive "contains" match.
+function mockMatch<T>(rows: T[], search: string | undefined, fields: (row: T) => (string | null | undefined)[]): T[] {
+  const term = search?.trim().toLowerCase()
+  return term ? rows.filter(r => fields(r).some(v => v?.toLowerCase().includes(term))) : rows
+}
+
+// search matches bank name, account code and short code.
+export function getApplicationPaymentBanks(search?: string): Promise<BankAccountInfoDto[]> {
+  if (MOCK_AUTH) return Promise.resolve(mockMatch(mockBanks, search, b => [b.bankName]))
+  return apiGet<BankAccountInfoDto[] | null>(withSearch('/api/v1/admissions/application-payments/dropdowns/banks', {}, search)).then((data: any) => Array.isArray(data) ? data : (data && typeof data === 'object' ? (data.items || Object.values(data).find(Array.isArray) || []) : []))
 }
 
 interface UnconvertedEnquiriesResult {
@@ -193,34 +213,42 @@ interface UnconvertedEnquiriesResult {
 // isn't independently verified, only each param on its own, but both are
 // standard query filters on the same list endpoint so they're assumed
 // combinable here.
-export function getUnconvertedEnquiries(intakeGuid: string, page = 1, pageSize = 10, searchTerm?: string): Promise<UnconvertedEnquiriesResult> {
+// `search` (student name or enquiry code, contains) is the documented
+// param as of 2026-10; the earlier `searchTerm` guess is no longer sent.
+export function getUnconvertedEnquiries(intakeGuid: string, page = 1, pageSize = 100, searchTerm?: string): Promise<UnconvertedEnquiriesResult> {
   if (MOCK_AUTH) return Promise.resolve({ items: [], totalCount: 0, pageNumber: page, pageSize })
-  const searchParam = searchTerm?.trim() ? `&searchTerm=${encodeURIComponent(searchTerm.trim())}` : ''
   return apiGet<UnconvertedEnquiriesResult | null>(
-    `/api/v1/admissions/application-payments/unconverted-enquiries?intakeGuid=${intakeGuid}&page=${page}&pageSize=${pageSize}${searchParam}`,
-  ).then(data => data ?? { items: [], totalCount: 0, pageNumber: page, pageSize })
+    withSearch('/api/v1/admissions/application-payments/unconverted-enquiries', { intakeGuid, page: String(page), pageSize: String(pageSize) }, searchTerm),
+  ).then(data => {
+    if (Array.isArray(data)) return { items: data, totalCount: data.length, pageNumber: page, pageSize }
+    return data ?? { items: [], totalCount: 0, pageNumber: page, pageSize }
+  })
 }
 
-export function getApplicationPaymentBatches(programGuid: string, semesterGuid: string, batchTimeGuid: string): Promise<BatchInfoDto[]> {
-  if (MOCK_AUTH) return Promise.resolve(mockBatches)
+// search matches batch code.
+export function getApplicationPaymentBatches(programGuid: string, semesterGuid: string, batchTimeGuid: string, search?: string): Promise<BatchInfoDto[]> {
+  if (MOCK_AUTH) return Promise.resolve(mockMatch(mockBatches, search, b => [b.batchCode]))
   return apiGet<BatchInfoDto[] | null>(
-    `/api/v1/admissions/application-payments/dropdowns/batches?programGuid=${programGuid}&semesterGuid=${semesterGuid}&batchTimeGuid=${batchTimeGuid}`,
+    withSearch('/api/v1/admissions/application-payments/dropdowns/batches', { programGuid, semesterGuid, batchTimeGuid }, search),
   ).then((data: any) => Array.isArray(data) ? data : (data && typeof data === 'object' ? (data.items || Object.values(data).find(Array.isArray) || []) : []))
 }
 
-export function getApplicationPaymentExemptionTypes(): Promise<ExemptionTypeDto[]> {
-  if (MOCK_AUTH) return Promise.resolve(mockExemptionTypes)
-  return apiGet<ExemptionTypeDto[] | null>('/api/v1/admissions/application-payments/dropdowns/exemption-types').then((data: any) => Array.isArray(data) ? data : (data && typeof data === 'object' ? (data.items || Object.values(data).find(Array.isArray) || []) : []))
+// search matches the label.
+export function getApplicationPaymentExemptionTypes(search?: string): Promise<ExemptionTypeDto[]> {
+  if (MOCK_AUTH) return Promise.resolve(mockMatch(mockExemptionTypes, search, e => [e.label]))
+  return apiGet<ExemptionTypeDto[] | null>(withSearch('/api/v1/admissions/application-payments/dropdowns/exemption-types', {}, search)).then((data: any) => Array.isArray(data) ? data : (data && typeof data === 'object' ? (data.items || Object.values(data).find(Array.isArray) || []) : []))
 }
 
-export function getApplicationPaymentFees(programGuid: string): Promise<ProgramFeeHeadInfoDto[]> {
-  if (MOCK_AUTH) return Promise.resolve(mockFees)
-  return apiGet<ProgramFeeHeadInfoDto[] | null>(`/api/v1/admissions/application-payments/dropdowns/fees?programGuid=${programGuid}`).then((data: any) => Array.isArray(data) ? data : (data && typeof data === 'object' ? (data.items || Object.values(data).find(Array.isArray) || []) : []))
+// search matches fee code and description.
+export function getApplicationPaymentFees(programGuid: string, search?: string): Promise<ProgramFeeHeadInfoDto[]> {
+  if (MOCK_AUTH) return Promise.resolve(mockMatch(mockFees, search, f => [f.feeCode, f.feeDesc]))
+  return apiGet<ProgramFeeHeadInfoDto[] | null>(withSearch('/api/v1/admissions/application-payments/dropdowns/fees', { programGuid }, search)).then((data: any) => Array.isArray(data) ? data : (data && typeof data === 'object' ? (data.items || Object.values(data).find(Array.isArray) || []) : []))
 }
 
-export function getApplicationPaymentTypes(): Promise<PaymentTypeDto[]> {
-  if (MOCK_AUTH) return Promise.resolve(mockPaymentTypes)
-  return apiGet<PaymentTypeDto[] | null>('/api/v1/admissions/application-payments/dropdowns/payment-types').then((data: any) => Array.isArray(data) ? data : (data && typeof data === 'object' ? (data.items || Object.values(data).find(Array.isArray) || []) : []))
+// search matches the payment type name.
+export function getApplicationPaymentTypes(search?: string): Promise<PaymentTypeDto[]> {
+  if (MOCK_AUTH) return Promise.resolve(mockMatch(mockPaymentTypes, search, t => [t.paymentTypeName]))
+  return apiGet<PaymentTypeDto[] | null>(withSearch('/api/v1/admissions/application-payments/dropdowns/payment-types', {}, search)).then((data: any) => Array.isArray(data) ? data : (data && typeof data === 'object' ? (data.items || Object.values(data).find(Array.isArray) || []) : []))
 }
 
 // Dropdowns/ReceiptBooks.bru (GET .../dropdowns/receipt-books) is NOT wired
@@ -230,19 +258,36 @@ export function getApplicationPaymentTypes(): Promise<PaymentTypeDto[]> {
 // uses the generic, already-working GET /api/v1/finance/receipt-books
 // (lib/api/finance/receiptBook.ts, useReceiptBooks()) instead — same
 // receiptBookGuid/bookCode shape, confirmed via a real response.
+// (2026-10: that endpoint now also takes ?search= on book code, but
+// `category` is still required and its values are still unknown, so it
+// stays unwired.)
+
+// GET /admissions/application-payments/{paymentGuid}/receipt
+// (get-application-payment-receipt.md) — a PDF, not the JSON envelope; errors
+// still come back as the envelope (apiGetBlob turns them into AuthError).
+// Only for a normal payment with a receipt: an exemption payment, or one with
+// no receipt number, returns 400. Generated on demand, so reprints always work;
+// `receipt_generation_failed` (Finance unreachable) is safe to retry.
+export function getApplicationPaymentReceiptPdf(paymentGuid: string): Promise<{ blob: Blob; filename: string | null }> {
+  if (MOCK_AUTH) {
+    return Promise.resolve({ blob: new Blob(['%PDF-1.4 mock application payment receipt'], { type: 'application/pdf' }), filename: `Receipt_${paymentGuid}.pdf` })
+  }
+  return apiGetBlob(`/api/v1/admissions/application-payments/${encodeURIComponent(paymentGuid)}/receipt`)
+}
+
+// Whether a payment has a printable receipt: a normal payment (no exemption)
+// with a receipt number that isn't 0.
+export function hasPrintableReceipt(p: { exemptionType?: unknown; exemptionTypeGuid?: string | null; receiptNo?: number | null }): boolean {
+  return p.exemptionType == null && !p.exemptionTypeGuid && p.receiptNo != null && p.receiptNo !== 0
+}
 
 export function createApplicationPayment(input: ApplicationPaymentInput): Promise<CreateApplicationPaymentResponse> {
   if (MOCK_AUTH) {
     return Promise.resolve({ intApplication: Math.floor(Math.random() * 100000), studentName: input.studentName })
   }
 
-  console.log('[application payment API] createApplicationPayment input', {
-    ...input,
-    payProofFile: input.payProofFile ? { name: input.payProofFile.name, size: input.payProofFile.size, type: input.payProofFile.type } : null,
-  })
-
   const formData = new FormData()
-  formData.append('enquiryGuid', input.enquiryGuid)
+  if (input.enquiryGuid) formData.append('enquiryGuid', input.enquiryGuid)
   formData.append('oDelIntApplication', String(input.oDelIntApplication ?? 0))
   formData.append('studentName', input.studentName)
   formData.append('intakeGuid', input.intakeGuid)
@@ -269,7 +314,6 @@ export function createApplicationPayment(input: ApplicationPaymentInput): Promis
   if (input.payType !== null && input.payType !== undefined) formData.append('payType', String(input.payType))
   if (input.amount !== null && input.amount !== undefined) formData.append('amount', String(input.amount))
   if (input.currencyGuid) formData.append('currencyGuid', input.currencyGuid)
-  if (input.exRate !== null && input.exRate !== undefined) formData.append('exRate', String(input.exRate))
   if (input.bankGuid) formData.append('bankGuid', input.bankGuid)
   if (input.receiptBookGuid) formData.append('receiptBookGuid', input.receiptBookGuid)
   if (input.remarks) formData.append('remarks', input.remarks)

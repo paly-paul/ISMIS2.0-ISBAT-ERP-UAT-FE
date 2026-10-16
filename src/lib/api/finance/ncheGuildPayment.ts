@@ -28,6 +28,10 @@ export interface RegulatoryPaymentInput {
   applicationGuid: string
   studentGuid: string | null
   amount: number
+  // Required on create since 2026-09-11 (post-payment-nche.md /
+  // post-payment-guild.md) — informational only, no conversion; the balance
+  // and rate checks assume the base currency. Not accepted on update.
+  currencyGuid: string
   payDate: string
   // NCHE-only.
   pnrNumber?: string | null
@@ -40,8 +44,9 @@ export interface RegulatoryPaymentResult {
   paymentGuid: string
   amount: number
   // What's still owed on this category after this payment (rate ×
-  // semesterCount, minus what's now paid) — no currency, no receipt book,
-  // no bank claimed on create/update for either category.
+  // semesterCount, minus what's now paid) — no receipt book,
+  // no bank claimed on create/update for either category (the currency sent on
+// create is recorded only).
   remainingBalance: number
 }
 

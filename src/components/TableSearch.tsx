@@ -13,10 +13,11 @@ interface TableSearchProps {
   // Caller still owns the actual match logic (each table's searchable
   // fields differ) — this component only owns the open/close behavior and
   // dropdown rendering, capped to whatever list the caller passes in.
-  results: TableSearchResult[]
+  results?: TableSearchResult[]
   // Defaults to filling the input with the picked result's `primary` text
   // (narrowing the table to just that row via the caller's own filter).
   onSelect?: (result: TableSearchResult) => void
+  onEnter?: () => void
   placeholder?: string
   className?: string
   emptyLabel?: string
@@ -53,6 +54,7 @@ interface TableSearchProps {
   onLoadMore?: () => void
   hasMore?: boolean
   loadingMore?: boolean
+  disabled?: boolean
 }
 
 // Search-by-code/name input + live "as you type" results dropdown, meant to
@@ -64,6 +66,7 @@ export function TableSearch({
   onChange,
   results,
   onSelect,
+  onEnter,
   placeholder = 'Search…',
   className,
   emptyLabel = 'No matches',
@@ -72,6 +75,7 @@ export function TableSearch({
   onLoadMore,
   hasMore = false,
   loadingMore = false,
+  disabled = false,
 }: TableSearchProps) {
   const [open, setOpen] = useState(false)
   const wrapRef = useRef<HTMLDivElement>(null)
@@ -93,9 +97,11 @@ export function TableSearch({
 
   function select(r: TableSearchResult) {
     if (onSelect) onSelect(r)
-    else onChange(r.primary)
+    else onChange(r.primary || r.secondary || '')
     setOpen(false)
   }
+
+  const safeValue = value ?? ''
 
   return (
     <div ref={wrapRef} className={`inp-wrap${className ? ` ${className}` : ''}`}>
@@ -103,11 +109,18 @@ export function TableSearch({
       <input
         className="ctrl"
         placeholder={placeholder}
-        value={value}
+        disabled={disabled}
+        value={safeValue}
         onChange={e => { onChange(e.target.value); setOpen(true) }}
-        onFocus={() => { if (value.trim().length >= minChars) setOpen(true) }}
+        onFocus={() => { if (safeValue.trim().length >= minChars) setOpen(true) }}
+        onKeyDown={e => {
+          if (e.key === 'Enter' && onEnter) {
+            onEnter()
+            setOpen(false)
+          }
+        }}
       />
-      {open && value.trim().length >= minChars && (
+      {open && results !== undefined && safeValue.trim().length >= minChars && (
         <div
           className="absolute left-0 right-0 top-full mt-1 bg-white border border-g200 rounded-lg shadow-lg z-20 max-h-56 overflow-y-auto"
           onScroll={handleResultsScroll}

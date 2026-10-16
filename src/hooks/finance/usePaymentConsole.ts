@@ -1,4 +1,5 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { AuthError } from '@/lib/api/client'
 import {
   createAdvanceDeposit,
   createPayment,
@@ -131,6 +132,8 @@ export function usePaymentHistoryList(pageNumber: number, pageSize: number) {
   return useQuery({
     queryKey: [...PAYMENT_CONSOLE_KEY, 'payment-history-list', pageNumber, pageSize],
     queryFn: () => getPaymentHistoryList(pageNumber, pageSize),
+    staleTime: 60 * 1000,
+    gcTime: Infinity,
   })
 }
 
@@ -142,15 +145,6 @@ export function usePayableLedgers(params: PayableLedgersParams | null, enabled: 
     queryKey: [...PAYMENT_CONSOLE_KEY, 'payable-ledgers', params],
     queryFn: () => getPayableLedgers(params as PayableLedgersParams),
     enabled: enabled && !!params,
-    // The global QueryClient (providers.tsx) defaults to 3 retries with
-    // exponential backoff, meant for transient network/5xx failures. A 400
-    // here (confirmed live: "Today's exchange rate has not been entered for
-    // the payment date") is a permanent validation error that will keep
-    // failing identically on retry — left at the default, the cashier saw
-    // "Calculating allocation…" for 7+ seconds before isPreviewError ever
-    // flipped, since react-query stays in a fetching state through every
-    // retry attempt.
-    retry: false,
   })
 }
 
@@ -175,6 +169,15 @@ export function useCreatePayment() {
       queryClient.invalidateQueries({ queryKey: [...PAYMENT_CONSOLE_KEY, 'outstanding-ledgers', input.applicationGuid] })
       queryClient.invalidateQueries({ queryKey: [...PAYMENT_CONSOLE_KEY, 'current-semester-payable', input.applicationGuid] })
       queryClient.invalidateQueries({ queryKey: [...PAYMENT_CONSOLE_KEY, 'payment-history', input.applicationGuid] })
+    },
+    // 400 concurrent_update — another cashier's payment settled the structure
+    // while this one was being entered. Per the flow doc: refetch the
+    // outstanding grid and re-preview, never retry the POST blind.
+    onError: (error, input) => {
+      if (!(error instanceof AuthError) || error.code !== 'concurrent_update') return
+      queryClient.invalidateQueries({ queryKey: [...PAYMENT_CONSOLE_KEY, 'outstanding-ledgers', input.applicationGuid] })
+      queryClient.invalidateQueries({ queryKey: [...PAYMENT_CONSOLE_KEY, 'current-semester-payable', input.applicationGuid] })
+      queryClient.invalidateQueries({ queryKey: [...PAYMENT_CONSOLE_KEY, 'payable-ledgers'] })
     },
   })
 }
@@ -265,5 +268,5 @@ export function useCreateAdvanceDeposit() {
   })
 }
 
-export type { AdvanceDepositInput, AdvanceDepositResult, AllOutstandingItem, ApplicationSummary, CurrentSemesterPayableLedger, CurrentSemesterPayableTotal, LedgerOthersDto, OutstandingLedger, PaidLedgerDto, PayableLedgerLine, PayableLedgersParams, PaymentHistoryEntry, PaymentHistoryListEntry, PaymentInput, PaymentOtherInput, PaymentOtherResult, PaymentResult, StudentProfile, UpdatePaymentInput } from '@/lib/api/finance/paymentConsole'
+export type { AdvanceDepositInput, AdvanceDepositResult, AllOutstandingItem, ApplicationSummary, CurrentSemesterPayableLedger, CurrentSemesterPayableResult, CurrentSemesterPayableTotal, CurrentSemesterUpcomingSemester, LedgerOthersDto, OutstandingLedger, PaidLedgerDto, PayableLedgerLine, PayableLedgersParams, PaymentHistoryEntry, PaymentHistoryListEntry, PaymentInput, PaymentOtherInput, PaymentOtherResult, PaymentResult, StudentProfile, UpdatePaymentInput } from '@/lib/api/finance/paymentConsole'
 export { PAYMENT_CATEGORY_LABELS, PAY_TYPE_LABELS, PAY_TYPE_TO_RECEIPT_CATEGORY } from '@/lib/api/finance/paymentConsole'

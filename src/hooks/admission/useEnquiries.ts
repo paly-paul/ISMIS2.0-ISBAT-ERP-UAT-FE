@@ -1,17 +1,42 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { createEnquiry, Enquiry, EnquiryCounts, EnquiryCountsFilters, EnquiryInput, EnquiryUpdateInput, getEnquiries, getEnquiryById, getEnquiryCounts, updateEnquiry } from '@/lib/api/admission/enquiry'
+import { createEnquiry, Enquiry, EnquiryCounts, EnquiryCountsFilters, EnquiryInput, EnquiryUpdateInput, GenderOption, getEnquiries, getEnquiryById, getEnquiryCounts, getEnquiryGenders, updateEnquiry, requestEnquiryEmailOtp, verifyEnquiryEmailOtp } from '@/lib/api/admission/enquiry'
 
 const ENQUIRIES_KEY = ['enquiries']
 const ENQUIRY_COUNTS_KEY = ['enquiry-counts']
+const ENQUIRY_GENDERS_KEY = ['enquiry-genders']
+
+// Fixed backend enum — fetched once per session.
+export function useEnquiryGenders() {
+  return useQuery({
+    queryKey: ENQUIRY_GENDERS_KEY,
+    queryFn: () => getEnquiryGenders(),
+    staleTime: Infinity,
+    gcTime: Infinity,
+  })
+}
+
+// A create 404 means the chosen intake, enquiry source, ISBAT source or
+// mobile country was removed after the form loaded (enquiry-create-page.md)
+// — drop those cached lists so the pickers refetch. Keys match useIntakes /
+// useEnquirySourceMasters / useEnquirySources / useCountries.
+export function useReloadEnquiryDropdowns() {
+  const queryClient = useQueryClient()
+  return () => {
+    queryClient.invalidateQueries({ queryKey: ['intakes'] })
+    queryClient.invalidateQueries({ queryKey: ['countries'] })
+    queryClient.invalidateQueries({ queryKey: ['enquiry-source-masters'] })
+    queryClient.invalidateQueries({ queryKey: ['enquiry-sources'] })
+  }
+}
 
 // Real (paginated) — 11k+ rows in the sample data, so unlike the small
 // master-data lists elsewhere in this app, this can't just fetch everything
 // in one big page. page/pageSize/search are part of the query key so each
 // combination is cached separately.
-export function useEnquiries(page: number, pageSize: number, search = '') {
+export function useEnquiries(page: number, pageSize: number, search = '', enquiryStatusGuid = '') {
   return useQuery({
-    queryKey: [...ENQUIRIES_KEY, page, pageSize, search],
-    queryFn: () => getEnquiries(page, pageSize, search),
+    queryKey: [...ENQUIRIES_KEY, page, pageSize, search, enquiryStatusGuid],
+    queryFn: () => getEnquiries(page, pageSize, search, enquiryStatusGuid),
     staleTime: Infinity,
     gcTime: Infinity,
   })
@@ -65,4 +90,18 @@ export function useUpdateEnquiry() {
   })
 }
 
-export type { Enquiry, EnquiryCounts, EnquiryCountsFilters, EnquiryInput, EnquiryUpdateInput }
+// Email OTP for a not-yet-created enquiry. Neither call touches an existing
+// enquiry, so there's nothing to invalidate — the verificationToken is just
+// handed on to useCreateEnquiry.
+export function useRequestEnquiryEmailOtp() {
+  return useMutation({ mutationFn: (email: string) => requestEnquiryEmailOtp(email) })
+}
+
+export function useVerifyEnquiryEmailOtp() {
+  return useMutation({
+    mutationFn: ({ email, challengeToken, otp }: { email: string; challengeToken: string; otp: string }) =>
+      verifyEnquiryEmailOtp(email, challengeToken, otp),
+  })
+}
+
+export type { Enquiry, EnquiryCounts, EnquiryCountsFilters, EnquiryInput, EnquiryUpdateInput, GenderOption }

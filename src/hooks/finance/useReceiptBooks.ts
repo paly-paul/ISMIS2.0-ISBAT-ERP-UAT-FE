@@ -1,9 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { createReceiptBook, CreateReceiptBookInput, deleteReceiptBook, getReceiptBooks, ReceiptBook, updateReceiptBook, UpdateReceiptBookInput } from '@/lib/api/finance/receiptBook'
+import { createReceiptBook, CreateReceiptBookInput, deleteReceiptBook, getReceiptBookById, getReceiptBooks, ReceiptBook, updateReceiptBook, UpdateReceiptBookInput } from '@/lib/api/finance/receiptBook'
 
 const RECEIPT_BOOKS_KEY = ['receipt-books']
 
-export function useReceiptBooks() {
+export function useReceiptBooks(enabled = true) {
   return useQuery({
     queryKey: RECEIPT_BOOKS_KEY,
     queryFn: () => getReceiptBooks(),
@@ -12,6 +12,16 @@ export function useReceiptBooks() {
     // instead of on every remount/window focus.
     staleTime: Infinity,
     gcTime: Infinity,
+    enabled,
+  })
+}
+
+export function useReceiptBook(guid: string | null, enabled: boolean) {
+  return useQuery({
+    queryKey: [...RECEIPT_BOOKS_KEY, guid],
+    queryFn: () => getReceiptBookById(guid as string),
+    staleTime: 5 * 60 * 1000,
+    enabled: enabled && !!guid,
   })
 }
 

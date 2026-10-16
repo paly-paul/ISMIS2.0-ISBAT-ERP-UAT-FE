@@ -31,9 +31,11 @@ const mockBanks: Bank[] = [
   { bankGuid: '8edd4853-5e62-4f86-8d67-5e5d3c110d47', shortCode: 'DTB', bankName: 'Diomond Trust Bank', compCode: null, branchCode: null, status: 2 },
 ]
 
+const BANKS_LOAD_SIZE = 1000
+
 export function getBanks(): Promise<Bank[]> {
   if (MOCK_AUTH) return Promise.resolve(mockBanks)
-  return apiGet<BankListResponse | null>('/api/v1/finance/banks').then(data => data?.items ?? [])
+  return apiGet<BankListResponse | null>(`/api/v1/finance/banks?page=1&pageSize=${BANKS_LOAD_SIZE}`).then(data => data?.items ?? [])
 }
 
 export function createBank(input: BankInput): Promise<Bank> {

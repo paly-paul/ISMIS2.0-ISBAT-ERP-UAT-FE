@@ -21,6 +21,19 @@ export interface Batch {
   active: number
   bInCharge?: string
   pHead?: string | null
+  // Pre-resolved display names — confirmed live on GET /api/v1/academic/batches
+  // (2026-09-09), present on every row in a real sample. batch-management's
+  // own page used to resolve all of these via separate lookups (a full
+  // Programme Master/Streams/Batch Times fetch each, plus a genuinely N+1
+  // per-programme semester fetch for semesterName specifically) — prefer
+  // these instead wherever present, falling back to the client-side lookup
+  // only if a row ever comes back without one, same "prefer server, fall
+  // back to client resolve" convention used throughout this app.
+  programName?: string | null
+  semesterName?: string | null
+  streamName?: string | null
+  batchTimeName?: string | null
+  batchTimeCode?: string | null
 }
 
 interface BatchListResult {
@@ -108,6 +121,26 @@ export function getBatches(pageNumber = 1, pageSize = 20, search = ''): Promise<
   if (q) params.set('search', q)
   return apiGet<BatchListResult | null>(`/api/v1/academic/batches?${params.toString()}`)
     .then(data => data ?? { items: [], totalCount: 0, pageNumber, pageSize })
+}
+
+export interface BatchDropdownItem {
+  batchGuid: string
+  batchCode: string
+}
+
+// GET /api/v1/academic/batches/dropdown — every param optional and
+// combinable (get-batches-dropdown.md). intakeGuid scopes to batches linked
+// to that intake via its session (T_SESSION_MANAGEMENT → T_SESSION_BATCH).
+// Item shape { batchGuid, batchCode } confirmed by the same doc.
+export function getBatchDropdown(programGuid?: string, semesterGuid?: string, intakeGuid?: string): Promise<BatchDropdownItem[]> {
+  if (MOCK_AUTH) return Promise.resolve(mockBatches.map(b => ({ batchGuid: b.batchGuid, batchCode: b.batchCode })))
+  const params = new URLSearchParams()
+  if (intakeGuid) params.set('intakeGuid', intakeGuid)
+  if (programGuid) params.set('programGuid', programGuid)
+  if (semesterGuid) params.set('semesterGuid', semesterGuid)
+  const query = params.toString() ? `?${params.toString()}` : ''
+  return apiGet<BatchDropdownItem[] | null>(`/api/v1/academic/batches/dropdown${query}`)
+    .then((data: any) => Array.isArray(data) ? data : (data && typeof data === 'object' ? (data.items || Object.values(data).find(Array.isArray) || []) : []))
 }
 
 // Create a new batch and return the saved record. batchCode is

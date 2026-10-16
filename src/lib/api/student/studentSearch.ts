@@ -18,6 +18,9 @@ export interface StudentSearchFilters {
   // in this app for either, so callers collect them as raw numbers rather
   // than through an invented dropdown.
   intCountryCode?: number | null
+  // Nationality by country GUID — per student-bulk-email-page.md (2026-09-28),
+  // which filters on countryGuid from the countries dropdown.
+  countryGuid?: string | null
   intakeCode?: number | null
   sponsorCategoryGuid?: string | null
   studentRegNo?: string | null
@@ -56,6 +59,7 @@ export function searchStudentsAdvanced(filters: StudentSearchFilters): Promise<P
     semesterGuid: filters.semesterGuid ?? null,
     campusGuid: filters.campusGuid ?? null,
     intCountryCode: filters.intCountryCode ?? null,
+    countryGuid: filters.countryGuid ?? null,
     sponsorCategoryGuid: filters.sponsorCategoryGuid ?? null,
     intakeCode: filters.intakeCode ?? null,
     studentRegNo: filters.studentRegNo ?? null,

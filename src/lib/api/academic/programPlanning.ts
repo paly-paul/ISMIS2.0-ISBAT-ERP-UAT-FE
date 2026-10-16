@@ -33,6 +33,18 @@ export interface ProgramPlanningListParams {
   unitGuid?: string | null
   schoolGuid?: string | null
   intakeGuid?: string | null
+  // Documented filter (get-program-plannings.md); combines with the others (AND).
+  lecturerGuid?: string | null
+  // NOT supported by the endpoint — it's ignored server-side. Kept only so
+  // mock mode / older callers type-check; search on screen instead.
+  search?: string | null
+}
+
+export interface ProgramPlanningListResult {
+  items: ProgramPlanningDto[]
+  totalCount: number
+  pageNumber: number
+  pageSize: number
 }
 
 // Same request shape for both Create and Update (confirmed via
@@ -48,22 +60,56 @@ export interface ProgramPlanningInput {
 
 const mockProgramPlannings: ProgramPlanningDto[] = []
 
-export function getProgramPlannings(params: ProgramPlanningListParams = {}): Promise<ProgramPlanningDto[]> {
+export function getProgramPlannings(params: ProgramPlanningListParams = {}, pageNumber = 1, pageSize = 10): Promise<ProgramPlanningListResult> {
+  const q = params.search?.trim().toLowerCase() ?? ''
+
   if (MOCK_AUTH) {
-    return Promise.resolve(
-      mockProgramPlannings.filter(p =>
-        (!params.unitGuid || p.unitGuid === params.unitGuid)
-        && (!params.schoolGuid || p.schoolGuid === params.schoolGuid)
-        && (!params.intakeGuid || p.intakeGuid === params.intakeGuid),
-      ),
+    const filtered = mockProgramPlannings.filter(p =>
+      (!params.unitGuid || p.unitGuid === params.unitGuid)
+      && (!params.schoolGuid || p.schoolGuid === params.schoolGuid)
+      && (!params.intakeGuid || p.intakeGuid === params.intakeGuid)
+      && (!params.lecturerGuid || p.lecturerGuid === params.lecturerGuid)
+      && (!q || `${p.employeeName ?? ''} ${p.courseUnitCode ?? ''} ${p.courseUnitName ?? ''}`.toLowerCase().includes(q)),
     )
+    const start = (pageNumber - 1) * pageSize
+    return Promise.resolve({
+      items: filtered.slice(start, start + pageSize),
+      totalCount: filtered.length,
+      pageNumber,
+      pageSize,
+    })
   }
-  const qs = new URLSearchParams()
+
+  const qs = new URLSearchParams({
+    page: String(pageNumber),
+    pageNumber: String(pageNumber),
+    pageSize: String(pageSize),
+  })
   if (params.unitGuid) qs.set('unitGuid', params.unitGuid)
   if (params.schoolGuid) qs.set('schoolGuid', params.schoolGuid)
   if (params.intakeGuid) qs.set('intakeGuid', params.intakeGuid)
-  const suffix = qs.toString() ? `?${qs.toString()}` : ''
-  return apiGet<ProgramPlanningDto[] | null>(`/api/v1/academic/program-plannings${suffix}`).then(data => data ?? [])
+  if (params.lecturerGuid) qs.set('lecturerGuid', params.lecturerGuid)
+  if (q) qs.set('search', q)
+
+  return apiGet<ProgramPlanningListResult | ProgramPlanningDto[] | null>(`/api/v1/academic/program-plannings?${qs.toString()}`)
+    .then(data => {
+      const items = Array.isArray(data)
+        ? data
+        : data && typeof data === 'object' && Array.isArray((data as { items?: ProgramPlanningDto[] }).items)
+          ? (data as { items: ProgramPlanningDto[] }).items
+          : []
+
+      const envelope = data && typeof data === 'object' && !Array.isArray(data)
+        ? (data as Partial<ProgramPlanningListResult>)
+        : null
+
+      return {
+        items,
+        totalCount: typeof envelope?.totalCount === 'number' ? envelope.totalCount : items.length,
+        pageNumber: typeof envelope?.pageNumber === 'number' ? envelope.pageNumber : pageNumber,
+        pageSize: typeof envelope?.pageSize === 'number' ? envelope.pageSize : pageSize,
+      }
+    })
 }
 
 export function getProgramPlanningById(guid: string): Promise<ProgramPlanningDto> {

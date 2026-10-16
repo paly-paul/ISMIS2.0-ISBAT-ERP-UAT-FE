@@ -1,15 +1,14 @@
 'use client'
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ModalProps } from '../types'
 import { SuccessPopup } from '../shared/SuccessPopup'
 import { FailurePopup } from '../shared/FailurePopup'
-import { SearchSelect } from '@/components/SearchSelect'
 import { EmployeeListItem } from '@/lib/api/employee/employee'
 import { AuthError } from '@/lib/api/client'
-import { usePermissionGroups } from '@/hooks/config/usePermissionGroups'
-import { usePermissionCatalog, moduleIcon, moduleLabel } from '@/hooks/users/usePermissionCatalog'
+import { usePermissionGroups, PermissionGroup } from '@/hooks/config/usePermissionGroups'
+import { usePermissionCatalog } from '@/hooks/users/usePermissionCatalog'
 import { useAssignEmployeePermissionGroups, useEmployeePermissionGroups } from '@/hooks/employee/useEmployees'
-import { buildBreakdown } from '@/lib/permissionBreakdown'
+import { catalogSections, ModuleAccessMatrix, UncataloguedAccess, DestructiveCaution, ReviewStats, DESTRUCTIVE } from '@/components/permissions/PermissionMatrix'
 
 // Assign and Edit are two entry points into the same form — they only ever
 // differed in title/icon, success/failure copy, and the confirm-step button
@@ -21,10 +20,19 @@ interface EmployeePermissionsFormModalProps extends ModalProps {
   employee: EmployeeListItem | null
 }
 
+// Group permissions are matched to the catalog by name — the two endpoints
+// don't always share ids (see PermissionGroup's comment in permissionGroup.ts).
+const namesOf = (gs: PermissionGroup[]) => new Set(gs.flatMap(g => g.permissions.map(p => p.permissionName)))
+
 export function EmployeePermissionsFormModal({ isOpen, onClose, showToast, mode, employee }: EmployeePermissionsFormModalProps) {
   const isEdit = mode === 'edit'
   const { data: groups = [] } = usePermissionGroups()
   const { data: catalog = [] } = usePermissionCatalog()
+  const { modules, sectionsByModule } = useMemo(() => catalogSections(catalog), [catalog])
+  const catalogNames = useMemo(
+    () => new Set(Object.values(sectionsByModule).flat().flatMap(s => s.pages.flatMap(pg => pg.permissions.map(p => p.permissionName)))),
+    [sectionsByModule],
+  )
 
   const assignPermissionGroups = useAssignEmployeePermissionGroups()
   const {
@@ -34,59 +42,22 @@ export function EmployeePermissionsFormModal({ isOpen, onClose, showToast, mode,
     error: assignedGroupsError,
   } = useEmployeePermissionGroups(employee?.employeeGuid ?? null, isOpen)
 
-  const [selectedGroupId, setSelectedGroupId] = useState('')
-  const [loadedGroupIds, setLoadedGroupIds] = useState<string[]>([])
-  const [activeTab, setActiveTab] = useState<string | null>(null)
-  const [openModule, setOpenModule] = useState<string | null>(null)
+  const [assignedIds, setAssignedIds] = useState<string[]>([])
+  const [initialIds, setInitialIds] = useState<string[]>([])
+  const [previewId, setPreviewId] = useState<string | null>(null)
+  const [search, setSearch] = useState('')
   const [confirming, setConfirming] = useState(false)
   const [saved, setSaved] = useState(false)
   const [failure, setFailure] = useState<string | null>(null)
-  const tabRefs = useRef<Partial<Record<string, HTMLButtonElement>>>({})
-  const [indicator, setIndicator] = useState({ left: 0, width: 0 })
-  // Tracks which employee we've already seeded loadedGroupIds for, so a
-  // background refetch of the assigned-groups query (e.g. window refocus)
-  // doesn't clobber in-progress edits while the modal stays open.
+  const paneRef = useRef<HTMLDivElement>(null)
+  // Tracks which employee we've already seeded for, so a background refetch
+  // of the assigned-groups query doesn't clobber in-progress edits.
   const seededForRef = useRef<string | null>(null)
 
   const employeeName = employee ? `${employee.title} ${employee.firstName} ${employee.surname}` : ''
 
-  const groupOptions = useMemo(
-    () => groups.map(g => ({ value: g.id, label: g.group + (loadedGroupIds.includes(g.id) ? ' (Added)' : '') })),
-    [groups, loadedGroupIds],
-  )
-  const loadedGroups = useMemo(() => groups.filter(g => loadedGroupIds.includes(g.id)), [groups, loadedGroupIds])
-
-  // What actually gets saved is the union across every loaded group,
-  // regardless of which group's tab is currently being previewed.
-  const combinedBreakdown = useMemo(() => buildBreakdown(loadedGroups, catalog), [loadedGroups, catalog])
-
-  // Each tab previews just that one group's own grants.
-  const activeGroup = loadedGroups.find(g => g.id === activeTab) ?? null
-  const activeBreakdown = useMemo(
-    () => buildBreakdown(activeGroup ? [activeGroup] : [], catalog),
-    [activeGroup, catalog],
-  )
-
-  const hasGrantedPermissions = combinedBreakdown.some(b => b.grantedCount > 0)
-
-  // Accordion — switching tabs starts on the first module; otherwise keep
-  // whatever's open if still present.
-  useEffect(() => {
-    setOpenModule(prev => (prev && activeBreakdown.some(b => b.module === prev)) ? prev : (activeBreakdown[0]?.module ?? null))
-  }, [activeBreakdown])
-
-  // Fall back to the first remaining tab if the group it was showing gets removed.
-  useEffect(() => {
-    if (activeTab && !loadedGroupIds.includes(activeTab)) setActiveTab(loadedGroupIds[0] ?? null)
-  }, [activeTab, loadedGroupIds])
-
-  useLayoutEffect(() => {
-    const el = activeTab ? tabRefs.current[activeTab] : undefined
-    if (el) setIndicator({ left: el.offsetLeft, width: el.offsetWidth })
-  }, [activeTab, loadedGroups, isOpen])
-
-  // Seed the tabs from whatever the employee is already assigned, once per
-  // employee per time the modal is open — not on every background refetch.
+  // Seed from whatever the employee is already assigned, once per employee
+  // per time the modal is open — not on every background refetch.
   useEffect(() => {
     if (!isOpen || !employee) {
       seededForRef.current = null
@@ -95,18 +66,24 @@ export function EmployeePermissionsFormModal({ isOpen, onClose, showToast, mode,
     if (loadingAssignedGroups || !assignedGroupIds) return
     if (seededForRef.current === employee.employeeGuid) return
     const validIds = assignedGroupIds.filter(id => groups.some(g => g.id === id))
-    setLoadedGroupIds(validIds)
-    setActiveTab(validIds[0] ?? null)
+    setAssignedIds(validIds)
+    setInitialIds(validIds)
+    setPreviewId(validIds[0] ?? groups[0]?.id ?? null)
     seededForRef.current = employee.employeeGuid
   }, [isOpen, employee, loadingAssignedGroups, assignedGroupIds, groups])
+
+  useEffect(() => { paneRef.current?.scrollTo({ top: 0 }) }, [previewId])
+
+  const assignedGroups = useMemo(() => groups.filter(g => assignedIds.includes(g.id)), [groups, assignedIds])
+  const combinedNames = useMemo(() => namesOf(assignedGroups), [assignedGroups])
 
   if (!isOpen || !employee) return null
 
   function handleClose() {
-    setSelectedGroupId('')
-    setLoadedGroupIds([])
-    setActiveTab(null)
-    setOpenModule(null)
+    setAssignedIds([])
+    setInitialIds([])
+    setPreviewId(null)
+    setSearch('')
     setConfirming(false)
     setSaved(false)
     setFailure(null)
@@ -114,18 +91,8 @@ export function EmployeePermissionsFormModal({ isOpen, onClose, showToast, mode,
     onClose()
   }
 
-  function handleAddGroup() {
-    if (!selectedGroupId) return
-    setLoadedGroupIds(prev => prev.includes(selectedGroupId) ? prev : [...prev, selectedGroupId])
-    setActiveTab(selectedGroupId)
-  }
-
-  function removeGroup(id: string) {
-    setLoadedGroupIds(prev => prev.filter(gid => gid !== id))
-  }
-
-  function toggleModuleOpen(module: string) {
-    setOpenModule(prev => prev === module ? null : module)
+  function toggleAssigned(id: string) {
+    setAssignedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
   }
 
   if (saved) {
@@ -166,17 +133,19 @@ export function EmployeePermissionsFormModal({ isOpen, onClose, showToast, mode,
     )
   }
 
+  const title = (
+    <div className="modal-title"><i className={`lni ${isEdit ? 'lni-pencil-alt' : 'lni-lock'}`}></i> {isEdit ? 'Edit Permissions' : 'Assign Permissions'} — {employeeName}</div>
+  )
+
   if (loadingAssignedGroups) {
     return (
       <div className="modal-overlay open" id={isEdit ? 'edit-employee-permissions-modal' : 'assign-employee-permissions-modal'}>
-        <div className="modal modal-xl" onClick={e => e.stopPropagation()}>
+        <div className="modal pm-modal" onClick={e => e.stopPropagation()}>
           <div className="modal-hdr modal-hdr-blue">
-            <div className="modal-title"><i className={`lni ${isEdit ? 'lni-pencil-alt' : 'lni-lock'}`}></i> {isEdit ? 'Edit Permissions' : 'Assign Permissions'} — <span className="font-mono">{employeeName}</span></div>
-            <button className="modal-close" onClick={handleClose}><i className="lni lni-close"></i></button>
+            {title}
+            <button className="modal-close" onClick={handleClose} aria-label="Close"><i className="lni lni-close"></i></button>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 220 }}>
-            <span style={{ color: 'var(--g400)' }}>Loading current permissions…</span>
-          </div>
+          <div className="pm-empty"><span className="pm-spinner" aria-hidden="true"></span> Loading current permissions…</div>
         </div>
       </div>
     )
@@ -186,7 +155,7 @@ export function EmployeePermissionsFormModal({ isOpen, onClose, showToast, mode,
 
   function handleSubmit() {
     assignPermissionGroups.mutate(
-      { employeeGuid, permissionGroupGuids: loadedGroupIds },
+      { employeeGuid, permissionGroupGuids: assignedIds },
       {
         onSuccess: () => { setSaved(true); showToast(isEdit ? 'Permissions updated successfully' : 'Permissions assigned successfully') },
         onError: (error: Error) => {
@@ -198,192 +167,162 @@ export function EmployeePermissionsFormModal({ isOpen, onClose, showToast, mode,
     )
   }
 
+  // Granted access for a set of permission names, module by module.
+  function renderAccess(names: Set<string>, onEdit?: () => void) {
+    const uncatalogued = Array.from(names).filter(n => !catalogNames.has(n))
+    return (
+      <>
+        {modules.map(m => (
+          <ModuleAccessMatrix key={m} module={m} sections={sectionsByModule[m] ?? []} isGranted={p => names.has(p.permissionName)} />
+        ))}
+        <UncataloguedAccess names={uncatalogued} onEdit={onEdit} />
+      </>
+    )
+  }
+
+  const modulesTouched = (names: Set<string>) =>
+    modules.filter(m => (sectionsByModule[m] ?? []).some(s => s.pages.some(pg => pg.permissions.some(p => names.has(p.permissionName))))).length
+
+  const term = search.trim().toLowerCase()
+  const visibleGroups = term ? groups.filter(g => `${g.group} ${g.description}`.toLowerCase().includes(term)) : groups
+  const previewGroup = groups.find(g => g.id === previewId) ?? null
+  const previewNames = previewGroup ? namesOf([previewGroup]) : new Set<string>()
+  const previewAssigned = !!previewGroup && assignedIds.includes(previewGroup.id)
+
+  const added = groups.filter(g => assignedIds.includes(g.id) && !initialIds.includes(g.id))
+  const removed = groups.filter(g => initialIds.includes(g.id) && !assignedIds.includes(g.id))
+  const kept = groups.filter(g => assignedIds.includes(g.id) && initialIds.includes(g.id))
+  const destructive = Array.from(combinedNames).filter(n => DESTRUCTIVE.test(n))
+  const canReview = assignedIds.length > 0 && combinedNames.size > 0
+
   return (
     <div className="modal-overlay open" id={isEdit ? 'edit-employee-permissions-modal' : 'assign-employee-permissions-modal'}>
-      <div className="modal modal-xl modal-flex" style={{ position: 'relative' }} onClick={e => e.stopPropagation()}>
+      <div className="modal pm-modal" onClick={e => e.stopPropagation()}>
         <div className="modal-hdr modal-hdr-blue">
-          <div className="modal-title"><i className={`lni ${isEdit ? 'lni-pencil-alt' : 'lni-lock'}`}></i> {isEdit ? 'Edit Permissions' : 'Assign Permissions'} — <span className="font-mono">{employeeName}</span></div>
-          <button className="modal-close" onClick={handleClose}><i className="lni lni-close"></i></button>
+          {title}
+          <button className="modal-close" onClick={handleClose} aria-label="Close"><i className="lni lni-close"></i></button>
         </div>
 
-        <div className="modal-scroll">
-          {!confirming ? (
-            <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-              <div className="g3">
-                <div className="fg span2">
-                  <div className="lbl">Permission Group</div>
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <SearchSelect placeholder="Select permission group…" options={groupOptions} value={selectedGroupId} onChange={setSelectedGroupId} />
-                    </div>
-                    <button
-                      type="button"
-                      className="btn btn-neu"
-                      style={{ width: 40, padding: 0, justifyContent: 'center', flexShrink: 0 }}
-                      title="Add group permissions"
-                      disabled={!selectedGroupId}
-                      onClick={handleAddGroup}
-                    >
-                      <i className="lni lni-checkmark"></i>
-                    </button>
-                  </div>
+        {!confirming ? (
+          <div className="pm-body">
+            <div className="pm-top" style={{ gridTemplateColumns: 'minmax(0, 1fr)' }}>
+              <div>
+                <label className="lbl" htmlFor="ep-search">Permission groups</label>
+                <div className="pm-search">
+                  <i className="lni lni-search-alt" aria-hidden="true"></i>
+                  <input
+                    id="ep-search"
+                    className="ctrl"
+                    type="search"
+                    placeholder="Search groups by name or description…"
+                    value={search}
+                    onChange={e => setSearch(e.target.value)}
+                  />
+                  {search && <button type="button" className="pm-search-clear" onClick={() => setSearch('')} aria-label="Clear search"><i className="lni lni-close"></i></button>}
                 </div>
               </div>
+            </div>
 
-              {loadedGroups.length > 0 ? (
-                <div className="fg" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-                  <div className="lbl">Permissions</div>
-                  <div className="tab-bar" style={{ marginBottom: 12 }}>
-                    {loadedGroups.map(g => (
-                      <button
-                        key={g.id}
-                        ref={el => { if (el) tabRefs.current[g.id] = el }}
-                        type="button"
-                        className={`tab-btn${activeTab === g.id ? ' active' : ''}`}
-                        onClick={() => setActiveTab(g.id)}
-                      >
-                        {g.group}
-                        <i
-                          className="lni lni-close"
-                          style={{ fontSize: 10 }}
-                          title={`Remove ${g.group}`}
-                          onClick={e => { e.stopPropagation(); removeGroup(g.id) }}
-                        ></i>
+            <div className="pm-split">
+              <nav className="pm-rail" aria-label="Permission groups">
+                {visibleGroups.length === 0 ? (
+                  <div className="pm-rail-empty">{groups.length === 0 ? 'No permission groups yet. Create one in Permission Master.' : 'No group matches your search.'}</div>
+                ) : visibleGroups.map(g => {
+                  const on = assignedIds.includes(g.id)
+                  return (
+                    <div key={g.id} className={`pm-rail-item pm-group-item${g.id === previewId ? ' active' : ''}${on ? ' has' : ''}`}>
+                      <input
+                        type="checkbox"
+                        className="pm-check"
+                        checked={on}
+                        onChange={() => toggleAssigned(g.id)}
+                        aria-label={`${on ? 'Unassign' : 'Assign'} ${g.group}`}
+                      />
+                      <button type="button" className="pm-group-btn" onClick={() => setPreviewId(g.id)} aria-current={g.id === previewId ? 'true' : undefined}>
+                        <span className="pm-rail-name">{g.group}</span>
+                        <span className="pm-rail-count">{g.permissions.length}</span>
                       </button>
-                    ))}
-                    <span className="tab-indicator" style={{ left: indicator.left, width: indicator.width }} />
+                    </div>
+                  )
+                })}
+              </nav>
+
+              <section className="pm-pane" ref={paneRef} aria-live="polite">
+                {!previewGroup ? (
+                  <div className="pm-empty">
+                    <i className="lni lni-shield" aria-hidden="true"></i>
+                    <div><strong>Pick a group to preview</strong><br />Tick a group to assign it — access from every ticked group combines.</div>
                   </div>
-                  <div key={activeTab} className="perm-blocks-scroll tab-panel-in">
-                    {activeBreakdown.length === 0 ? (
-                      <div style={{ fontSize: 12, color: 'var(--g400)', fontStyle: 'italic', padding: '8px 2px' }}>No permissions found in the catalog.</div>
-                    ) : activeBreakdown.map(b => (
-                      <div key={b.module} className={`perm-block${openModule === b.module ? '' : ' closed'}`}>
-                        <div className="perm-block-hdr" onClick={() => toggleModuleOpen(b.module)}>
-                          <i className={`lni lni-${moduleIcon(b.module)}`}></i>
-                          {moduleLabel(b.module)}
-                          <span className="badge badge-blue" style={{ marginLeft: 6 }}>{b.grantedCount}/{b.totalCount} Accessible</span>
-                          <i className="lni lni-chevron-down perm-block-chevron" style={{ marginLeft: 'auto' }}></i>
-                        </div>
-                        <div className="perm-block-body">
-                          {b.pages.map(pg => {
-                            const accessible = pg.permissions.filter(p => p.granted)
-                            const notAccessible = pg.permissions.filter(p => !p.granted)
-                            return (
-                              <div key={pg.page} style={{ gridColumn: '1 / -1' }}>
-                                <div className="perm-page-title">
-                                  <i className="lni lni-folder"></i>
-                                  {pg.page}
-                                </div>
-                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-                                  <div style={{ borderRight: '1px dashed var(--g200)', paddingRight: 16 }}>
-                                    <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--green)', textTransform: 'uppercase', letterSpacing: '.03em', marginBottom: 6 }}>
-                                      <i className="lni lni-checkmark-circle" style={{ marginRight: 4 }}></i>Accessible
-                                    </div>
-                                    {accessible.length > 0 ? (
-                                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                                        {accessible.map((p, i) => (
-                                          <span key={`${p.name}-${i}`} className="badge badge-green">{p.name}</span>
-                                        ))}
-                                      </div>
-                                    ) : (
-                                      <div style={{ fontSize: 11.5, color: 'var(--g400)', fontStyle: 'italic' }}>None</div>
-                                    )}
-                                  </div>
-                                  <div>
-                                    <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--g400)', textTransform: 'uppercase', letterSpacing: '.03em', marginBottom: 6 }}>
-                                      <i className="lni lni-lock" style={{ marginRight: 4 }}></i>Not Accessible
-                                    </div>
-                                    {notAccessible.length > 0 ? (
-                                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                                        {notAccessible.map((p, i) => (
-                                          <span key={`${p.name}-${i}`} className="badge badge-grey">{p.name}</span>
-                                        ))}
-                                      </div>
-                                    ) : (
-                                      <div style={{ fontSize: 11.5, color: 'var(--g400)', fontStyle: 'italic' }}>None</div>
-                                    )}
-                                  </div>
-                                </div>
-                              </div>
-                            )
-                          })}
+                ) : (
+                  <div key={previewGroup.id} className="tab-panel-in">
+                    <div className="pm-pane-hdr">
+                      <span className="pm-pane-icon"><i className="lni lni-shield"></i></span>
+                      <div style={{ minWidth: 0 }}>
+                        <h3 className="pm-pane-title">{previewGroup.group}</h3>
+                        <div className="pm-pane-sub">
+                          <strong>{previewNames.size}</strong> permission{previewNames.size === 1 ? '' : 's'} across <strong>{modulesTouched(previewNames)}</strong> module{modulesTouched(previewNames) === 1 ? '' : 's'}
+                          {previewAssigned && <span className="badge badge-green" style={{ marginLeft: 8 }}>Assigned</span>}
                         </div>
                       </div>
-                    ))}
+                      <div className="pm-pane-actions">
+                        <button type="button" className={`btn btn-sm ${previewAssigned ? 'btn-neu' : 'btn-primary'}`} onClick={() => toggleAssigned(previewGroup.id)}>
+                          {previewAssigned ? <><i className="lni lni-close"></i> Unassign</> : <><i className="lni lni-plus"></i> Assign group</>}
+                        </button>
+                      </div>
+                    </div>
+                    {previewNames.size === 0
+                      ? <div className="pm-empty">This group has no permissions yet.</div>
+                      : renderAccess(previewNames)}
                   </div>
-                </div>
-              ) : (
-                <div className="perm-empty-hint">
-                  <i className="lni lni-arrow-up perm-empty-arrow"></i>
-                  <div className="perm-empty-icon-wrap">
-                    <i className="lni lni-graduation perm-empty-icon"></i>
-                    <span className="perm-empty-orbit book"><i className="lni lni-book"></i></span>
-                    <span className="perm-empty-orbit pencil"><i className="lni lni-pencil-alt"></i></span>
-                  </div>
-                  <div className="perm-empty-title">Pick a permission group above to get started</div>
-                  <div className="perm-empty-sub">Choose a group, then tap the tick button to preview the access it grants. Add more groups the same way — their access combines.</div>
-                </div>
-              )}
+                )}
+              </section>
             </div>
-          ) : (
-            <div className="tab-panel-in" style={{ padding: '4px 2px 8px' }}>
-              <div style={{ textAlign: 'center', marginBottom: 18 }}>
-                <div style={{
-                  width: 56, height: 56, borderRadius: '50%', margin: '0 auto 12px',
-                  background: 'var(--b50)', border: '1.5px solid var(--b200)',
-                  display: 'grid', placeItems: 'center',
-                }}>
-                  <i className="lni lni-shield" style={{ fontSize: 24, color: 'var(--b600)' }} />
-                </div>
-                <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--g900)' }}>{isEdit ? 'Confirm Permission Update' : 'Confirm Permission Assignment'}</div>
-                <div style={{ fontSize: 12.5, color: 'var(--g500)', marginTop: 4 }}>
-                  {isEdit ? 'Review the access scope before saving changes for this employee' : 'Review the access scope before assigning it to this employee'}
-                </div>
+          </div>
+        ) : (
+          <div className="pm-review tab-panel-in">
+            <div className="pm-review-hdr">
+              <div style={{ minWidth: 0 }}>
+                <h3 className="pm-pane-title">Review access for {employeeName}</h3>
+                <div className="pm-pane-sub">This is everything {employee.firstName} will be able to do, combined across the assigned groups.</div>
               </div>
+              <ReviewStats items={[
+                { label: 'Groups', value: assignedIds.length },
+                { label: 'Permissions', value: combinedNames.size },
+                { label: 'Modules', value: modulesTouched(combinedNames) },
+              ]} />
+            </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {combinedBreakdown.filter(b => b.grantedCount > 0).map(b => (
-                  <div key={b.module} style={{
-                    padding: '12px 14px',
-                    border: '1.5px solid var(--g200)', borderRadius: 'var(--rsm)', background: 'var(--surface)',
-                  }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-                      <span style={{
-                        width: 32, height: 32, borderRadius: 8, display: 'grid', placeItems: 'center',
-                        background: 'var(--b100)', color: 'var(--b700)', flexShrink: 0,
-                      }}>
-                        <i className={`lni lni-${moduleIcon(b.module)}`}></i>
-                      </span>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--g900)', flex: 1, minWidth: 0 }}>{moduleLabel(b.module)}</div>
-                      <span className="badge badge-green">{b.grantedCount} Accessible</span>
-                    </div>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                      {b.pages.flatMap(pg => pg.permissions.filter(p => p.granted).map((p, i) => (
-                        <span key={`${pg.page}-${p.name}-${i}`} className="badge badge-green">{p.name}</span>
-                      )))}
-                    </div>
-                  </div>
-                ))}
-              </div>
+            <div className="pm-group-changes">
+              {added.map(g => <span key={g.id} className="pm-group-chip added"><i className="lni lni-plus"></i>{g.group}</span>)}
+              {removed.map(g => <span key={g.id} className="pm-group-chip removed"><i className="lni lni-minus"></i>{g.group}</span>)}
+              {kept.map(g => <span key={g.id} className="pm-group-chip">{g.group}</span>)}
             </div>
-          )}
-        </div>
+
+            <DestructiveCaution names={destructive} subject={employee.firstName} />
+            {renderAccess(combinedNames)}
+          </div>
+        )}
 
         <div className="modal-footer">
           {!confirming ? (
             <>
+              <div className="pm-foot-summary" aria-live="polite">
+                {assignedIds.length === 0
+                  ? 'No groups assigned yet'
+                  : <><strong>{assignedIds.length}</strong> group{assignedIds.length === 1 ? '' : 's'} · <strong>{combinedNames.size}</strong> permission{combinedNames.size === 1 ? '' : 's'}</>}
+              </div>
               <button className="btn btn-neu" onClick={handleClose}>Cancel</button>
-              <button className="btn btn-primary" disabled={loadedGroups.length === 0 || !hasGrantedPermissions} onClick={() => setConfirming(true)}>
-                <i className="lni lni-checkmark"></i> {isEdit ? 'Review Changes' : 'Submit'}
+              <button className="btn btn-primary" disabled={!canReview} onClick={() => setConfirming(true)}>
+                Review <i className="lni lni-arrow-right"></i>
               </button>
             </>
           ) : (
             <>
-              <button className="btn btn-neu" onClick={() => setConfirming(false)}>
+              <button className="btn btn-neu" onClick={() => setConfirming(false)} disabled={assignPermissionGroups.isPending}>
                 <i className="lni lni-arrow-left"></i> Back
               </button>
               <button className="btn btn-success" disabled={assignPermissionGroups.isPending} onClick={handleSubmit}>
-                <i className="lni lni-checkmark-circle"></i> {assignPermissionGroups.isPending ? (isEdit ? 'Saving…' : 'Assigning…') : (isEdit ? 'Confirm & Save' : 'Confirm & Assign')}
+                <i className="lni lni-checkmark-circle"></i> {assignPermissionGroups.isPending ? (isEdit ? 'Saving…' : 'Assigning…') : (isEdit ? 'Save Changes' : 'Assign Permissions')}
               </button>
             </>
           )}

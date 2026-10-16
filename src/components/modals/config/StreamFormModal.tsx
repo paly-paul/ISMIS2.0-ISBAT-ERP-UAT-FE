@@ -6,6 +6,7 @@ import { FailurePopup } from '../shared/FailurePopup'
 import { StreamInput } from '@/lib/api/academic/stream'
 import { useStream } from '@/hooks/config/useStreams'
 import { AuthError } from '@/lib/api/client'
+import { scrollToFirstError } from '@/lib/scrollToFirstError'
 
 interface StreamFormModalProps extends ModalProps {
   mode: 'new' | 'edit'
@@ -55,6 +56,7 @@ export function StreamFormModal({ isOpen, onClose, showToast, mode, streamGuid, 
     if (!streamCode.trim()) e.streamCode = 'Stream Code is required'
     if (!streamName.trim()) e.streamName = 'Stream Name is required'
     setErrors(e)
+    scrollToFirstError(e)
     return Object.keys(e).length === 0
   }
 
@@ -150,7 +152,7 @@ export function StreamFormModal({ isOpen, onClose, showToast, mode, streamGuid, 
               onChange={e => { setStreamCode(e.target.value); clearError('streamCode') }}
               style={errors.streamCode ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.streamCode && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.streamCode}</p>}
+            {errors.streamCode && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.streamCode}</p>}
           </div>
           <div className="fg">
             <div className="lbl">Stream Name <span className="req">*</span></div>
@@ -162,7 +164,7 @@ export function StreamFormModal({ isOpen, onClose, showToast, mode, streamGuid, 
               onChange={e => { setStreamName(e.target.value); clearError('streamName') }}
               style={errors.streamName ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.streamName && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.streamName}</p>}
+            {errors.streamName && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.streamName}</p>}
           </div>
         </div>
         <div className="modal-footer">

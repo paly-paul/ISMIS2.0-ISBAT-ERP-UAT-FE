@@ -58,7 +58,7 @@ export function AddSlotModal({ isOpen, onClose, showToast, mode, intakeGuid, ter
   const { data: employees = [] } = useEmployees(isOpen)
   const lecturerOptions = employees.map(e => ({ value: e.employeeGuid, label: `${e.empName} (${e.shortCode})` }))
 
-  const { data: batchTimes = [] } = useBatchTimes()
+  const { data: batchTimes = [] } = useBatchTimes(isOpen)
   const batchTimeOptions = batchTimes.map(b => ({ value: b.batchTimeGuid, label: b.batchTime }))
 
   const { data: timeSlots = [] } = useTimeSlotDropdown(batchTimeGuid || null)
@@ -67,7 +67,7 @@ export function AddSlotModal({ isOpen, onClose, showToast, mode, intakeGuid, ter
   const { data: weekdays = [] } = useWeekdays()
   const weekdayOptions = weekdays.map(w => ({ value: w.weekDayGuid, label: w.dayName }))
 
-  const { data: rooms = [] } = useRooms()
+  const { data: rooms = [] } = useRooms(isOpen)
   const roomOptions = rooms.map(r => ({ value: r.roomGuid, label: r.location ? `${r.roomCode} — ${r.location}` : r.roomCode }))
   const selectedRoom = rooms.find(r => r.roomGuid === roomGuid)
 
@@ -204,7 +204,7 @@ export function AddSlotModal({ isOpen, onClose, showToast, mode, intakeGuid, ter
   const isSubmitting = createTimetableMutation.isPending || updateTimetableMutation.isPending
 
   return (
-    <div className="modal-overlay open" id="add-slot-modal" onClick={handleClose}>
+    <div className="modal-overlay open" id="add-slot-modal">
       <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
         <div className="modal-hdr modal-hdr-blue">
           <div className="modal-title"><i className="lni lni-calendar"></i> {isEdit ? 'Edit Schedule' : 'Create New Schedule'}</div>

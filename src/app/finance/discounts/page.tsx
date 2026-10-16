@@ -64,7 +64,7 @@ export default function Page() {
   const { page, setPage, totalPages, totalCount, pageItems } = usePagination(filteredRows, PAGE_SIZE)
 
   function confirmDeleteDiscount() {
-    if (!deleteTarget) return
+    if (!permissions.delete || !deleteTarget) return
     deleteDiscount.mutate(deleteTarget.discountGuid, {
       onSuccess: () => { setDeleteTarget(null); showToast('Discount deleted successfully') },
       onError: (error: Error) => showToast(error.message || 'Failed to delete discount', 'error'),

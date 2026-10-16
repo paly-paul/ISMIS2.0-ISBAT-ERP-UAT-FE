@@ -38,9 +38,11 @@ const mockProcBanks: ProcBank[] = [
   { procBankGuid: 'abb369d6-1d7b-45a8-aa8b-464db438d647', shortCode: 'BNK001', bankName: 'DTB-USH', compCode: 10, branchCode: 1, status: 2, accountCode: '0107927927', blocked: false, currencyGuid: null },
 ]
 
+const PROC_BANKS_LOAD_SIZE = 1000
+
 export function getProcBanks(): Promise<ProcBank[]> {
   if (MOCK_AUTH) return Promise.resolve(mockProcBanks)
-  return apiGet<ProcBankListResponse | null>('/api/v1/finance/proc-banks').then(data => data?.items ?? [])
+  return apiGet<ProcBankListResponse | null>(`/api/v1/finance/proc-banks?page=1&pageSize=${PROC_BANKS_LOAD_SIZE}`).then(data => data?.items ?? [])
 }
 
 export function createProcBank(input: ProcBankInput): Promise<ProcBank> {

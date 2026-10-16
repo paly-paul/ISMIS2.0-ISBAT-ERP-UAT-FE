@@ -52,7 +52,7 @@ export interface Currency {
 export type CurrencyInput = Omit<Currency, 'intCurrency' | 'currencyGuid'>
 
 // Response wrapper for the paginated currency list endpoint.
-interface CurrencyListResponse {
+export interface CurrencyListResponse {
   items: Currency[]
   totalCount: number
   pageNumber: number
@@ -72,6 +72,21 @@ let mockCurrencySeq = mockCurrencies.length + 1
 export function getCurrencies(page = 1, pageSize = 10): Promise<Currency[]> {
   if (MOCK_AUTH) return Promise.resolve(mockCurrencies)
   return apiGet<CurrencyListResponse | null>(`/api/v1/finance/currencies?page=${page}&pageSize=${pageSize}`).then(data => data?.items ?? [])
+}
+
+export function getCurrenciesPaged(page = 1, pageSize = 20, search = ''): Promise<CurrencyListResponse> {
+  if (MOCK_AUTH) {
+    const query = search.trim().toLowerCase()
+    const filtered = query
+      ? mockCurrencies.filter(c => `${c.currencyCode} ${c.currencyName}`.toLowerCase().includes(query))
+      : mockCurrencies
+    const start = (page - 1) * pageSize
+    return Promise.resolve({ items: filtered.slice(start, start + pageSize), totalCount: filtered.length, pageNumber: page, pageSize })
+  }
+  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) })
+  if (search.trim()) params.set('search', search.trim())
+  return apiGet<CurrencyListResponse | null>(`/api/v1/finance/currencies?${params.toString()}`)
+    .then(data => data ?? { items: [], totalCount: 0, pageNumber: page, pageSize })
 }
 
 // Confirmed real — a live sample response returned currencyGuid populated

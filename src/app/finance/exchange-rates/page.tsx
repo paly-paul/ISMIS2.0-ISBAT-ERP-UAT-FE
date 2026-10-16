@@ -12,6 +12,7 @@ import {
   useDeleteExchangeRate,
   ExchangeRate,
 } from '@/hooks/finance/useExchangeRates'
+import { usePagePermissions } from '@/hooks/users/usePagePermissions'
 
 // Stable reference for the "no data yet" case — `data = []` as a
 // destructuring default creates a NEW array literal every render while
@@ -74,6 +75,7 @@ function Delta({ current, previous }: { current: number; previous: number | null
 }
 
 export default function Page() {
+  const permissions = usePagePermissions()
   const [toast, setToast] = useState<{ msg: string; type: string } | null>(null)
   function showToast(msg: string, type = '') { setToast({ msg, type }); setTimeout(() => setToast(null), 3500) }
 
@@ -125,6 +127,8 @@ export default function Page() {
     // own exRate convention, see the rateInputs effect above.
     const apiExRate = num
     const existing = existingByCurrency.get(currencyGuid)
+    if (existing && !permissions.edit) { showToast('You do not have permission to update exchange rates.', 'warn'); return }
+    if (!existing && !permissions.add) { showToast('You do not have permission to add exchange rates.', 'warn'); return }
     try {
       if (existing) {
         // Only today's row can be corrected via PUT (put-exchange-rate.md);
@@ -144,6 +148,7 @@ export default function Page() {
   }
 
   async function handleSaveAll() {
+    if (!permissions.add && !permissions.edit) { showToast('You do not have permission to save exchange rates.', 'warn'); return }
     if (!rateDate) { showToast('Rate date is required.', 'warn'); return }
     const targets = rateCurrencies.filter(c => {
       const existing = existingByCurrency.get(c.currencyGuid)
@@ -199,6 +204,7 @@ export default function Page() {
   const historyTotalPages = Math.max(1, Math.ceil(historyTotal / historyPageSize))
 
   async function handleDelete(guid: string, label: string) {
+    if (!permissions.delete) { showToast('You do not have permission to delete exchange rates.', 'warn'); return }
     if (!window.confirm(`Delete the exchange rate ${label}? This is the only way to correct a historical rate — it can't be undone.`)) return
     try {
       await deleteMutation.mutateAsync(guid)
@@ -216,7 +222,7 @@ export default function Page() {
             <div className="pg-title">Exchange Rate Management</div>
             <div className="pg-sub">Set per-currency daily rates · Required before payments in that currency can be allocated</div>
           </div>
-          <button className="btn btn-primary" disabled={isSaving} onClick={handleSaveAll}>
+          <button className="btn btn-primary" disabled={isSaving || (!permissions.add && !permissions.edit)} onClick={handleSaveAll}>
             <i className="lni lni-save"></i> {isSaving ? 'Saving…' : 'Save Rates'}
           </button>
         </div>
@@ -295,7 +301,7 @@ export default function Page() {
                             <div className="font-bold text-g500">{prevDisplay != null ? prevDisplay.toLocaleString(undefined, { maximumFractionDigits: 6 }) : '—'}</div>
                             <Delta current={parseFloat(rateInputs[c.currencyGuid] ?? '') || 0} previous={prevDisplay} />
                           </div>
-                          <button className="btn btn-neu btn-sm" disabled={isSaving} onClick={() => saveRate(c.currencyGuid, c.currencyCode)}>
+                          <button className="btn btn-neu btn-sm" disabled={isSaving || (existing ? !permissions.edit : !permissions.add)} onClick={() => saveRate(c.currencyGuid, c.currencyCode)}>
                             <i className="lni lni-save"></i> {existing ? 'Update' : 'Save'}
                           </button>
                         </div>
@@ -346,12 +352,14 @@ export default function Page() {
                           <td><span className="badge badge-gold">{r.currencyCode}</span></td>
                           <td className="font-mono font-bold">{r.exRate.toLocaleString(undefined, { maximumFractionDigits: 6 })}</td>
                           <td>
-                            <button
-                              className="btn btn-neu btn-sm"
-                              onClick={() => handleDelete(r.exchangeRateGuid, `${r.currencyCode} · ${toDisplayDate(r.exDate.slice(0, 10))}`)}
-                            >
-                              <i className="lni lni-trash-can"></i>
-                            </button>
+                            {permissions.delete && (
+                              <button
+                                className="btn btn-neu btn-sm"
+                                onClick={() => handleDelete(r.exchangeRateGuid, `${r.currencyCode} · ${toDisplayDate(r.exDate.slice(0, 10))}`)}
+                              >
+                                <i className="lni lni-trash-can"></i>
+                              </button>
+                            )}
                           </td>
                         </tr>
                       ))}

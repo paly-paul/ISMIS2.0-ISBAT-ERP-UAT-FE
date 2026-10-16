@@ -1,8 +1,8 @@
 'use client'
+import { useMemo } from 'react'
 import { ModalProps } from '../types'
 import { useEmployee } from '@/hooks/employee/useEmployees'
-import { useDepartments } from '@/hooks/config/useDepartments'
-import { useDesignations } from '@/hooks/config/useDesignations'
+import { useCampusDropdown } from '@/hooks/config/useCampuses'
 import { formatDate } from '@/lib/date'
 
 const SEXES: Record<number, string> = { 1: 'Male', 2: 'Female', 3: 'Others' }
@@ -26,13 +26,24 @@ function Field({ label, value, mono, wide }: { label: string; value: React.React
 
 export function ViewEmployeeModal({ isOpen, onClose, employeeGuid, onEdit, canEdit }: ViewEmployeeModalProps) {
   const { data: employee, isLoading } = useEmployee(employeeGuid)
-  const { data: departments = [] } = useDepartments()
-  const { data: designations = [] } = useDesignations()
+  // Campus assignment is guid-only on the record (Employee.campusGuids) —
+  // resolved to display names against the same GET /academic/campus/dropdown
+  // list EmployeeFormModal's own Campus Assignment picker uses.
+  const { data: campuses = [] } = useCampusDropdown()
+  const campusDisplay = useMemo(() => {
+    const guids = employee?.campusGuids ?? []
+    if (guids.length === 0) return '—'
+    const names = guids.map(g => campuses.find(c => c.campusGuid === g)?.campusName ?? g)
+    return names.join(', ')
+  }, [employee?.campusGuids, campuses])
 
   if (!isOpen) return null
 
-  const deptName = employee?.intDept != null ? departments.find(d => String(d.intDept) === String(employee.intDept))?.deptName ?? '—' : '—'
-  const designationName = employee?.intDesignation != null ? designations.find(d => String(d.intDesignation) === String(employee.intDesignation))?.designationName ?? '—' : '—'
+  // Server-resolved directly on the record now (2026-09-15) — no more
+  // client-side int-keyed lookup against the Department/Designation
+  // masters needed for display.
+  const deptName = employee?.departmentName ?? '—'
+  const designationName = employee?.designationName ?? '—'
 
   if (isLoading || !employee) {
     return (
@@ -70,7 +81,7 @@ export function ViewEmployeeModal({ isOpen, onClose, employeeGuid, onEdit, canEd
             <Field label="First Name" value={employee.firstName} />
             <Field label="Surname" value={employee.surname} />
             <Field label="Other Name" value={employee.otherName || '—'} />
-            <Field label="University Email" value={employee.emailId} />
+            <Field label="Email" value={employee.emailId} />
             <Field label="Sex" value={SEXES[employee.sex] ?? '—'} />
             <Field label="Date of Birth" value={formatDate(employee.birthDate)} />
             <Field label="Place of Birth" value={employee.placeOfBirth} />
@@ -81,6 +92,7 @@ export function ViewEmployeeModal({ isOpen, onClose, employeeGuid, onEdit, canEd
             <Field label="Marital Status" value={MARITAL_STATUSES[employee.maritalStatus - 1] ?? '—'} />
             <Field label="Department" value={deptName} />
             <Field label="Designation" value={designationName} />
+            <Field label="Campus" value={campusDisplay} />
             <Field label="Approval Status" value={
               employee.isApproved
                 ? <span className="badge badge-green"><span className="bdot"></span>Approved</span>

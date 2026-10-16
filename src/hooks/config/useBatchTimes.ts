@@ -3,13 +3,18 @@ import { createBatchTime, deleteBatchTime, getBatchTimeById, getBatchTimes, upda
 
 const BATCH_TIMES_KEY = ['batchTimes']
 
-export function useBatchTimes() {
+// enabled defaults to true so every existing call site keeps eagerly
+// fetching exactly as before — only a caller that shouldn't hit the network
+// until it's actually needed (e.g. a modal that's always mounted regardless
+// of isOpen) needs to pass enabled={isOpen}.
+export function useBatchTimes(enabled = true) {
   return useQuery({
     queryKey: BATCH_TIMES_KEY,
     queryFn: () => getBatchTimes(),
     // Keep the cached list until a mutation explicitly refreshes it.
     staleTime: Infinity,
     gcTime: Infinity,
+    enabled,
   })
 }
 

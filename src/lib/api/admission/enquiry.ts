@@ -1,4 +1,4 @@
-import { apiGet, apiPost, apiPut } from '../client'
+import { apiGet, apiPost, apiPut, AuthError } from '../client'
 
 const MOCK_AUTH = process.env.NEXT_PUBLIC_AUTH_MOCK === 'true'
 
@@ -16,6 +16,10 @@ export interface EnquiryInput {
   studentName: string
   enquiryDate: string
   mobile: string
+  // Required (2026-10): Country GUID of the phone's dial code — separate from
+  // countryGuid (the student's country). mobile itself stays digits only.
+  // 400 "Mobile country is required." / 404 "Mobile country not found.".
+  mobileCountryGuid: string
   email: string | null
   // Confirmed via a real validation_error ("'Request Country Guid' must not
   // be empty.") — the create payload takes a guid here, not the plain
@@ -27,17 +31,31 @@ export interface EnquiryInput {
   // (which has no guid at all).
   countryGuid: string
   dob: string
+  // Optional per post-enquiry.md: 0 = Male, 1 = Female, 2 = Other.
+  gender: number | null
   remarks: string | null
   programGuid: string | null
   // Isbat Enquiry Source guid (enquirySource.ts's isbatSourceGuid) — a
-  // genuinely different master from enquirySourceGuid above. Confirmed as
-  // a guid field (not the previously-assumed unconfirmed int), but the
-  // create forms don't have an Isbat Enquiry Source picker, so this is
-  // still always sent null.
+  // genuinely different master from enquirySourceGuid above. Optional
+  // picker on the create forms; null when not chosen.
   isbatSourceGuid: string | null
-  // enquirySourceName from the (separate) Enquiry Source master.
+  // Free-text source typed on the form (e.g. who referred the candidate) —
+  // not the Enquiry Source master's name, which the server resolves itself
+  // and returns as enquirySourceName.
   sourceName: string | null
   enquiryTag: string | null
+  // Required since the 2026-10 enquiry handoff: the verificationToken from
+  // POST /enquiries/email-otp/verify (see verifyEnquiryEmailOtp below). Must
+  // have been issued for this same email (trimmed, case-insensitive) within
+  // the last 30 minutes, or the create is rejected and nothing is saved.
+  emailVerificationToken: string
+  // Optional sponsor details (post-enquiry.md, EnquirySponsorFields).
+  // spPhoneCountryGuid is required only when spPhone is given.
+  spName?: string | null
+  spPhone?: string | null
+  spPhoneCountryGuid?: string | null
+  spEmail?: string | null
+  spCountryGuid?: string | null
 }
 
 // Confirmed field-for-field against a real GET /api/v1/admissions/enquiries/:guid
@@ -72,16 +90,27 @@ export interface Enquiry {
   // selectedEnquiry.countryCode.trim() for a real enquiry where this came
   // back undefined.
   countryCode: string | null
+  countryGuid?: string | null
+  countryName?: string | null
   dob: string
   remarks: string | null
   programGuid: string | null
+  // From the enquiry's latest follow-up. advisorName is resolved on GET only
+  // (null on POST/PUT responses).
   advisorGuid: string | null
+  advisorName?: string | null
   followUpStatusGuid: string | null
   enquiryStatusGuid: string | null
   nextFollowDate: string | null
   enquiryTag: string | null
   isbatSourceGuid: string | null
+  // Free-text source typed on the enquiry — unchanged by the 2026-10
+  // handoff. The two names below are the resolved master-record names for
+  // enquirySourceGuid / isbatSourceGuid, returned on list, get, create and
+  // update. Optional so older cached rows/mocks still type-check.
   sourceName: string | null
+  enquirySourceName?: string | null
+  isbatSourceName?: string | null
   campusName: string | null
   campusCode: string | null
   programName: string | null
@@ -90,6 +119,27 @@ export interface Enquiry {
   enquiryStatusCode: string | null
   followUpStatusName: string | null
   followUpStatusCode: string | null
+  // Always true for enquiries created since email verification became a
+  // precondition of create (2026-10). Older enquiries may still be false,
+  // and there's no longer any endpoint to verify an existing enquiry.
+  emailVerified?: boolean | null
+  // Phone dial-code countries (2026-10) — all null on older enquiries, and
+  // names/prefixes null on the PUT response. Display as
+  // `${mobileCountryPrefix} ${mobile}` (formatEnquiryPhone).
+  mobileCountryGuid?: string | null
+  mobileCountryName?: string | null
+  mobileCountryPrefix?: string | null
+  spPhoneCountryGuid?: string | null
+  spPhoneCountryName?: string | null
+  spPhoneCountryPrefix?: string | null
+}
+
+// Full number for display — just the digits when there's no prefix (older
+// enquiries). Some master prefixes aren't real dial codes (e.g. "IND"); that's
+// a data fix on the backend's side.
+export function formatEnquiryPhone(e: Pick<Enquiry, 'mobile' | 'mobileCountryPrefix'>): string {
+  const prefix = e.mobileCountryPrefix?.trim()
+  return prefix ? `${prefix} ${e.mobile}` : e.mobile
 }
 
 interface EnquiryListResult {
@@ -111,13 +161,15 @@ export interface EnquiryCounts {
   odelSourceCount: number
 }
 
-// Confirmed via Update.bru — a materially different, narrower shape than
-// EnquiryInput: "assign advisor, change status, assign program/campus."
-// All fields optional except campusGuid per the docs. enquiryStatus is
-// deliberately left out — it's a number with no confirmed source (the
-// Enquiry Status master only exposes a guid) — until that's resolved.
+// UpdateEnquiryRequest (put-enquiry.md): campusGuid required, the rest
+// optional. advisorGuid is an employee guid that reassigns the advisor;
+// null or omitted keeps the current one — there's no way to clear it here.
+// 404 "Advisor not found." for an unknown guid (nothing saved). The PUT
+// response still has null advisorName/campusName/programName — refetch GET
+// /enquiries/{guid} for names (useUpdateEnquiry invalidates it).
 export interface EnquiryUpdateInput {
   advisorGuid?: string | null
+  enquiryStatusGuid?: string | null
   programGuid?: string | null
   campusGuid: string
 }
@@ -128,8 +180,15 @@ let mockEnquirySeq = 1
 // something to show after a mock create.
 const mockEnquiries: Enquiry[] = []
 
-export function createEnquiry(input: EnquiryInput): Promise<unknown> {
+// 201 returns the saved enquiry with the server-generated enquiryCode
+// (EQ{intakeCode}/{n}). campusName/programName/countryName come back null on
+// this response (enquiry-create-page.md) — use the form's own selections.
+export function createEnquiry(input: EnquiryInput): Promise<Enquiry> {
   if (MOCK_AUTH) {
+    const verifiedFor = mockVerificationTokens.get(input.emailVerificationToken)
+    if (!verifiedFor || verifiedFor.expiresAt < Date.now() || verifiedFor.email !== normalizeEmail(input.email ?? '')) {
+      return Promise.reject(new AuthError('bad_request', NOT_VERIFIED_MESSAGE))
+    }
     const enquiry: Enquiry = {
       enquiryGuid: String(mockEnquirySeq),
       enquiryCode: `EQ-MOCK-${mockEnquirySeq++}`,
@@ -139,6 +198,7 @@ export function createEnquiry(input: EnquiryInput): Promise<unknown> {
       studentName: input.studentName,
       enquiryDate: input.enquiryDate,
       mobile: input.mobile,
+      mobileCountryGuid: input.mobileCountryGuid,
       email: input.email ?? '',
       // Mock-only stand-in — the read-side DTO's countryCode is a plain
       // code string (confirmed on GET), but create now only takes
@@ -153,6 +213,9 @@ export function createEnquiry(input: EnquiryInput): Promise<unknown> {
       enquiryTag: input.enquiryTag,
       isbatSourceGuid: input.isbatSourceGuid,
       sourceName: input.sourceName,
+      enquirySourceName: null,
+      isbatSourceName: null,
+      emailVerified: true,
       advisorGuid: null,
       followUpStatusGuid: null,
       enquiryStatusGuid: null,
@@ -169,7 +232,101 @@ export function createEnquiry(input: EnquiryInput): Promise<unknown> {
     mockEnquiries.unshift(enquiry)
     return Promise.resolve(enquiry)
   }
-  return apiPost<unknown>('/api/v1/admissions/enquiries', input)
+  return apiPost<Enquiry>('/api/v1/admissions/enquiries', input)
+}
+
+// GET /admissions/enums/genders (get-enum-values.md) — `value` is what goes
+// out as EnquiryInput.gender (0 Male, 1 Female, 2 Other), `name` the label.
+export interface GenderOption {
+  value: number
+  name: string
+}
+
+const MOCK_GENDERS: GenderOption[] = [
+  { value: 0, name: 'Male' },
+  { value: 1, name: 'Female' },
+  { value: 2, name: 'Other' },
+]
+
+export function getEnquiryGenders(): Promise<GenderOption[]> {
+  if (MOCK_AUTH) return Promise.resolve(MOCK_GENDERS.map(g => ({ ...g })))
+  return apiGet<GenderOption[] | null>('/api/v1/admissions/enums/genders').then(data => data ?? [])
+}
+
+// ---- Email verification (post-enquiry-email-otp-request.md / -verify.md) ----
+//
+// Verification now happens BEFORE an enquiry exists: request an OTP for an
+// email, verify it, then pass the verificationToken to createEnquiry. The old
+// per-enquiry endpoints (/enquiries/{guid}/email-otp/...) were removed.
+
+export interface EnquiryEmailOtpChallenge {
+  // Needed to verify; a resend returns a new one that replaces the old.
+  challengeToken: string
+  maskedEmail: string
+  expiryMinutes: number
+}
+
+export interface EnquiryEmailVerification {
+  verificationToken: string
+  validityMinutes: number
+}
+
+// Exact server message for a missing/expired/mismatched token on create, so
+// callers can tell it apart from other bad_request failures.
+export const NOT_VERIFIED_MESSAGE = 'Email is not verified. Verify the email with an OTP before submitting the enquiry.'
+
+function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase()
+}
+
+function maskEmail(email: string): string {
+  const [local, domain] = email.split('@')
+  return domain ? `${local.slice(0, 2)}***@${domain}` : email
+}
+
+// Mock-only stand-ins for server state: sends per email (the real limit is 5
+// per email per 24h, shared by Send and Resend) and issued tokens.
+const MOCK_MAX_SENDS = 5
+const mockOtpSends = new Map<string, number>()
+const mockChallenges = new Map<string, { email: string; expiresAt: number }>()
+const mockVerificationTokens = new Map<string, { email: string; expiresAt: number }>()
+let mockTokenSeq = 1
+
+// POST /enquiries/email-otp/request — emails a 6-digit OTP valid for
+// expiryMinutes (10). 400 too_many_requests once the email has had 5 sends in
+// 24h; that response is the only source of truth for the limit (it survives
+// refreshes and other browsers), so the UI must not keep its own counter.
+export function requestEnquiryEmailOtp(email: string): Promise<EnquiryEmailOtpChallenge> {
+  if (MOCK_AUTH) {
+    const key = normalizeEmail(email)
+    const sends = mockOtpSends.get(key) ?? 0
+    if (sends >= MOCK_MAX_SENDS) {
+      return Promise.reject(new AuthError('too_many_requests', 'Too many OTP requests for this email. Please try again later.'))
+    }
+    mockOtpSends.set(key, sends + 1)
+    const challengeToken = `mock-challenge-${mockTokenSeq++}`
+    mockChallenges.set(challengeToken, { email: key, expiresAt: Date.now() + 10 * 60_000 })
+    return Promise.resolve({ challengeToken, maskedEmail: maskEmail(key), expiryMinutes: 10 })
+  }
+  return apiPost<EnquiryEmailOtpChallenge>('/api/v1/admissions/enquiries/email-otp/request', { email: email.trim() })
+}
+
+// POST /enquiries/email-otp/verify — email must be the one the challenge was
+// issued for. 400 bad_request "Invalid or expired OTP." on a wrong code, an
+// expired challenge or a different email. There is no per-challenge guess
+// limit. Mock mode accepts 123456, same as login.
+export function verifyEnquiryEmailOtp(email: string, challengeToken: string, otp: string): Promise<EnquiryEmailVerification> {
+  if (MOCK_AUTH) {
+    const key = normalizeEmail(email)
+    const challenge = mockChallenges.get(challengeToken)
+    if (otp !== '123456' || !challenge || challenge.email !== key || challenge.expiresAt < Date.now()) {
+      return Promise.reject(new AuthError('bad_request', 'Invalid or expired OTP.'))
+    }
+    const verificationToken = `mock-verified-${mockTokenSeq++}`
+    mockVerificationTokens.set(verificationToken, { email: key, expiresAt: Date.now() + 30 * 60_000 })
+    return Promise.resolve({ verificationToken, validityMinutes: 30 })
+  }
+  return apiPost<EnquiryEmailVerification>('/api/v1/admissions/enquiries/email-otp/verify', { email: email.trim(), challengeToken, otp })
 }
 
 // List query for the enquiry-list page. Real: paginated, page/pageSize
@@ -180,12 +337,18 @@ export function createEnquiry(input: EnquiryInput): Promise<unknown> {
 // assumption an unrecognized param is just ignored server-side rather than
 // erroring, so this degrades to today's unfiltered-page behavior if the
 // backend doesn't actually support it.
-export function getEnquiries(page = 1, pageSize = 10, search = ''): Promise<EnquiryListResult> {
+// enquiryStatusGuid (2026-10, get-enquiries.md): server-side status filter,
+// ANDed with the rest; totalCount reflects it. Left out entirely for "All"
+// (never sent as ''). Enquiries with no status drop out when it's set; an
+// unknown guid just returns an empty list.
+export function getEnquiries(page = 1, pageSize = 10, search = '', enquiryStatusGuid = ''): Promise<EnquiryListResult> {
   if (MOCK_AUTH) {
-    return Promise.resolve({ items: mockEnquiries, totalCount: mockEnquiries.length, pageNumber: page, pageSize })
+    const items = enquiryStatusGuid ? mockEnquiries.filter(e => e.enquiryStatusGuid === enquiryStatusGuid) : mockEnquiries
+    return Promise.resolve({ items, totalCount: items.length, pageNumber: page, pageSize })
   }
   const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) })
   if (search.trim()) params.set('search', search.trim())
+  if (enquiryStatusGuid) params.set('enquiryStatusGuid', enquiryStatusGuid)
   return apiGet<EnquiryListResult | null>(`/api/v1/admissions/enquiries?${params.toString()}`)
     .then(data => data ?? { items: [], totalCount: 0, pageNumber: page, pageSize })
 }
@@ -225,8 +388,7 @@ export function getEnquiryById(guid: string): Promise<Enquiry> {
   return apiGet<Enquiry>(`/api/v1/admissions/enquiries/${guid}`)
 }
 
-// Assign advisor/programme/campus and (once confirmed) status on an
-// existing enquiry.
+// Change status/programme/campus on an existing enquiry.
 export function updateEnquiry(guid: string, input: EnquiryUpdateInput): Promise<Enquiry> {
   if (MOCK_AUTH) {
     const existing = mockEnquiries.find(e => e.enquiryGuid === guid)

@@ -20,6 +20,8 @@ export function useStudentDiscount(studentGuid: string | null, enabled: boolean)
     queryKey: [...STUDENT_DISCOUNT_KEY, studentGuid],
     queryFn: () => getStudentDiscount(studentGuid as string),
     enabled: enabled && !!studentGuid,
+    staleTime: 5 * 60 * 1000,
+    gcTime: Infinity,
   })
 }
 

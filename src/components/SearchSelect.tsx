@@ -8,24 +8,41 @@ interface SearchSelectProps {
   options: (string | Opt)[]
   value?: string
   onChange?: (val: string) => void
+  onSearch?: (search: string) => void
+  onOpenChange?: (open: boolean) => void
   placeholder?: string
   className?: string
   style?: React.CSSProperties
   disabled?: boolean
+  isLoading?: boolean
+  hasNextPage?: boolean
+  isFetchingNextPage?: boolean
+  onLoadMore?: () => void
 }
 
 function normalise(raw: (string | Opt)[]): Opt[] {
-  return raw.map(o => (typeof o === 'string' ? { value: o, label: o } : o))
+  const unique = new Map<string, Opt>()
+  raw.forEach(o => {
+    const option = typeof o === 'string' ? { value: o, label: o } : o
+    if (!unique.has(option.value)) unique.set(option.value, option)
+  })
+  return [...unique.values()]
 }
 
 export function SearchSelect({
   options,
   value,
   onChange,
+  onSearch,
+  onOpenChange,
   placeholder,
   className,
   style,
   disabled,
+  isLoading = false,
+  hasNextPage = false,
+  isFetchingNextPage = false,
+  onLoadMore,
 }: SearchSelectProps) {
   const normalised = normalise(options)
 
@@ -42,12 +59,29 @@ export function SearchSelect({
   const inputRef   = useRef<HTMLInputElement>(null)
   const optsRef    = useRef<HTMLDivElement>(null)
 
-  const current  = controlled ? value! : internal
-  const selected = normalised.find(o => o.value === current)
+  // With server-side search (onSearch) the options are only the current
+  // search's results, and closing the dropdown resets the search — so an
+  // option picked from a search drops out of `options` and the trigger fell
+  // back to the placeholder. Remember the picked option to keep its label.
+  const [picked, setPicked] = useState<Opt | null>(null)
 
-  const visible = search.trim()
-    ? normalised.filter(o => o.label.toLowerCase().includes(search.toLowerCase()))
+  const current  = controlled ? value! : internal
+  const selected = normalised.find(o => o.value === current) ?? (picked && picked.value === current ? picked : undefined)
+
+  const searchTokens = search.trim().toLowerCase().split(/\s+/).filter(Boolean)
+  const visible = searchTokens.length > 0
+    ? normalised.filter(o => {
+        const labelLower = (o.label ?? '').toLowerCase()
+        const valueLower = (o.value ?? '').toLowerCase()
+        return searchTokens.every(token => labelLower.includes(token) || valueLower.includes(token))
+      })
     : normalised
+
+  function handleOptionsScroll(e: React.UIEvent<HTMLDivElement>) {
+    if (!hasNextPage || isFetchingNextPage || !onLoadMore) return
+    const el = e.currentTarget
+    if (el.scrollTop > 0 && el.scrollHeight - el.scrollTop - el.clientHeight < 48) onLoadMore()
+  }
 
   function calcPos() {
     if (!triggerRef.current) return
@@ -75,12 +109,17 @@ export function SearchSelect({
   function openDrop() {
     calcPos()
     setOpen(true)
+    onOpenChange?.(true)
   }
 
   useEffect(() => {
-    if (open) inputRef.current?.focus()
-    else setSearch('')
-  }, [open])
+    if (open) {
+      inputRef.current?.focus()
+    } else {
+      setSearch('')
+      onSearch?.('')
+    }
+  }, [open, onSearch])
 
   // Long option lists (e.g. DatePicker's year picker — 111 entries) always
   // rendered starting from the top on open, with no indication the currently
@@ -102,8 +141,10 @@ export function SearchSelect({
     if (!open) return
     function handle(e: MouseEvent) {
       const t = e.target as Node
-      if (!triggerRef.current?.contains(t) && !dropRef.current?.contains(t))
-        setOpen(false)
+        if (!triggerRef.current?.contains(t) && !dropRef.current?.contains(t)) {
+          setOpen(false)
+          onOpenChange?.(false)
+        }
     }
     function updatePos() {
       calcPos()
@@ -121,18 +162,21 @@ export function SearchSelect({
       document.removeEventListener('scroll', onScroll, true)
       observer.disconnect()
     }
-  }, [open])
+  }, [open, onOpenChange])
 
   function select(val: string) {
+    setPicked(normalised.find(o => o.value === val) ?? null)
     if (controlled) onChange?.(val)
-    else setInternal(val)
+    else { setInternal(val); onChange?.(val) }
     setOpen(false)
+    onOpenChange?.(false)
   }
 
   function clear() {
     if (controlled) onChange?.('')
-    else setInternal('')
+    else { setInternal(''); onChange?.('') }
     setOpen(false)
+    onOpenChange?.(false)
   }
 
   const displayLabel = selected?.label ?? placeholder ?? (normalised[0]?.label ?? '')
@@ -193,13 +237,26 @@ export function SearchSelect({
               style={{ fontSize: 12, height: 28, padding: '4px 8px' }}
               placeholder="Search…"
               value={search}
-              onChange={e => setSearch(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Escape') setOpen(false) }}
+              onChange={e => {
+                const val = e.target.value
+                setSearch(val)
+                onSearch?.(val)
+              }}
+              onKeyDown={e => {
+                if (e.key === 'Escape') { setOpen(false); onOpenChange?.(false) }
+                if (e.key === 'Enter' && visible.length > 0) {
+                  e.preventDefault()
+                  const first = visible.find(o => !o.disabled)
+                  if (first) select(first.value)
+                }
+              }}
               onClick={e => e.stopPropagation()}
             />
           </div>
-          <div className="ss-opts" ref={optsRef} style={{ maxHeight: pos.maxHeight }}>
-            {visible.length === 0
+          <div className="ss-opts" ref={optsRef} style={{ maxHeight: pos.maxHeight }} onScroll={handleOptionsScroll}>
+            {isLoading
+              ? <div className="ss-no-match"><i className="lni lni-spinner-arrow" /> Loading results…</div>
+              : visible.length === 0
               ? <div className="ss-no-match">No matches</div>
               : visible.map(o => (
                   <div
@@ -213,6 +270,11 @@ export function SearchSelect({
                 ))
             }
           </div>
+          {isFetchingNextPage && (
+            <div className="ss-no-match" style={{ borderTop: '1px solid var(--g100)', background: 'var(--g50)' }}>
+              Loading more…
+            </div>
+          )}
         </div>,
         document.body
       )}

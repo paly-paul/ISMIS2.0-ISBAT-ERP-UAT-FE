@@ -8,6 +8,7 @@ import { BankInput } from '@/lib/api/finance/bank'
 import { ProcBankStatus, STATUS_LABELS, STATUS_VALUES } from '@/lib/api/finance/procBank'
 import { useBank } from '@/hooks/finance/useBanks'
 import { AuthError } from '@/lib/api/client'
+import { scrollToFirstError } from '@/lib/scrollToFirstError'
 
 // Add and Edit share this form — differ in prefill and which mutation runs.
 interface BankFormModalProps extends ModalProps {
@@ -63,6 +64,7 @@ export function BankFormModal({ isOpen, onClose, showToast, mode, bankGuid, crea
     if (!shortCode.trim()) e.shortCode = 'Short Code is required'
     if (!bankName.trim()) e.bankName = 'Bank Name is required'
     setErrors(e)
+    scrollToFirstError(e)
     return Object.keys(e).length === 0
   }
 
@@ -161,7 +163,7 @@ export function BankFormModal({ isOpen, onClose, showToast, mode, bankGuid, crea
               onChange={e => { setShortCode(e.target.value.toUpperCase()); clearError('shortCode') }}
               style={errors.shortCode ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.shortCode && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.shortCode}</p>}
+            {errors.shortCode && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.shortCode}</p>}
           </div>
           <div className="fg">
             <div className="lbl">Bank Name <span className="req">*</span></div>
@@ -174,7 +176,7 @@ export function BankFormModal({ isOpen, onClose, showToast, mode, bankGuid, crea
               onChange={e => { setBankName(e.target.value); clearError('bankName') }}
               style={errors.bankName ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.bankName && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.bankName}</p>}
+            {errors.bankName && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.bankName}</p>}
           </div>
           <div className="fg">
             <div className="lbl">Company Code</div>

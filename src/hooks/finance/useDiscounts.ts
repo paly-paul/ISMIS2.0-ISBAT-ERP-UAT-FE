@@ -3,7 +3,7 @@ import { createDiscount, deleteDiscount, Discount, DiscountInput, getDiscountByI
 
 const DISCOUNTS_KEY = ['discounts']
 
-export function useDiscounts() {
+export function useDiscounts(enabled = true) {
   return useQuery({
     queryKey: DISCOUNTS_KEY,
     queryFn: () => getDiscounts(),
@@ -12,6 +12,7 @@ export function useDiscounts() {
     // instead of on every remount/window focus.
     staleTime: Infinity,
     gcTime: Infinity,
+    enabled,
   })
 }
 
@@ -31,6 +32,8 @@ export function useDiscount(guid: string | null, enabled: boolean) {
     queryKey: [...DISCOUNTS_KEY, guid],
     queryFn: () => getDiscountById(guid as string),
     enabled: enabled && !!guid,
+    staleTime: 5 * 60 * 1000,
+    gcTime: Infinity,
   })
 }
 

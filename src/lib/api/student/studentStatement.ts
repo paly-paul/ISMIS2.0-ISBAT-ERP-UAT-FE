@@ -55,6 +55,7 @@ export interface StudentStatementPaymentDto {
   currencyName: string | null
   receipt: string | null
   payType: string | null
+  semesterName?: string | null
 }
 
 // category: PaymentGroupCategory — 1=Tuition, 2=Other, 3=Nche, 4=Guild
@@ -63,16 +64,26 @@ export interface StudentStatementOutstandingDto {
   category: number
   ledgerGuid: string | null
   semesterGuid: string | null
+  semesterName?: string | null
   description: string | null
   currencyGuid: string | null
   currencyName: string | null
   outstanding: number
 }
 
+export interface StudentStatementFuturePaymentDto {
+  slNo: number
+  description: string | null
+  semesterName?: string | null
+  amountDue: number
+  currencyName: string | null
+}
+
 export interface StudentStatementDto {
   header: StudentStatementHeaderDto
   paymentHistory: StudentStatementPaymentDto[]
   outstandingItems: StudentStatementOutstandingDto[]
+  futurePayments?: StudentStatementFuturePaymentDto[]
 }
 
 export interface GetStudentFeeSummaryDto {

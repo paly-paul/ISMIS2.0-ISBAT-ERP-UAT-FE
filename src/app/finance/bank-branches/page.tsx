@@ -70,7 +70,7 @@ export default function Page() {
   }
 
   function confirmDeleteBankBranch() {
-    if (!deleteTarget) return
+    if (!permissions.delete || !deleteTarget) return
     deleteBankBranch.mutate(deleteTarget.bankBranchGuid, {
       onSuccess: () => { setDeleteTarget(null); showToast('Bank branch deleted successfully') },
       onError: (error: Error) => showToast(error.message || 'Failed to delete bank branch', 'error'),

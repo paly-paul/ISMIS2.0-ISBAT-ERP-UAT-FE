@@ -1,5 +1,6 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { createRepetitionTag, deleteRepetitionTag, getRepetitionTagById, getRepetitionTags, RepetitionTag, RepetitionTagInput, updateRepetitionTag } from '@/lib/api/academic/repetitionTag'
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
+import { createRepetitionTag, deleteRepetitionTag, getRepetitionTagById, getRepetitionTags, getRepetitionTagsPaged, RepetitionTag, RepetitionTagInput, updateRepetitionTag } from '@/lib/api/academic/repetitionTag'
+import { getNextPageParam } from '@/lib/pagination'
 
 const REPETITION_TAGS_KEY = ['repetitionTags']
 
@@ -20,10 +21,8 @@ export function useRepetitionTags(enabled = true) {
 }
 
 export function useCreateRepetitionTag() {
-  const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (input: RepetitionTagInput) => createRepetitionTag(input),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: REPETITION_TAGS_KEY }),
   })
 }
 
@@ -42,6 +41,32 @@ export function useRepetitionTagSearch(search: string) {
     queryKey: [...REPETITION_TAGS_KEY, 'search', q],
     queryFn: () => getRepetitionTags(q),
     enabled: q.length > 0,
+    staleTime: Infinity,
+    gcTime: Infinity,
+  })
+}
+
+// Real server-side pagination (2026-09-09) for Repetition Tag's own table —
+// see getRepetitionTagsPaged's own comment. keepPreviousData avoids the
+// table flashing to a loading state on every page/search change; the old
+// page's rows stay on screen (isFetching still flips true) until the new
+// page resolves, same UX enquiry-list's own useEnquiries gets from
+// react-query's default placeholderData behavior on a stable queryKey shape.
+export function useRepetitionTagsPaged(page: number, pageSize: number, search: string) {
+  return useQuery({
+    queryKey: [...REPETITION_TAGS_KEY, 'paged', page, pageSize, search],
+    queryFn: () => getRepetitionTagsPaged(page, pageSize, search),
+    placeholderData: keepPreviousData,
+  })
+}
+
+export function useSearchRepetitionTagsInfinite(search: string, pageSize: number, enabled: boolean) {
+  return useInfiniteQuery({
+    queryKey: [...REPETITION_TAGS_KEY, 'search-infinite', search, pageSize],
+    queryFn: ({ pageParam }) => getRepetitionTagsPaged(pageParam, pageSize, search),
+    initialPageParam: 1,
+    getNextPageParam,
+    enabled,
     staleTime: Infinity,
     gcTime: Infinity,
   })

@@ -30,29 +30,59 @@ const mockProgramGroups: ProgramGroup[] = [
 ]
 
 // Response wrapper for the paginated programme group list endpoint.
-interface ProgramGroupListResponse {
+export interface ProgramGroupListResponse {
   items: ProgramGroup[]
   totalCount: number
   pageNumber: number
   pageSize: number
 }
 
+// GET /program-groups takes only page/pageSize; it has NO ?search= param
+// (per erp-docs). Searching therefore fetches every group in one large page
+// and filters by code/name here. pageSize has no server-side upper bound.
+const SEARCH_FETCH_SIZE = 1000
+
+function matchesSearch(g: ProgramGroup, q: string) {
+  const needle = q.toLowerCase()
+  return g.groupCode.toLowerCase().includes(needle) || g.groupName.toLowerCase().includes(needle)
+}
+
 // Fetch the programme group list, using mock data when the mock auth flag is
-// enabled. search is forwarded to the endpoint's own ?search= param (same
-// convention as getIntakes/getSkills) rather than filtered client-side — not
-// confirmed against a spec, so callers pair it with a client-side re-filter
-// of whatever comes back, keeping results correct even if the backend
-// doesn't actually recognize the param.
+// enabled. A non-empty search filters client-side (see above).
 export function getProgramGroups(page = 1, pageSize = 10, search = ''): Promise<ProgramGroup[]> {
   const q = search.trim()
-  if (MOCK_AUTH) {
-    if (!q) return Promise.resolve(mockProgramGroups)
-    const needle = q.toLowerCase()
-    return Promise.resolve(mockProgramGroups.filter(g => g.groupCode.toLowerCase().includes(needle) || g.groupName.toLowerCase().includes(needle)))
+  if (MOCK_AUTH) return Promise.resolve(q ? mockProgramGroups.filter(g => matchesSearch(g, q)) : mockProgramGroups)
+  const params = q
+    ? new URLSearchParams({ page: '1', pageSize: String(SEARCH_FETCH_SIZE) })
+    : new URLSearchParams({ page: String(page), pageSize: String(pageSize) })
+  return apiGet<ProgramGroupListResponse | null>(`/api/v1/academic/program-groups?${params.toString()}`)
+    .then(data => {
+      const items = data?.items ?? []
+      return q ? items.filter(g => matchesSearch(g, q)) : items
+    })
+}
+
+// Real server-side pagination variant (2026-09-09) — for Programme Group's
+// own table, which used to call getProgramGroups() above at
+// PROGRAM_GROUPS_PAGE_SIZE (1000) and paginate/search client-side. The plain
+// function above stays as-is for programme-master/ProgrammeModal/
+// ViewProgrammeModal, which genuinely need the full unpaginated list to
+// resolve group names for their own tables/dropdowns. This one keeps the
+// real totalCount/pageNumber/pageSize the endpoint already returns
+// (ProgramGroupListResponse) instead of discarding it down to just items.
+// Without a search this is real server paging. With one, the backend can't
+// filter, so it searches the full list and pages the matches here.
+export function getProgramGroupsPaged(page = 1, pageSize = 10, search = ''): Promise<ProgramGroupListResponse> {
+  const q = search.trim()
+  if (MOCK_AUTH || q) {
+    return getProgramGroups(1, SEARCH_FETCH_SIZE, q).then(matches => {
+      const start = (page - 1) * pageSize
+      return { items: matches.slice(start, start + pageSize), totalCount: matches.length, pageNumber: page, pageSize }
+    })
   }
   const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) })
-  if (q) params.set('search', q)
-  return apiGet<ProgramGroupListResponse | null>(`/api/v1/academic/program-groups?${params.toString()}`).then(data => data?.items ?? [])
+  return apiGet<ProgramGroupListResponse | null>(`/api/v1/academic/program-groups?${params.toString()}`)
+    .then(data => data ?? { items: [], totalCount: 0, pageNumber: page, pageSize })
 }
 
 // Payload used when creating or updating a programme group.

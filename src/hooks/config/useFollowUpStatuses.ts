@@ -3,7 +3,7 @@ import { createFollowUpStatus, deleteFollowUpStatus, FollowUpStatus, FollowUpSta
 
 const FOLLOWUP_STATUSES_KEY = ['followup-statuses']
 
-export function useFollowUpStatuses() {
+export function useFollowUpStatuses(enabled = true) {
   return useQuery({
     queryKey: FOLLOWUP_STATUSES_KEY,
     queryFn: () => getFollowUpStatuses(),
@@ -12,6 +12,7 @@ export function useFollowUpStatuses() {
     // instead of on every remount/window focus.
     staleTime: Infinity,
     gcTime: Infinity,
+    enabled,
   })
 }
 

@@ -4,11 +4,17 @@ import { PROGRAM_MASTERS_KEY } from './useProgramMaster'
 
 const PROGRAM_APPROVALS_KEY = ['programApprovals']
 
-export function useProgramApprovals(pageNumber = 1, pageSize = 20, search = '') {
+// enabled defaults to true so every existing call site keeps eagerly
+// fetching exactly as before — only a caller that shouldn't hit the network
+// unless it's actually needed (e.g. the standalone Fee Structure page's rare
+// "attached to a not-yet-approved programme" fallback — see that page) needs
+// to pass enabled explicitly.
+export function useProgramApprovals(pageNumber = 1, pageSize = 20, search = '', enabled = true, programLevelGuid = '') {
   return useQuery({
-    queryKey: [...PROGRAM_APPROVALS_KEY, pageNumber, pageSize, search],
-    queryFn: () => getProgramApprovals(pageNumber, pageSize, search),
+    queryKey: [...PROGRAM_APPROVALS_KEY, pageNumber, pageSize, search, programLevelGuid],
+    queryFn: () => getProgramApprovals(pageNumber, pageSize, search, programLevelGuid),
     placeholderData: keepPreviousData,
+    enabled,
   })
 }
 

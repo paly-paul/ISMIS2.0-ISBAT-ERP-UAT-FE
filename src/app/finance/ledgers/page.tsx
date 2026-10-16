@@ -78,7 +78,7 @@ export default function Page() {
   const { page, setPage, totalPages, totalCount, pageItems } = usePagination(filteredRows, PAGE_SIZE)
 
   function confirmDeleteLedger() {
-    if (!deleteTarget) return
+    if (!permissions.delete || !deleteTarget) return
     deleteLedger.mutate(deleteTarget.ledgerGuid, {
       onSuccess: () => { setDeleteTarget(null); showToast('Ledger deleted successfully') },
       onError: (error: Error) => showToast(error.message || 'Failed to delete ledger', 'error'),

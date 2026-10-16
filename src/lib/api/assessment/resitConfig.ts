@@ -34,7 +34,10 @@ let mockData: ResitConfigDto[] = [
     startDate: '2026-01-06T00:00:00',
     endDate: '2026-03-13T00:00:00',
     isActive: true,
-    academicIntakeGuid: 'de6d9dfa-5634-4a87-88b7-7e8d2e93b4e2'
+    // Mock current intake (intake.ts's mockIntakes, currentIntake: true) —
+    // pages that filter resits by the selected intake (Resit IA Evaluation,
+    // Resit Mark Update) otherwise find no resit in mock mode.
+    academicIntakeGuid: 'a1b2c3d4-0000-4000-8000-000000000001'
   }
 ]
 

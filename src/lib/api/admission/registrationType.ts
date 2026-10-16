@@ -20,9 +20,11 @@ const mockRegistrationTypes: RegistrationType[] = [
   { intType: 4, registrationTypeGuid: 'reg-type-mock-4', registrationType: 'Existing Students' },
 ]
 
-export function getRegistrationTypes(): Promise<RegistrationType[]> {
-  if (MOCK_AUTH) return Promise.resolve(mockRegistrationTypes)
-  return apiGet<RegistrationType[] | null>('/api/v1/admissions/registration-types')
+// Optional ?search= on the type name (case-insensitive contains, 2026-10).
+export function getRegistrationTypes(search?: string): Promise<RegistrationType[]> {
+  const term = search?.trim()
+  if (MOCK_AUTH) return Promise.resolve(term ? mockRegistrationTypes.filter(t => t.registrationType.toLowerCase().includes(term.toLowerCase())) : mockRegistrationTypes)
+  return apiGet<RegistrationType[] | null>(`/api/v1/admissions/registration-types${term ? `?search=${encodeURIComponent(term)}` : ''}`)
     .then((data: any) => Array.isArray(data) ? data : (data && typeof data === 'object' ? (data.items || Object.values(data).find(Array.isArray) || []) : []))
     .catch(err => {
       // Confirmed via a real response: an empty Registration Type master

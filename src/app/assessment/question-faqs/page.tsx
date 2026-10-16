@@ -1,6 +1,5 @@
 'use client'
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
 import { Toast } from '@/components/Toast'
 import { ScrollTable } from '@/components/ScrollTable'
 import { ActionMenu } from '@/components/ActionMenu'
@@ -17,7 +16,6 @@ const DISPLAY_PAGE_SIZE = 10
 
 export default function QuestionFaqsPage() {
   const permissions = usePagePermissions()
-  const router = useRouter()
   const [toast, setToast] = useState<{ msg: string; type: string } | null>(null)
   
   const [isModalOpen, setIsModalOpen] = useState(false)
@@ -79,11 +77,7 @@ export default function QuestionFaqsPage() {
           <h1 className="text-xl font-semibold text-g900">Question FAQs</h1>
           <p className="text-sm text-g500 mt-0.5">Manage frequently asked questions and their standard answers</p>
         </div>
-        <div className="flex flex-wrap gap-2 w-full sm:w-auto">
-          <button className="btn btn-ghost flex-1 sm:flex-none justify-center" onClick={() => router.push('/assessment/dashboard')}>
-            <i className="lni lni-arrow-left" /> Back
-          </button>
-          {permissions.add && (
+        <div className="flex flex-wrap gap-2 w-full sm:w-auto">          {permissions.add && (
             <button className="btn btn-primary flex-1 sm:flex-none justify-center whitespace-nowrap" onClick={handleAddNew}>
               <i className="lni lni-plus" /> Add FAQ
             </button>

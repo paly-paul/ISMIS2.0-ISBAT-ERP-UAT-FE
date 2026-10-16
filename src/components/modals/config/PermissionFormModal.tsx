@@ -1,11 +1,11 @@
 'use client'
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { ModalProps } from '../types'
 import { SuccessPopup } from '../shared/SuccessPopup'
-import { SearchSelect } from '@/components/SearchSelect'
 import { PermissionGroup, PermissionGroupInput } from '@/lib/api/academic/permissionGroup'
-import { moduleIcon, moduleLabel } from '@/hooks/users/usePermissionCatalog'
+import { moduleIcon, moduleLabel, CatalogPage } from '@/hooks/users/usePermissionCatalog'
 import { usePermissionWizard } from '@/hooks/users/usePermissionWizard'
+import { actionLabel, DESTRUCTIVE, CatalogSection, ModuleAccessMatrix, UncataloguedAccess, DestructiveCaution, ReviewStats } from '@/components/permissions/PermissionMatrix'
 
 interface PermissionFormModalProps extends ModalProps {
   mode: 'new' | 'edit'
@@ -20,29 +20,36 @@ interface PermissionFormModalProps extends ModalProps {
   }
 }
 
+const MIN_SEARCH_CHARS = 2
+
+function TriCheck({ checked, indeterminate, onChange, label }: { checked: boolean; indeterminate: boolean; onChange: () => void; label: string }) {
+  const ref = useRef<HTMLInputElement>(null)
+  useEffect(() => { if (ref.current) ref.current.indeterminate = indeterminate }, [indeterminate])
+  return <input ref={ref} type="checkbox" className="pm-check" checked={checked} onChange={onChange} aria-label={label} />
+}
+
 export function PermissionFormModal({ isOpen, onClose, showToast, mode, permissionGroup, createPermissionGroup, updatePermissionGroup }: PermissionFormModalProps) {
   const isEdit = mode === 'edit'
   const {
-    moduleOptions, permissionsByModule, pagesByModule, permissionNameById, moduleByPermissionId,
+    catalogLoaded, modules, sectionsByModule, permissionsByModule, permissionNameById, moduleByPermissionId,
     saved, setSaved, confirming, setConfirming,
-    groupName, setGroupName, selectedModule, setSelectedModule,
-    blocks, blockRefs, deleteTarget, setDeleteTarget, deleteTargetBlock,
-    globalSearch, setGlobalSearch, globalMatches,
-    activeBlocks, canSubmit,
-    handleAddModule, handleGlobalSelect, toggleBlockOpen, updateBlockSearch,
-    toggleAll, togglePermission, confirmDelete, seedFromGroupPermissions, resetWizard,
+    groupName, setGroupName, currentModule, setActiveModule, search, setSearch,
+    selected, selections, selectedCount, canSubmit,
+    togglePermission, toggleGroup, setMany, seedFromGroupPermissions, resetWizard,
   } = usePermissionWizard(isOpen)
+  const paneRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (isEdit && isOpen && permissionGroup) {
       seedFromGroupPermissions(permissionGroup.group, permissionGroup.permissions)
       setConfirming(false)
-      setSelectedModule('')
-      setDeleteTarget(null)
-      setGlobalSearch('')
+      setSearch('')
     }
-    // Refresh the wizard once the permission catalog is ready.
+    // Re-seed once the permission catalog is ready.
   }, [isEdit, isOpen, permissionGroup, moduleByPermissionId])
+
+  // A new module starts at the top of the pane.
+  useEffect(() => { paneRef.current?.scrollTo({ top: 0 }) }, [currentModule])
 
   if (!isOpen || (isEdit && !permissionGroup)) return null
 
@@ -65,254 +72,258 @@ export function PermissionFormModal({ isOpen, onClose, showToast, mode, permissi
     )
   }
 
+  const allSelectedIds = selections.flatMap(s => s.permissions)
+  const destructiveGranted = allSelectedIds.map(id => permissionNameById[id]).filter((n): n is string => !!n && DESTRUCTIVE.test(n))
+
   function handleCreate() {
-    const permissions = activeBlocks.flatMap(b => b.permissions)
     createPermissionGroup.mutate(
-      { group: groupName, description: `Access to: ${activeBlocks.map(b => moduleLabel(b.module)).join(', ')}`, permissions },
+      { group: groupName.trim(), description: `Access to: ${selections.map(s => moduleLabel(s.module)).join(', ')}`, permissions: allSelectedIds },
       { onSuccess: () => { setSaved(true); showToast('Permission group added successfully') } },
     )
   }
 
   function handleSave() {
     if (!permissionGroup) return
-    const permissions = activeBlocks.flatMap(b => b.permissions)
     updatePermissionGroup.mutate(
-      { id: permissionGroup.id, input: { group: groupName, description: permissionGroup.description, permissions } },
+      { id: permissionGroup.id, input: { group: groupName.trim(), description: permissionGroup.description, permissions: allSelectedIds } },
       { onSuccess: () => { setSaved(true); showToast('Permission group updated successfully') } },
     )
   }
 
   const isPending = isEdit ? updatePermissionGroup.isPending : createPermissionGroup.isPending
 
+  // ---- Search across every module ------------------------------------------
+  const term = search.trim().toLowerCase()
+  const searching = term.length >= MIN_SEARCH_CHARS
+  function filterSections(sections: CatalogSection[]): CatalogSection[] {
+    return sections
+      .map(s => ({
+        section: s.section,
+        pages: s.pages
+          // A page-name match keeps the whole page; otherwise only the matching actions.
+          .map(pg => pg.page.toLowerCase().includes(term) ? pg : { page: pg.page, permissions: pg.permissions.filter(p => p.permissionName.toLowerCase().includes(term)) })
+          .filter(pg => pg.permissions.length > 0),
+      }))
+      .filter(s => s.pages.length > 0)
+  }
+  const searchResults = searching
+    ? modules.map(m => ({ module: m, sections: filterSections(sectionsByModule[m] ?? []) })).filter(r => r.sections.length > 0)
+    : []
+  const matchCount = (module: string) => searchResults.find(r => r.module === module)?.sections.reduce((n, s) => n + s.pages.reduce((k, pg) => k + pg.permissions.length, 0), 0) ?? 0
+
+  const countIn = (module: string) => (permissionsByModule[module] ?? []).filter(p => selected.has(p.intPermission)).length
+
+  function renderPage(pg: CatalogPage) {
+    const ids = pg.permissions.map(p => p.intPermission)
+    const on = ids.filter(id => selected.has(id)).length
+    // Two actions shortening to the same word (e.g. two different "View"
+    // permissions on one page) would be indistinguishable — show both in full.
+    const short = pg.permissions.map(p => actionLabel(p.permissionName, pg.page))
+    const labels = short.map((l, i) => short.indexOf(l) !== short.lastIndexOf(l) ? pg.permissions[i].permissionName : l)
+    return (
+      <div key={pg.page} className={`pm-row${on === ids.length ? ' full' : ''}`}>
+        <label className="pm-row-page">
+          <TriCheck checked={on === ids.length} indeterminate={on > 0 && on < ids.length} onChange={() => toggleGroup(ids)} label={`All ${pg.page} permissions`} />
+          <span>{pg.page}</span>
+        </label>
+        <div className="pm-chips" role="group" aria-label={pg.page}>
+          {pg.permissions.map((p, i) => {
+            const label = labels[i]
+            const isOn = selected.has(p.intPermission)
+            return (
+              <button
+                key={p.intPermission}
+                type="button"
+                role="checkbox"
+                aria-checked={isOn}
+                title={p.permissionName}
+                className={`pm-chip${isOn ? ' on' : ''}${DESTRUCTIVE.test(label) ? ' danger' : ''}`}
+                onClick={() => togglePermission(p.intPermission)}
+              >
+                <i className="lni lni-checkmark" aria-hidden="true"></i>{label}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+    )
+  }
+
+  function renderSections(sections: CatalogSection[]) {
+    return sections.map(s => (
+      <div key={s.section} className="pm-section">
+        <div className="pm-section-title">{s.section}</div>
+        {s.pages.map(renderPage)}
+      </div>
+    ))
+  }
+
+  const moduleIds = (permissionsByModule[currentModule] ?? []).map(p => p.intPermission)
+  const moduleOn = countIn(currentModule)
+
   return (
     <div className="modal-overlay open" id={isEdit ? 'edit-permission-modal' : 'new-permission-modal'}>
-      <div className="modal modal-xl modal-flex" style={{ position: 'relative' }} onClick={e => e.stopPropagation()}>
+      <div className="modal pm-modal" onClick={e => e.stopPropagation()}>
         <div className="modal-hdr modal-hdr-blue">
           <div className="modal-title"><i className={`lni ${isEdit ? 'lni-pencil' : 'lni-lock'}`}></i> {isEdit ? 'Edit Permission Group' : 'Add Permission Group'}</div>
-          <button className="modal-close" onClick={onClose}><i className="lni lni-close"></i></button>
+          <button className="modal-close" onClick={handleClose} aria-label="Close"><i className="lni lni-close"></i></button>
         </div>
 
-        <div className="modal-scroll">
-          {!confirming ? (
-            <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-              <div className="g3">
-                <div className="fg">
-                  <div className="lbl">Group Name <span className="req">*</span></div>
+        {!confirming ? (
+          <div className="pm-body">
+            <div className="pm-top">
+              <div>
+                <label className="lbl" htmlFor="pm-group-name">Group name <span className="req">*</span></label>
+                <input
+                  id="pm-group-name"
+                  className="ctrl"
+                  type="text"
+                  placeholder="e.g. Registrar"
+                  value={groupName}
+                  autoFocus={!isEdit}
+                  onChange={e => setGroupName(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="lbl" htmlFor="pm-search">Find a permission</label>
+                <div className="pm-search">
+                  <i className="lni lni-search-alt" aria-hidden="true"></i>
                   <input
+                    id="pm-search"
                     className="ctrl"
-                    type="text"
-                    placeholder={isEdit ? undefined : 'e.g. Registrar'}
-                    value={groupName}
-                    onChange={e => setGroupName(e.target.value)}
+                    type="search"
+                    placeholder="Search pages or actions in every module…"
+                    value={search}
+                    onChange={e => setSearch(e.target.value)}
                   />
+                  {search && <button type="button" className="pm-search-clear" onClick={() => setSearch('')} aria-label="Clear search"><i className="lni lni-close"></i></button>}
                 </div>
-                <div className="fg">
-                  <div className="lbl">Module</div>
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <SearchSelect placeholder="Select module…" options={moduleOptions} value={selectedModule} onChange={setSelectedModule} />
-                    </div>
+              </div>
+            </div>
+
+            <div className="pm-split">
+              <nav className="pm-rail" aria-label="Modules">
+                {modules.map(m => {
+                  const total = (permissionsByModule[m] ?? []).length
+                  const on = countIn(m)
+                  const matches = searching ? matchCount(m) : 0
+                  return (
                     <button
+                      key={m}
                       type="button"
-                      className="btn btn-neu"
-                      style={{ width: 40, padding: 0, justifyContent: 'center', flexShrink: 0 }}
-                      title={!groupName.trim() ? 'Enter a group name first' : 'Add module permissions'}
-                      disabled={!selectedModule || !groupName.trim()}
-                      onClick={handleAddModule}
+                      className={`pm-rail-item${!searching && m === currentModule ? ' active' : ''}${on > 0 ? ' has' : ''}${searching && matches === 0 ? ' dim' : ''}`}
+                      aria-current={!searching && m === currentModule ? 'true' : undefined}
+                      onClick={() => { setActiveModule(m); setSearch('') }}
                     >
-                      <i className="lni lni-checkmark"></i>
+                      <span className="pm-rail-icon"><i className={`lni lni-${moduleIcon(m)}`}></i></span>
+                      <span className="pm-rail-name">{moduleLabel(m)}</span>
+                      <span className={`pm-rail-count${on === total && total > 0 ? ' full' : on > 0 ? ' some' : ''}`}>
+                        {searching ? (matches > 0 ? `${matches} found` : '') : on === total && total > 0 ? 'All' : `${on}/${total}`}
+                      </span>
                     </button>
-                  </div>
-                </div>
-                <div className="fg" style={{ position: 'relative' }}>
-                  <div className="lbl">Search Permissions</div>
-                  <input
-                    className="ctrl"
-                    type="text"
-                    placeholder={!groupName.trim() ? 'Enter a group name first' : 'Search by permission name…'}
-                    value={globalSearch}
-                    disabled={!groupName.trim()}
-                    onChange={e => setGlobalSearch(e.target.value)}
-                  />
-                  {globalMatches.length > 0 && (
-                    <div className="ss-drop" style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 4, zIndex: 50 }}>
-                      <div className="ss-opts">
-                        {globalMatches.map(({ module, permission }) => (
-                          <div
-                            key={`${module}-${permission.intPermission}`}
-                            className="col-filter-opt"
-                            onClick={() => handleGlobalSelect(module, permission)}
-                          >
-                            {permission.permissionName}
-                            <span style={{ color: 'var(--g400)', marginLeft: 6, fontSize: 11 }}>{moduleLabel(module)}</span>
+                  )
+                })}
+              </nav>
+
+              <section className="pm-pane" ref={paneRef} aria-live="polite">
+                {!catalogLoaded ? (
+                  <div className="pm-empty"><span className="pm-spinner" aria-hidden="true"></span> Loading permissions…</div>
+                ) : searching ? (
+                  searchResults.length === 0 ? (
+                    <div className="pm-empty">
+                      <i className="lni lni-search-alt" aria-hidden="true"></i>
+                      <div><strong>Nothing matches &ldquo;{search.trim()}&rdquo;</strong><br />Try a page name like &ldquo;Intake Master&rdquo; or an action like &ldquo;Approve&rdquo;.</div>
+                    </div>
+                  ) : (
+                    <div key="search" className="tab-panel-in">
+                      {searchResults.map(r => (
+                        <div key={r.module} className="pm-result">
+                          <div className="pm-result-hdr">
+                            <span className="pm-rail-icon has"><i className={`lni lni-${moduleIcon(r.module)}`}></i></span>
+                            <span>{moduleLabel(r.module)}</span>
+                            <button type="button" className="pm-link" onClick={() => { setActiveModule(r.module); setSearch('') }}>Open module <i className="lni lni-arrow-right"></i></button>
                           </div>
-                        ))}
+                          {renderSections(r.sections)}
+                        </div>
+                      ))}
+                    </div>
+                  )
+                ) : (
+                  <div key={currentModule} className="tab-panel-in">
+                    <div className="pm-pane-hdr">
+                      <span className="pm-pane-icon"><i className={`lni lni-${moduleIcon(currentModule)}`}></i></span>
+                      <div style={{ minWidth: 0 }}>
+                        <h3 className="pm-pane-title">{moduleLabel(currentModule)}</h3>
+                        <div className="pm-pane-sub"><strong>{moduleOn}</strong> of {moduleIds.length} permissions selected</div>
+                      </div>
+                      <div className="pm-pane-actions">
+                        <button type="button" className="btn btn-neu btn-sm" disabled={moduleOn === moduleIds.length} onClick={() => setMany(moduleIds, true)}>
+                          <i className="lni lni-checkmark-circle"></i> Select all
+                        </button>
+                        <button type="button" className="btn btn-neu btn-sm" disabled={moduleOn === 0} onClick={() => setMany(moduleIds, false)}>
+                          Clear
+                        </button>
                       </div>
                     </div>
-                  )}
-                </div>
-              </div>
-
-              {blocks.length > 0 ? (
-                <div className="fg" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-                  <div className="lbl">Module Permissions</div>
-                  <div className="perm-blocks-scroll">
-                    {blocks.map(b => {
-                      const all = permissionsByModule[b.module] ?? []
-                      const allChecked = all.length > 0 && b.permissions.length === all.length
-                      const term = b.search.trim().toLowerCase()
-                      const visiblePages = (pagesByModule[b.module] ?? [])
-                        .map(pg => ({ page: pg.page, permissions: term ? pg.permissions.filter(p => p.permissionName.toLowerCase().includes(term)) : pg.permissions }))
-                        .filter(pg => pg.permissions.length > 0)
-                      return (
-                        <div
-                          key={b.module}
-                          ref={el => { if (el) blockRefs.current[b.module] = el }}
-                          className={`perm-block${b.open ? '' : ' closed'}`}
-                        >
-                          <div className="perm-block-hdr" onClick={() => toggleBlockOpen(b.module)}>
-                            <span onClick={e => e.stopPropagation()} style={{ display: 'flex', alignItems: 'center' }}>
-                              <input type="checkbox" checked={allChecked} onChange={() => toggleAll(b.module)} />
-                            </span>
-                            <i className={`lni lni-${moduleIcon(b.module)}`}></i>
-                            {moduleLabel(b.module)}
-                            <span className="badge badge-blue" style={{ marginLeft: 6 }}>{b.permissions.length}/{all.length}</span>
-                            <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 2 }}>
-                              <button
-                                type="button"
-                                className="perm-block-delete"
-                                title="Remove this module"
-                                onClick={e => { e.stopPropagation(); setDeleteTarget(b.module) }}
-                              >
-                                <i className="lni lni-trash-can"></i>
-                              </button>
-                              <i className="lni lni-chevron-down perm-block-chevron"></i>
-                            </span>
-                          </div>
-                          <div className="perm-block-body">
-                            <input
-                              className="ctrl"
-                              type="text"
-                              placeholder="Search permissions in this module…"
-                              value={b.search}
-                              onClick={e => e.stopPropagation()}
-                              onChange={e => updateBlockSearch(b.module, e.target.value)}
-                              style={{ gridColumn: '1 / -1', fontSize: 12, height: 32 }}
-                            />
-                            {visiblePages.length === 0 ? (
-                              <div style={{ gridColumn: '1 / -1', fontSize: 12, color: 'var(--g400)', fontStyle: 'italic' }}>No matching permissions</div>
-                            ) : visiblePages.map(pg => (
-                              <div key={pg.page} style={{ gridColumn: '1 / -1' }}>
-                                <div className="perm-page-title">
-                                  <i className="lni lni-folder"></i>
-                                  {pg.page}
-                                </div>
-                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px 12px' }}>
-                                  {pg.permissions.map(p => (
-                                    <label key={p.intPermission} className="chk-item" style={{ cursor: 'pointer' }}>
-                                      <input type="checkbox" checked={b.permissions.includes(p.intPermission)} onChange={() => togglePermission(b.module, p.intPermission)} />
-                                      <span className="text-sm text-g700">{p.permissionName}</span>
-                                    </label>
-                                  ))}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )
-                    })}
+                    {renderSections(sectionsByModule[currentModule] ?? [])}
                   </div>
-                </div>
-              ) : (
-                <div className="perm-empty-hint">
-                  <i className="lni lni-arrow-up perm-empty-arrow"></i>
-                  <div className="perm-empty-icon-wrap">
-                    <i className="lni lni-graduation perm-empty-icon"></i>
-                    <span className="perm-empty-orbit book"><i className="lni lni-book"></i></span>
-                    <span className="perm-empty-orbit pencil"><i className="lni lni-pencil-alt"></i></span>
-                  </div>
-                  <div className="perm-empty-title">Fill in the details above to get started</div>
-                  <div className="perm-empty-sub">Name the permission group, choose a module, then tap the tick button to load its permissions here.</div>
-                </div>
-              )}
+                )}
+              </section>
             </div>
-          ) : (
-            <div className="tab-panel-in" style={{ padding: '4px 2px 8px' }}>
-              <div style={{ textAlign: 'center', marginBottom: 18 }}>
-                <div style={{
-                  width: 56, height: 56, borderRadius: '50%', margin: '0 auto 12px',
-                  background: 'var(--b50)', border: '1.5px solid var(--b200)',
-                  display: 'grid', placeItems: 'center',
-                }}>
-                  <i className="lni lni-shield" style={{ fontSize: 24, color: 'var(--b600)' }} />
-                </div>
-                <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--g900)' }}>{isEdit ? 'Confirm Changes' : 'Confirm Permission Group'}</div>
-                <div style={{ fontSize: 12.5, color: 'var(--g500)', marginTop: 4 }}>{isEdit ? 'Review the access scope before saving this group' : 'Review the access scope before creating this group'}</div>
+          </div>
+        ) : (
+          <div className="pm-review tab-panel-in">
+            <div className="pm-review-hdr">
+              <div style={{ minWidth: 0 }}>
+                <h3 className="pm-pane-title">Review &ldquo;{groupName.trim()}&rdquo;</h3>
+                <div className="pm-pane-sub">Check what members of this group will be able to do before {isEdit ? 'saving' : 'creating'} it.</div>
               </div>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 220, overflowY: 'auto' }}>
-                {activeBlocks.map(b => (
-                  <div key={b.module} style={{
-                    display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px',
-                    border: '1.5px solid var(--g200)', borderRadius: 'var(--rsm)', background: 'var(--surface)',
-                  }}>
-                    <span style={{
-                      width: 32, height: 32, borderRadius: 8, display: 'grid', placeItems: 'center',
-                      background: 'var(--b100)', color: 'var(--b700)', flexShrink: 0,
-                    }}>
-                      <i className={`lni lni-${moduleIcon(b.module)}`}></i>
-                    </span>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--g900)' }}>{moduleLabel(b.module)}</div>
-                      <div style={{ fontSize: 11.5, color: 'var(--g500)' }}>{b.permissions.map(id => permissionNameById[id] ?? id).join(', ')}</div>
-                    </div>
-                    <span className="badge badge-blue">{b.permissions.length}</span>
-                  </div>
-                ))}
-              </div>
+              <ReviewStats items={[
+                { label: 'Permissions', value: selectedCount },
+                { label: 'Modules', value: selections.length },
+                { label: 'Pages', value: selections.reduce((n, s) => n + (sectionsByModule[s.module] ?? []).reduce((k, sec) => k + sec.pages.filter(pg => pg.permissions.some(p => selected.has(p.intPermission))).length, 0), 0) },
+              ]} />
             </div>
-          )}
-        </div>
+
+            <DestructiveCaution names={destructiveGranted} />
+
+            {selections.map(s => s.module === 'Other'
+              ? <UncataloguedAccess key={s.module} names={s.permissions.map(id => permissionNameById[id] ?? `Permission #${id}`)} />
+              : <ModuleAccessMatrix
+                  key={s.module}
+                  module={s.module}
+                  sections={sectionsByModule[s.module] ?? []}
+                  isGranted={p => selected.has(p.intPermission)}
+                  onEdit={() => { setActiveModule(s.module); setConfirming(false) }}
+                />)}
+          </div>
+        )}
 
         <div className="modal-footer">
           {!confirming ? (
             <>
+              <div className="pm-foot-summary" aria-live="polite">
+                {selectedCount === 0
+                  ? 'No permissions selected yet'
+                  : <><strong>{selectedCount}</strong> permission{selectedCount === 1 ? '' : 's'} · <strong>{selections.length}</strong> module{selections.length === 1 ? '' : 's'}</>}
+                {selectedCount > 0 && !groupName.trim() && <span className="pm-foot-warn"> — name the group to continue</span>}
+              </div>
               <button className="btn btn-neu" onClick={handleClose}>Cancel</button>
               <button className="btn btn-primary" disabled={!canSubmit} onClick={() => setConfirming(true)}>
-                <i className="lni lni-checkmark"></i> Submit
+                Review <i className="lni lni-arrow-right"></i>
               </button>
             </>
           ) : (
             <>
-              <button className="btn btn-neu" onClick={() => setConfirming(false)}>
+              <button className="btn btn-neu" onClick={() => setConfirming(false)} disabled={isPending}>
                 <i className="lni lni-arrow-left"></i> Back
               </button>
               <button className="btn btn-success" disabled={isPending} onClick={isEdit ? handleSave : handleCreate}>
-                <i className="lni lni-checkmark-circle"></i> {isPending ? (isEdit ? 'Saving…' : 'Creating…') : (isEdit ? 'Confirm & Save' : 'Confirm & Create')}
+                <i className="lni lni-checkmark-circle"></i> {isPending ? (isEdit ? 'Saving…' : 'Creating…') : (isEdit ? 'Save Changes' : 'Create Group')}
               </button>
             </>
           )}
         </div>
-
-        {deleteTargetBlock && (
-          <div className="perm-delete-overlay" onClick={() => setDeleteTarget(null)}>
-            <div className="perm-delete-card tab-panel-in" onClick={e => e.stopPropagation()}>
-              <div className="perm-delete-icon"><i className="lni lni-trash-can"></i></div>
-              <div className="perm-delete-title">Remove {moduleLabel(deleteTargetBlock.module)}?</div>
-              <div className="perm-delete-sub">
-                This will remove {deleteTargetBlock.permissions.length > 0
-                  ? `all ${deleteTargetBlock.permissions.length} selected permission${deleteTargetBlock.permissions.length === 1 ? '' : 's'}`
-                  : 'this module'} from the group. This can&apos;t be undone.
-              </div>
-              <div className="perm-delete-actions">
-                <button className="btn btn-neu" onClick={() => setDeleteTarget(null)}>Cancel</button>
-                <button className="btn btn-danger" onClick={confirmDelete}>
-                  <i className="lni lni-trash-can"></i> Remove
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   )

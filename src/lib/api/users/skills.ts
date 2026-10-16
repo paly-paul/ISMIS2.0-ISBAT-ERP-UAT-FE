@@ -56,16 +56,38 @@ const mockSkills: LecturerSkill[] = [
   { lecturerSkillGuid: '9bbf722e-1298-4a66-9d5e-9ca854853fb9', employeeGuid: '2bd3f122-0b53-4e50-b5d1-ed6bcc428c42', skillGuid: '00000000-0000-0000-0000-000000000000', skillName: 'Data Science', proficiency: 1, approvalStatus: 'Approved' },
 ]
 
-// search is forwarded to the real endpoint's own ?search= param; the page
-// itself currently fetches the unfiltered list once and filters client-side
-// (same "load it all, search client-side" convention as getBatches/
-// getEmployees), but the param is wired through for when that changes.
-export function getSkills(search = ''): Promise<LecturerSkill[]> {
+export interface LecturerSkillListResponse {
+  items: LecturerSkill[]
+  totalCount: number
+  pageNumber: number
+  pageSize: number
+}
+
+// Real server-side pagination (2026-09-09) — GET /api/v1/users/skills now
+// accepts page/pageSize and returns a real {items, totalCount, pageNumber,
+// pageSize} envelope (previously a flat, unpaged array — this was the one
+// blocked entity in the academic-module pagination sweep until the backend
+// added it). Tolerates a plain array or an items-only shape defensively,
+// same convention as getRepetitionTagsPaged/getProgramGroupsPaged, in case
+// an older build of the endpoint is what's actually deployed.
+export function getSkills(page = 1, pageSize = 10, search = ''): Promise<LecturerSkillListResponse> {
+  const q = search.trim()
   if (MOCK_AUTH) {
-    const q = search.trim().toLowerCase()
-    return Promise.resolve(q ? mockSkills.filter(s => s.skillName.toLowerCase().includes(q)) : mockSkills)
+    const filtered = q ? mockSkills.filter(s => s.skillName.toLowerCase().includes(q.toLowerCase())) : mockSkills
+    const start = (page - 1) * pageSize
+    return Promise.resolve({ items: filtered.slice(start, start + pageSize), totalCount: filtered.length, pageNumber: page, pageSize })
   }
-  return apiGet<LecturerSkill[] | null>(`/api/v1/users/skills?search=${encodeURIComponent(search)}`).then(data => data ?? [])
+  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) })
+  if (q) params.set('search', q)
+  return apiGet<any>(`/api/v1/users/skills?${params.toString()}`).then(data => {
+    const items: LecturerSkill[] = Array.isArray(data) ? data : Array.isArray(data?.items) ? data.items : []
+    return {
+      items,
+      totalCount: typeof data?.totalCount === 'number' ? data.totalCount : items.length,
+      pageNumber: data?.pageNumber ?? page,
+      pageSize: data?.pageSize ?? pageSize,
+    }
+  })
 }
 
 // One call now fans out to one skill entry per guid in skillGuids, all

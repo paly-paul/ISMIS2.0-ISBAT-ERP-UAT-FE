@@ -1,6 +1,5 @@
 'use client'
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
 import { Toast } from '@/components/Toast'
 import { ScrollTable } from '@/components/ScrollTable'
 import { TableSearch } from '@/components/TableSearch'
@@ -18,7 +17,6 @@ const DISPLAY_PAGE_SIZE = 10
 
 export default function AssessmentTypesPage() {
   const permissions = usePagePermissions()
-  const router = useRouter()
   const [toast, setToast] = useState<{ msg: string; type: string } | null>(null)
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [editingGuid, setEditingGuid] = useState<string | null>(null)
@@ -84,11 +82,7 @@ export default function AssessmentTypesPage() {
           <h1 className="text-[20px] font-semibold text-g900 leading-tight">Fee Clearance Master</h1>
           <p className="text-[13.5px] text-g500 mt-0.5">Manage assessment categories and fee clearances</p>
         </div>
-        <div className="flex items-center gap-3">
-          <button className="btn btn-neu btn-sm flex items-center gap-1.5" onClick={() => router.back()}>
-            <i className="lni lni-arrow-left font-bold" /> Back
-          </button>
-          {permissions.add && (
+        <div className="flex items-center gap-3">          {permissions.add && (
             <button className="btn btn-primary btn-sm flex items-center gap-1.5" onClick={handleAddNew}>
               <i className="lni lni-plus font-bold" /> Add Fee Clearance
             </button>
@@ -119,7 +113,7 @@ export default function AssessmentTypesPage() {
                 <th>Code</th>
                 <th>Name</th>
                 <th className="text-right">Fee Clearance</th>
-                <th className="text-right">Display Fee Clearance</th>
+                <th className="text-right">Actual Fee Clearance</th>
               </tr>
             </thead>
             <tbody>

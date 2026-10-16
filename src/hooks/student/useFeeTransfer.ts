@@ -14,6 +14,8 @@ export function useFeeTransferContext(studentGuid: string | null, enabled: boole
     queryKey: [...FEE_TRANSFER_CONTEXT_KEY, studentGuid],
     queryFn: () => getFeeTransferContext(studentGuid as string),
     enabled: enabled && !!studentGuid,
+    staleTime: 5 * 60 * 1000,
+    gcTime: Infinity,
   })
 }
 
@@ -22,6 +24,8 @@ export function useFeeTransferHistory(studentGuid: string | null, enabled: boole
     queryKey: [...FEE_TRANSFER_HISTORY_KEY, studentGuid],
     queryFn: () => getFeeTransferHistory(studentGuid as string),
     enabled: enabled && !!studentGuid,
+    staleTime: 5 * 60 * 1000,
+    gcTime: Infinity,
   })
 }
 

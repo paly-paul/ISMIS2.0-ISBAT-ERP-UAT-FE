@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react'
 import { useCreateAssessmentType, useUpdateAssessmentTypeFee, useAssessmentType } from '@/hooks/assessment/useAssessmentTypes'
 import { SuccessPopup } from '@/components/modals/shared/SuccessPopup'
+import { scrollToFirstError } from '@/lib/scrollToFirstError'
 
 interface Props {
   isOpen: boolean
@@ -89,6 +90,7 @@ export function AssessmentTypeFormModal({ isOpen, onClose, showToast, editingGui
     }
 
     setErrors(e)
+    scrollToFirstError(e)
     return Object.keys(e).length === 0
   }
 
@@ -151,7 +153,7 @@ export function AssessmentTypeFormModal({ isOpen, onClose, showToast, editingGui
                 onChange={e => set('assessmentCode', e.target.value)}
                 disabled={isEditMode || isSaving}
                 style={errors.assessmentCode ? { borderColor: 'var(--red)' } : undefined} />
-              {errors.assessmentCode && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.assessmentCode}</p>}
+              {errors.assessmentCode && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.assessmentCode}</p>}
             </div>
             
             <div className="fg">
@@ -161,7 +163,7 @@ export function AssessmentTypeFormModal({ isOpen, onClose, showToast, editingGui
                 onChange={e => set('assessmentName', e.target.value)}
                 disabled={isEditMode || isSaving}
                 style={errors.assessmentName ? { borderColor: 'var(--red)' } : undefined} />
-              {errors.assessmentName && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.assessmentName}</p>}
+              {errors.assessmentName && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.assessmentName}</p>}
             </div>
 
             <div className="fg">
@@ -171,17 +173,17 @@ export function AssessmentTypeFormModal({ isOpen, onClose, showToast, editingGui
                 onChange={e => set('feeClearance', e.target.value)}
                 disabled={isSaving}
                 style={errors.feeClearance ? { borderColor: 'var(--red)' } : undefined} />
-              {errors.feeClearance && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.feeClearance}</p>}
+              {errors.feeClearance && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.feeClearance}</p>}
             </div>
 
             <div className="fg">
-              <label className="lbl">Display Fee Clearance</label>
+              <label className="lbl">Actual Fee Clearance</label>
               <input className="ctrl" type="number" min="0" step="0.01" placeholder="0.00" 
                 value={form.displayFeeClearance}
                 onChange={e => set('displayFeeClearance', e.target.value)}
                 disabled={isSaving}
                 style={errors.displayFeeClearance ? { borderColor: 'var(--red)' } : undefined} />
-              {errors.displayFeeClearance && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.displayFeeClearance}</p>}
+              {errors.displayFeeClearance && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.displayFeeClearance}</p>}
             </div>
           </div>
         </div>

@@ -11,9 +11,9 @@ import { FilterTh } from '@/components/FilterTh'
 import { EmptyState } from '@/components/EmptyState'
 import { TableLoadingState } from '@/components/TableLoadingState'
 import { Pagination } from '@/components/Pagination'
-import { usePagination } from '@/hooks/usePagination'
-import { useRepetitionTags, useRepetitionTagSearch, useCreateRepetitionTag, useUpdateRepetitionTag, useDeleteRepetitionTag, RepetitionTag } from '@/hooks/academic/useRepetitionTags'
+import { useRepetitionTagsPaged, useCreateRepetitionTag, useUpdateRepetitionTag, useDeleteRepetitionTag, RepetitionTag } from '@/hooks/academic/useRepetitionTags'
 import { usePagePermissions } from '@/hooks/users/usePagePermissions'
+import { AuthError } from '@/lib/api/client'
 
 const PAGE_SIZE = 10
 // Don't narrow the table (or open the search dropdown) until the user's
@@ -53,7 +53,16 @@ export default function Page() {
     if (!deleteTarget) return
     deleteRepetitionTag.mutate(deleteTarget.courseUnitRepetitionGuid, {
       onSuccess: () => { setDeleteTarget(null); showToast('Repetition tag deleted successfully') },
-      onError: (error: Error) => showToast(error.message || 'Failed to delete repetition tag', 'error'),
+      onError: (error: Error) => {
+        // delete-course-unit-repetition.md: tag_in_use while any course unit
+        // still points at this tag — say how to free it up.
+        if (error instanceof AuthError && error.code === 'tag_in_use') {
+          setDeleteTarget(null)
+          showToast(`"${deleteTarget.tagCode}" is still used by one or more course units. Change or clear their repetition tag in Course Units, then delete it.`, 'error')
+          return
+        }
+        showToast(error.message || 'Failed to delete repetition tag', 'error')
+      },
     })
   }
 
@@ -77,47 +86,41 @@ export default function Page() {
   //   { code: 'RT-CU-005', description: 'Credit exemption repeat for lateral entrants',   level: 'Postgraduate Diploma' },
   // ]
 
-  const { data: rows = [], isLoading } = useRepetitionTags()
-
-  // Debounced so the backend's ?search= isn't hit on every keystroke, and
-  // held at '' (falling back to the unfiltered list) until MIN_SEARCH_CHARS
-  // is met — same convention as Intake/Skill Master's search boxes.
-  const [debouncedSearch, setDebouncedSearch] = useState('')
-  useEffect(() => {
-    const trimmed = search.trim()
-    if (trimmed.length < MIN_SEARCH_CHARS) { setDebouncedSearch(''); return }
-    const t = setTimeout(() => setDebouncedSearch(trimmed), 400)
-    return () => clearTimeout(t)
-  }, [search])
-
-  const { data: searchResults, isFetching: isSearching } = useRepetitionTagSearch(debouncedSearch)
+  // Real server-side pagination (2026-09-09) — only PAGE_SIZE rows are ever
+  // requested for the page on screen (see useRepetitionTagsPaged), not the
+  // whole table in one 1000-row shot. Trade-off: the Programme Level column
+  // filter below can now only narrow the rows already on the current page,
+  // same "server search, client filter stays page-scoped" trade-off
+  // enquiry-list's own Channel/Intake filters made.
+  const [page, setPage] = useState(1)
   const searchTrimmed = search.trim()
-  const searchPending = searchTrimmed.length >= MIN_SEARCH_CHARS && (debouncedSearch !== searchTrimmed || isSearching)
-  // Re-filter client-side on top of whatever the server sent back, so
-  // results stay correct even if the backend doesn't actually honor
-  // ?search= (see the note on getRepetitionTags).
-  const baseRows = rows
+  // Only actually queried once the term clears MIN_SEARCH_CHARS, same gate
+  // TableSearch's own dropdown uses, so a 1-character keystroke doesn't fire
+  // a request.
+  const activeSearch = searchTrimmed.length >= MIN_SEARCH_CHARS ? searchTrimmed : ''
+  const { data, isLoading, isFetching } = useRepetitionTagsPaged(page, PAGE_SIZE, activeSearch)
+  const rows = data?.items ?? []
+  const totalCount = data?.totalCount ?? 0
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE))
+  const searchPending = searchTrimmed.length >= MIN_SEARCH_CHARS && isFetching
 
   const createRepetitionTag = useCreateRepetitionTag()
   const updateRepetitionTag = useUpdateRepetitionTag()
   const deleteRepetitionTag = useDeleteRepetitionTag()
 
-  // This only applies the column filter on top of the full base list.
-  // The global search box no longer filters this list per ACA-021.
-  const filteredRows = baseRows.filter(r =>
+  // Search already happened server-side (see useRepetitionTagsPaged above) —
+  // this only applies the column filter on top of the current page's rows.
+  const filteredRows = rows.filter(r =>
     Object.entries(filters).every(([k, v]) => !v.length || v.includes(String((r as unknown as Record<string, unknown>)[k])))
   )
+  const pageItems = filteredRows
 
-  // Live preview shown in the search dropdown as the user types.
-  // Reads from searchResults if server search completed, otherwise falls back
-  // to filtering the full list client-side.
-  const searchMatches = searchTrimmed.length >= MIN_SEARCH_CHARS
-    ? (debouncedSearch ? (searchResults ?? []) : rows)
-        .filter(r => `${r.tagCode} ${r.tagName}`.toLowerCase().includes(searchTrimmed.toLowerCase()))
-        .slice(0, 8)
-    : []
-
-  const { page, setPage, totalPages, totalCount, pageItems } = usePagination(filteredRows, PAGE_SIZE)
+  // Live preview shown in the search dropdown as the user types — rows are
+  // already server-filtered by activeSearch, so this just previews up to 8
+  // of what's already loaded (same convention as enquiry-list's own
+  // searchMatches). Empty below MIN_SEARCH_CHARS, matching TableSearch's own
+  // minChars gate on when the dropdown is even allowed to open.
+  const searchMatches = searchTrimmed.length >= MIN_SEARCH_CHARS ? filteredRows.slice(0, 8) : []
 
   function fth(label: string, col: string, opts: string[]) {
     return (
@@ -158,7 +161,7 @@ export default function Page() {
               className="w-56"
               placeholder="Search by code or description…"
               value={search}
-              onChange={setSearch}
+              onChange={v => { setSearch(v); setPage(1) }}
               results={searchMatches.map(r => ({ id: r.courseUnitRepetitionGuid, primary: r.tagCode, secondary: r.tagName }))}
               loading={searchPending}
               minChars={MIN_SEARCH_CHARS}
@@ -179,7 +182,7 @@ export default function Page() {
                 {(isLoading || searchPending)
                   ? <TableLoadingState colSpan={999} />
                   : filteredRows.length === 0
-                    ? <EmptyState colSpan={999} hasFilters={!!search || Object.values(filters).some(v => v.length > 0)} onClearFilters={() => { setSearch(''); setFilters({}) }} />
+                    ? <EmptyState colSpan={999} hasFilters={!!search || Object.values(filters).some(v => v.length > 0)} onClearFilters={() => { setSearch(''); setFilters({}); setPage(1) }} />
                     : null}
                 {!(isLoading || searchPending) && pageItems.map((r) => (
                   <tr key={r.courseUnitRepetitionGuid}>

@@ -53,7 +53,7 @@ function getMockSchedule(testGuid: string): TestScheduleDto {
       courseUnitGuid: null,
       scheduledStartDateTime: null,
       scheduledEndDateTime: null,
-      durationMinutes: 60,
+      durationMinutes: 90,
       maxMark: 15, // matches IA Creation defaults
       testType: 0, // Online
       publishStatus: 0,

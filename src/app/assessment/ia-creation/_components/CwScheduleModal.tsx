@@ -1,9 +1,10 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Toast } from '@/components/Toast'
 import { SearchSelect } from '@/components/SearchSelect'
 import DatePicker from '@/components/DatePicker'
+import TimePicker from '@/components/TimePicker'
 import { useIaCwSchedule, useUpdateIaCwSchedule } from '@/hooks/assessment/useIaCwSchedule'
 import { useExamRules } from '@/hooks/assessment/useExamRules'
 import { SuccessPopup } from '@/components/modals/shared/SuccessPopup'
@@ -15,12 +16,29 @@ interface CwScheduleModalProps {
   courseworkGuid: string | null
 }
 
+function getTodayYmd(): string {
+  const now = new Date()
+  const y = now.getFullYear()
+  const m = String(now.getMonth() + 1).padStart(2, '0')
+  const d = String(now.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
+}
+
 export function CwScheduleModal({ isOpen, onClose, courseworkGuid }: CwScheduleModalProps) {
   const [toast, setToast] = useState<{ msg: string; type: string } | null>(null)
+  const toastTimerRef = useRef<NodeJS.Timeout | null>(null)
   const [saved, setSaved] = useState(false)
   const showToast = (msg: string, type: string = 'success') => {
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current)
+    }
     setToast({ msg, type })
-    setTimeout(() => setToast(null), 3500)
+    const isErrorOrWarn = ['error', 'err', 'danger', 'warn', 'warning'].includes((type || '').toLowerCase().trim())
+    const duration = isErrorOrWarn ? 8000 : 4000
+    toastTimerRef.current = setTimeout(() => {
+      setToast(null)
+      toastTimerRef.current = null
+    }, duration)
   }
 
   // Fetch current schedule
@@ -37,6 +55,36 @@ export function CwScheduleModal({ isOpen, onClose, courseworkGuid }: CwScheduleM
   const [publishStatus, setPublishStatus] = useState<number>(0)
   const [examRuleGuid, setExamRuleGuid] = useState<string>('')
   const [lookupOpen, setLookupOpen] = useState(false)
+
+  function handleStartDateChange(d: string) {
+    const today = getTodayYmd()
+    if (d && d < today) {
+      showToast('Before date is not possible', 'error')
+      return
+    }
+    setStartDate(d)
+    if (d && endDate && endDate < d) {
+      showToast('Before date is not possible', 'error')
+      setEndDate('')
+    }
+  }
+
+  function handleEndDateChange(d: string) {
+    const today = getTodayYmd()
+    const minAllowed = startDate || today
+    if (d && d < minAllowed) {
+      showToast('Before date is not possible', 'error')
+      return
+    }
+    setEndDate(d)
+  }
+
+  function handleEndTimeChange(t: string) {
+    setEndTime(t)
+    if (startDate && endDate && startDate === endDate && startTime && t && t <= startTime) {
+      showToast('End Time must be after Start Time', 'error')
+    }
+  }
 
   // Fetch Exam Rules for the dropdown
   const { data: rulesData, isLoading: rulesLoading } = useExamRules(1, 100, '', isOpen)
@@ -131,7 +179,7 @@ export function CwScheduleModal({ isOpen, onClose, courseworkGuid }: CwScheduleM
 
   if (saved) {
     return (
-      <div className="modal-overlay open" onClick={onClose}>
+      <div className="modal-overlay open">
         <div className="modal" style={{ maxWidth: 400 }} onClick={e => e.stopPropagation()}>
           <SuccessPopup
             title="Coursework Scheduled!"
@@ -144,7 +192,7 @@ export function CwScheduleModal({ isOpen, onClose, courseworkGuid }: CwScheduleM
   }
 
   return (
-    <div className="modal-overlay open" onClick={onClose}>
+    <div className="modal-overlay open">
       <div className="modal modal-md modal-flex" style={{ maxWidth: '700px', borderRadius: '12px' }} onClick={e => e.stopPropagation()}>
         {/* Header */}
         <div className="modal-hdr modal-hdr-blue" style={{ display: 'flex', alignItems: 'center', padding: '16px 20px' }}>
@@ -175,10 +223,16 @@ export function CwScheduleModal({ isOpen, onClose, courseworkGuid }: CwScheduleM
                 <label className="lbl">Start Date & Time <span className="text-red-500">*</span></label>
                 <div className="flex gap-2 mt-1">
                   <div className="flex-1">
-                    <DatePicker value={startDate} onChange={setStartDate} />
+                    <DatePicker 
+                      value={startDate} 
+                      onChange={handleStartDateChange} 
+                      minYmd={getTodayYmd()} 
+                      rangeMessage="Before date is not possible"
+                      onError={msg => showToast(msg, 'error')}
+                    />
                   </div>
-                  <div className="w-[110px]">
-                    <input type="time" className="ctrl w-full" value={startTime} onChange={e => setStartTime(e.target.value)} />
+                  <div className="w-[140px]">
+                    <TimePicker value={startTime} onChange={setStartTime} />
                   </div>
                 </div>
               </div>
@@ -186,10 +240,16 @@ export function CwScheduleModal({ isOpen, onClose, courseworkGuid }: CwScheduleM
                 <label className="lbl">End Date & Time <span className="text-red-500">*</span></label>
                 <div className="flex gap-2 mt-1">
                   <div className="flex-1">
-                    <DatePicker value={endDate} onChange={setEndDate} />
+                    <DatePicker 
+                      value={endDate} 
+                      onChange={handleEndDateChange} 
+                      minYmd={startDate || getTodayYmd()} 
+                      rangeMessage="Before date is not possible"
+                      onError={msg => showToast(msg, 'error')}
+                    />
                   </div>
-                  <div className="w-[110px]">
-                    <input type="time" className="ctrl w-full" value={endTime} onChange={e => setEndTime(e.target.value)} />
+                  <div className="w-[140px]">
+                    <TimePicker value={endTime} onChange={handleEndTimeChange} />
                   </div>
                 </div>
               </div>
@@ -295,11 +355,12 @@ export function CwScheduleModal({ isOpen, onClose, courseworkGuid }: CwScheduleM
           </div>
         </div>
       </div>
-      <Toast toast={toast} />
+      <Toast toast={toast} onClose={() => setToast(null)} />
       <ExamRuleLookupModal 
         isOpen={lookupOpen} 
         onClose={() => setLookupOpen(false)} 
         onSelect={guid => setExamRuleGuid(guid)} 
+        selectedGuid={examRuleGuid}
       />
     </div>
   )

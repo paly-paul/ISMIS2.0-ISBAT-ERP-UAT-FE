@@ -1,5 +1,6 @@
-import { QueryClient, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { createIntake, CreateIntakeInput, deleteIntake, getIntakeById, getIntakes, Intake, updateIntake } from '@/lib/api/academic/intake'
+import { QueryClient, useMutation, useQuery, useQueryClient, useInfiniteQuery, useQueries, keepPreviousData } from '@tanstack/react-query'
+import { createIntake, CreateIntakeInput, deleteIntake, getCurrentIntake, getIntakeById, getIntakes, getIntakesPaged, Intake, updateIntake, getIntakesDropdown } from '@/lib/api/academic/intake'
+import { getNextPageParam } from '@/lib/pagination'
 
 const INTAKES_KEY = ['intakes']
 
@@ -45,6 +46,57 @@ export function useIntakeSearch(search: string) {
   })
 }
 
+// Real server-side pagination (2026-09-09) for Intake Master's own table —
+// see getIntakesPaged's own comment.
+export function useIntakesPaged(page: number, pageSize: number, search: string) {
+  return useQuery({
+    queryKey: [...INTAKES_KEY, 'paged', page, pageSize, search],
+    queryFn: () => getIntakesPaged(page, pageSize, search),
+    placeholderData: keepPreviousData,
+  })
+}
+
+// Search-as-you-type/scroll picker (2026-09-10), backing IntakeSearchPicker
+// — same useInfiniteQuery + fetch-next-on-scroll pattern
+// useSearchProgramMastersInfinite (useProgramMaster.ts) uses. Replaces
+// ProgrammeModal's own Intake dropdowns, which used to read off useIntakes()'
+// capped 1000-row snapshot. Reuses getIntakesPaged, already confirmed to
+// genuinely support page/pageSize/search together (built for Intake
+// Master's own table pagination).
+export function useSearchIntakesInfinite(search: string, pageSize: number, enabled: boolean) {
+  return useInfiniteQuery({
+    queryKey: [...INTAKES_KEY, 'search-infinite', search, pageSize],
+    queryFn: ({ pageParam }) => getIntakesPaged(pageParam, pageSize, search),
+    initialPageParam: 1,
+    getNextPageParam,
+    enabled,
+    staleTime: Infinity,
+    gcTime: Infinity,
+  })
+}
+
+// Batched-by-guid lookup — same convention as useCourseUnitsByGuids
+// (useCourseUnits.ts), used by ProgrammeModal to resolve the display label
+// (intakeCode — description) for a bounded set of specific intake guids
+// (the top-level Programme Intake plus whichever intake each fee structure
+// already carries) instead of holding the whole intake list in memory just
+// to look labels up, now that useIntakes(isOpen)'s capped 1000-row snapshot
+// has been replaced by IntakeSearchPicker's own search/scroll fetch.
+export function useIntakesByGuids(guids: string[]) {
+  const unique = Array.from(new Set(guids.filter(Boolean)))
+  const results = useQueries({
+    queries: unique.map(guid => ({
+      queryKey: [...INTAKES_KEY, guid],
+      queryFn: () => getIntakeById(guid),
+      staleTime: Infinity,
+      gcTime: Infinity,
+    })),
+  })
+  const byGuid = new Map<string, Intake>()
+  results.forEach((r, i) => { if (r.data) byGuid.set(unique[i], r.data) })
+  return byGuid
+}
+
 // Fetches a single intake (with its full academicCalendar detail) for the
 // Edit Intake modal. Only enabled while the modal is actually open with a
 // guid, so it doesn't fire on every render of the intake table.
@@ -56,50 +108,15 @@ export function useIntake(intakeGuid: string | null, enabled: boolean) {
   })
 }
 
-// Two hero-card queries for the top of Intake Master. These used to ask the
-// backend to filter via currentIntake=/currentAdmissionIntake= query params,
-// but both flags are already present on every row of the plain (unfiltered)
-// list response, so the current academic/admission intake is now found by
-// scanning that same list client-side instead of sending extra params. Only
-// one intake can ever be flagged current for each, so the first match is the
-// one to show — but the list response only carries the same abbreviated
-// academicCalendar as every other list row (see the note on getIntakeById
-// above: only the by-guid endpoint fully populates it), which left the
-// Academic card's Sem Start/Term 1 End/Sem End chips stuck on "—" even once
-// the card itself resolved. Re-fetching the match by guid gives the hero
-// cards the fully populated record to read date fields off.
-// react-query rejects a queryFn that resolves to `undefined` ("Query data
-// cannot be undefined") — null is the explicit "no current intake found"
-// value instead.
-//
-// Both the list lookup and the by-guid lookup go through queryClient's own
-// cache (ensureQueryData) using the same query keys as useIntakes/useIntake,
-// instead of calling getIntakes/getIntakeById directly. react-query dedupes
-// ensureQueryData calls that share a queryKey — including concurrent
-// in-flight ones — so useCurrentAcademicIntake and useCurrentAdmissionIntake
-// no longer each trigger their own full ?pageSize=1000 request (or their own
-// by-guid request when they happen to resolve to the same intake); they
-// reuse whatever useIntakes() already fetched/is fetching.
-async function fetchCurrentIntake(queryClient: QueryClient, predicate: (intake: Intake) => boolean): Promise<Intake | null> {
-  const intakes = await queryClient.ensureQueryData({
-    queryKey: INTAKES_KEY,
-    queryFn: () => getIntakes(1, INTAKES_PAGE_SIZE),
-    staleTime: Infinity,
-  })
-  const match = intakes.find(predicate)
-  if (!match) return null
-  return queryClient.ensureQueryData({
-    queryKey: [...INTAKES_KEY, match.intakeGuid],
-    queryFn: () => getIntakeById(match.intakeGuid),
-    staleTime: Infinity,
-  })
-}
-
+// Two hero-card queries for the top of Intake Master. They intentionally stay
+// lightweight: the page only needs the current intake summary to render the
+// cards, not the fully expanded calendar payload from the by-guid detail API.
+// Keeping this as a direct current-intake query avoids the extra GUID fetch on
+// page load while still populating the card labels and status.
 export function useCurrentAcademicIntake(enabled = true) {
-  const queryClient = useQueryClient()
   return useQuery({
     queryKey: [...INTAKES_KEY, 'current-academic'],
-    queryFn: () => fetchCurrentIntake(queryClient, i => i.currentIntake),
+    queryFn: () => getCurrentIntake('currentIntake'),
     staleTime: Infinity,
     gcTime: Infinity,
     enabled,
@@ -107,10 +124,9 @@ export function useCurrentAcademicIntake(enabled = true) {
 }
 
 export function useCurrentAdmissionIntake(enabled = true) {
-  const queryClient = useQueryClient()
   return useQuery({
     queryKey: [...INTAKES_KEY, 'current-admission'],
-    queryFn: () => fetchCurrentIntake(queryClient, i => i.currentAdmissionIntake),
+    queryFn: () => getCurrentIntake('currentAdmissionIntake'),
     staleTime: Infinity,
     gcTime: Infinity,
     enabled,
@@ -148,4 +164,14 @@ export function useDeleteIntake() {
   })
 }
 
-export type { Intake, AcademicCalendarEntry, CreateIntakeInput, CreateAcademicCalendarEntryInput } from '@/lib/api/academic/intake'
+export function useIntakesDropdown(enabled = true) {
+  return useQuery({
+    queryKey: [...INTAKES_KEY, 'dropdown'],
+    queryFn: getIntakesDropdown,
+    staleTime: Infinity,
+    gcTime: Infinity,
+    enabled,
+  })
+}
+
+export type { Intake, AcademicCalendarEntry, CreateIntakeInput, CreateAcademicCalendarEntryInput, IntakeDropdownItem } from '@/lib/api/academic/intake'

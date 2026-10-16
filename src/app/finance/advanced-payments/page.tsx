@@ -11,6 +11,7 @@ import { NewAdvanceDepositModal } from '@/components/modals/finance/NewAdvanceDe
 import { usePaymentAdvances, PaymentAdvance } from '@/hooks/finance/usePayments'
 import { getStudentProfile } from '@/lib/api/finance/paymentConsole'
 import { PAY_TYPE_LABELS } from '@/hooks/finance/usePaymentConsole'
+import { usePagePermissions } from '@/hooks/users/usePagePermissions'
 import { formatDate } from '@/lib/date'
 
 const PAGE_SIZE = 10
@@ -41,6 +42,7 @@ function depositStatus(balance: number, amount: number): { label: string; badge:
 }
 
 export default function Page() {
+  const permissions = usePagePermissions()
   const [toast, setToast] = useState<{ msg: string; type: string } | null>(null)
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
@@ -66,7 +68,6 @@ export default function Page() {
       queryFn: () => getStudentProfile(applicationGuid),
       staleTime: Infinity,
       gcTime: Infinity,
-      retry: false,
     })),
   })
   const profileByApplication = useMemo(() => {
@@ -120,9 +121,11 @@ export default function Page() {
             <div className="pg-title">Advanced Payments &amp; Deposits</div>
             <div className="pg-sub">Pre-payment deposits · Lock favorable exchange rates · Offset against future ledgers</div>
           </div>
-          <button className="btn btn-primary" onClick={() => setShowNewDeposit(true)}>
-            <i className="lni lni-plus"></i> New Deposit
-          </button>
+          {permissions.create && (
+            <button className="btn btn-primary" onClick={() => setShowNewDeposit(true)}>
+              <i className="lni lni-plus"></i> New Deposit
+            </button>
+          )}
         </div>
 
         <div className="card">
@@ -141,7 +144,10 @@ export default function Page() {
             <table>
               <thead>
                 <tr>
-                  <th>Student</th><th>Deposit Code</th><th>Deposit Date</th>
+                  {/* Left-aligned explicitly: globals.css centres the first
+                      column for the usual Actions column, which this table
+                      doesn't have. */}
+                  <th style={{ textAlign: 'left' }}>Student</th><th>Deposit Code</th><th>Deposit Date</th>
                   <th>Deposited</th><th>Cur.</th><th>Method</th>
                   {/* Base Value (baseCurrency/baseAmount) commented out, not
                       removed — a real live sample (10-row page) had
@@ -171,7 +177,7 @@ export default function Page() {
                   const status = depositStatus(r.balance, r.amount)
                   return (
                     <tr key={r.paymentAdvanceGuid}>
-                      <td>
+                      <td style={{ textAlign: 'left' }}>
                         <strong>{s.name}</strong>
                         <div className="font-mono text-blue" style={{ fontSize: 11 }}>{s.ref}</div>
                       </td>

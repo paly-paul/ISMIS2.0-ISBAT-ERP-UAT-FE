@@ -6,6 +6,7 @@ import { FailurePopup } from '../shared/FailurePopup'
 import { FollowUpModeInput } from '@/lib/api/admission/followUpMode'
 import { useFollowUpMode } from '@/hooks/admission/useFollowUpModes'
 import { AuthError } from '@/lib/api/client'
+import { scrollToFirstError } from '@/lib/scrollToFirstError'
 
 interface FollowUpModeFormModalProps extends ModalProps {
   mode: 'new' | 'edit'
@@ -52,6 +53,7 @@ export function FollowUpModeFormModal({ isOpen, onClose, showToast, mode: formMo
     const e: Record<string, string> = {}
     if (!followUpModeName.trim()) e.followUpModeName = 'Followup Mode Name is required'
     setErrors(e)
+    scrollToFirstError(e)
     return Object.keys(e).length === 0
   }
 
@@ -141,7 +143,7 @@ export function FollowUpModeFormModal({ isOpen, onClose, showToast, mode: formMo
             onChange={e => { setFollowUpModeName(e.target.value); clearError('followUpModeName') }}
             style={errors.followUpModeName ? { borderColor: 'var(--red)' } : undefined}
           />
-          {errors.followUpModeName && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.followUpModeName}</p>}
+          {errors.followUpModeName && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.followUpModeName}</p>}
         </div>
         <div className="modal-footer">
           <button className="btn btn-neu" onClick={handleClose}>Cancel</button>

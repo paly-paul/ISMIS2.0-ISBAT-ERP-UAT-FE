@@ -46,9 +46,13 @@ const mockLedgers: Ledger[] = [
   { ledgerGuid: 'f6c3e971-d25a-47ad-bc67-c1611a4852c0', ledgerCode: 'RD', ledgerName: 'Rounding', intLedger: 2, ledgerNum: 2, intGlAccount: null },
 ]
 
+// GET /ledgers is paged (get-ledgers.md: pageSize defaults to 10, no upper
+// bound). Callers want every ledger, so ask for them in one page.
+const ALL_LEDGERS_PAGE_SIZE = 1000
+
 export function getLedgers(): Promise<Ledger[]> {
   if (MOCK_AUTH) return Promise.resolve(mockLedgers)
-  return apiGet<LedgerListResponse | null>('/api/v1/finance/ledgers').then(data => data?.items ?? [])
+  return apiGet<LedgerListResponse | null>(`/api/v1/finance/ledgers?page=1&pageSize=${ALL_LEDGERS_PAGE_SIZE}`).then(data => data?.items ?? [])
 }
 
 export function createLedger(input: LedgerInput): Promise<Ledger> {

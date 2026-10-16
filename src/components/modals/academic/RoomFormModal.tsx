@@ -6,6 +6,15 @@ import { FailurePopup } from '../shared/FailurePopup'
 import { RoomInput } from '@/lib/api/academic/room'
 import { useRoom } from '@/hooks/academic/useRooms'
 import { AuthError } from '@/lib/api/client'
+import { scrollToFirstError } from '@/lib/scrollToFirstError'
+
+// post-room.md / put-room.md (same CreateRoomRequest): only roomCode is
+// validated server-side (required, ≤ 10, unique → 409). Location and capacity
+// have NO API rule — an over-long location fails at the database and 0 /
+// negative capacities are accepted — so the limits below are the form's own.
+const ROOM_CODE_MAX = 10
+const LOCATION_MAX = 100
+const CAPACITY_MAX = 9999
 
 // Add and Edit share this form — differ in prefill and which mutation runs.
 interface RoomFormModalProps extends ModalProps {
@@ -59,22 +68,33 @@ export function RoomFormModal({ isOpen, onClose, showToast, mode, roomGuid, crea
 
   function validate() {
     const e: Record<string, string> = {}
-    if (!roomCode.trim()) e.roomCode = 'Room Code is required'
-    // 10-char cap per post-room.md's CreateRoomCommandValidator.
-    else if (roomCode.trim().length > 10) e.roomCode = 'Room Code must not exceed 10 characters'
+    const code = roomCode.trim()
+    // Messages match CreateRoomCommandValidator's.
+    if (!code) e.roomCode = 'Room code is required.'
+    else if (code.length > ROOM_CODE_MAX) e.roomCode = `Room code must not exceed ${ROOM_CODE_MAX} characters.`
+    if (capacity.trim()) {
+      const n = Number(capacity)
+      if (!Number.isInteger(n) || n < 1) e.capacity = 'Capacity must be at least 1.'
+      else if (n > CAPACITY_MAX) e.capacity = `Capacity can't exceed ${CAPACITY_MAX.toLocaleString()}.`
+    }
+    if (location.trim().length > LOCATION_MAX) e.location = `Location must not exceed ${LOCATION_MAX} characters.`
     setErrors(e)
+    scrollToFirstError(e)
     return Object.keys(e).length === 0
   }
 
-  // Only roomCode uniqueness is an actionable field error (409 conflict);
-  // anything else shows the failure popup.
+  // Room-code problems from the server (409 duplicate, or a validation_error
+  // about the code) go under the field; anything else shows the popup.
   function handleSaveError(error: Error) {
     const code = error instanceof AuthError ? error.code : undefined
-    if (code === 'conflict') {
-      setErrors(prev => ({ ...prev, roomCode: error.message || 'A room with this code already exists.' }))
+    const msg = error.message || ''
+    if (code === 'conflict' || (code === 'validation_error' && /room code/i.test(msg))) {
+      const e = { roomCode: code === 'conflict' ? 'A room with this code already exists.' : msg }
+      setErrors(prev => ({ ...prev, ...e }))
+      scrollToFirstError(e)
       return
     }
-    setFailure(error.message || `Failed to ${isEdit ? 'update' : 'add'} room. Please try again.`)
+    setFailure(msg || `Failed to ${isEdit ? 'update' : 'add'} room. Please try again.`)
   }
 
   function handleSubmit() {
@@ -165,23 +185,46 @@ export function RoomFormModal({ isOpen, onClose, showToast, mode, roomGuid, crea
         <div className="g2">
           <div className="fg">
             <div className="lbl">Room Code <span className="req">*</span></div>
+            {/* Displayed uppercase, so store it uppercase too — otherwise
+                "rm-a1" looked like "RM-A1" here but saved (and showed in the
+                table) in lowercase. No spaces: a room code is a single token,
+                and the API stores it untrimmed. */}
             <input
               className="ctrl font-mono uppercase"
               placeholder={isEdit ? undefined : 'e.g. RM-FCT-004'}
-              maxLength={10}
+              maxLength={ROOM_CODE_MAX}
               value={roomCode}
-              onChange={e => { setRoomCode(e.target.value); clearError('roomCode') }}
+              onChange={e => { setRoomCode(e.target.value.toUpperCase().replace(/\s+/g, '')); clearError('roomCode') }}
               style={errors.roomCode ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.roomCode && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.roomCode}</p>}
+            {errors.roomCode && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.roomCode}</p>}
           </div>
           <div className="fg">
             <div className="lbl">Capacity</div>
-            <input className="ctrl" type="number" placeholder={isEdit ? undefined : 'e.g. 40'} min={0} value={capacity} onChange={e => setCapacity(e.target.value)} />
+            {/* Text + numeric keypad, digits only — type="number" let "e",
+                decimals and negatives through, and the API accepts 0 / negative. */}
+            <input
+              className="ctrl"
+              inputMode="numeric"
+              placeholder={isEdit ? undefined : 'e.g. 40'}
+              maxLength={String(CAPACITY_MAX).length}
+              value={capacity}
+              onChange={e => { setCapacity(e.target.value.replace(/\D/g, '')); clearError('capacity') }}
+              style={errors.capacity ? { borderColor: 'var(--red)' } : undefined}
+            />
+            {errors.capacity && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.capacity}</p>}
           </div>
           <div className="fg span2">
             <div className="lbl">Location</div>
-            <input className="ctrl" placeholder={isEdit ? undefined : 'e.g. Main Campus — Kampala, Block A'} value={location} onChange={e => setLocation(e.target.value)} />
+            <input
+              className="ctrl"
+              placeholder={isEdit ? undefined : 'e.g. Main Campus — Kampala, Block A'}
+              maxLength={LOCATION_MAX}
+              value={location}
+              onChange={e => { setLocation(e.target.value); clearError('location') }}
+              style={errors.location ? { borderColor: 'var(--red)' } : undefined}
+            />
+            {errors.location && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.location}</p>}
           </div>
         </div>
 

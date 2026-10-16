@@ -52,7 +52,7 @@ export default function Page() {
   }
 
   function confirmDeleteCurrency() {
-    if (!deleteTarget?.currencyGuid) return
+    if (!permissions.delete || !deleteTarget?.currencyGuid) return
     deleteCurrency.mutate(deleteTarget.currencyGuid, {
       onSuccess: () => { setDeleteTarget(null); showToast('Currency deleted successfully') },
       onError: (error: Error) => showToast(error.message || 'Failed to delete currency', 'error'),

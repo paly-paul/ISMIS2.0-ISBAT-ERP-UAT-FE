@@ -8,6 +8,7 @@ import {
   BOOK_CATEGORY_LABELS, BOOK_CATEGORY_VALUES, CATEGORY_LABELS, CATEGORY_VALUES, CreateReceiptBookInput, ReceiptBook, ReceiptBookCategory,
   ReceiptCategory, ReceiptBookStatus, STATUS_LABELS, STATUS_VALUES, UpdateReceiptBookInput,
 } from '@/lib/api/finance/receiptBook'
+import { scrollToFirstError } from '@/lib/scrollToFirstError'
 
 // Add and Edit share this form. Edit's fields are more limited than Add's —
 // bookCode/prefix/startNo/count are immutable once the book exists — and
@@ -75,6 +76,7 @@ export function ReceiptBookFormModal({ isOpen, onClose, showToast, mode, receipt
       if (!count || +count <= 0) e.count = 'Count must be greater than 0'
     }
     setErrors(e)
+    scrollToFirstError(e)
     return Object.keys(e).length === 0
   }
 
@@ -159,7 +161,7 @@ export function ReceiptBookFormModal({ isOpen, onClose, showToast, mode, receipt
                 style={errors.bookCode ? { borderColor: 'var(--red)' } : undefined}
               />
             )}
-            {errors.bookCode && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.bookCode}</p>}
+            {errors.bookCode && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.bookCode}</p>}
           </div>
           <div className="fg">
             <div className="lbl">Prefix</div>
@@ -200,7 +202,7 @@ export function ReceiptBookFormModal({ isOpen, onClose, showToast, mode, receipt
                   onChange={e => { setStartNo(e.target.value); if (errors.startNo) setErrors(p => ({ ...p, startNo: '' })) }}
                   style={errors.startNo ? { borderColor: 'var(--red)' } : undefined}
                 />
-                {errors.startNo && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.startNo}</p>}
+                {errors.startNo && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.startNo}</p>}
               </div>
               <div className="fg">
                 <div className="lbl">Count <span className="req">*</span></div>
@@ -213,7 +215,7 @@ export function ReceiptBookFormModal({ isOpen, onClose, showToast, mode, receipt
                   onChange={e => { setCount(e.target.value); if (errors.count) setErrors(p => ({ ...p, count: '' })) }}
                   style={errors.count ? { borderColor: 'var(--red)' } : undefined}
                 />
-                {errors.count && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.count}</p>}
+                {errors.count && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.count}</p>}
               </div>
             </>
           )}

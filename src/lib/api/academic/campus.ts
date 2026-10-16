@@ -48,13 +48,16 @@ export interface Campus {
   location: string
   address: string
   contact: string
+  intCampus?: number
+  campusId?: number
+  id?: string | number
 }
 
 // Payload used when creating or updating a campus.
 export type CampusInput = Omit<Campus, 'campusGuid'>
 
 // Response wrapper for the paginated campus list endpoint.
-interface CampusListResponse {
+export interface CampusListResponse {
   items: Campus[]
   totalCount: number
   pageNumber: number
@@ -74,10 +77,50 @@ export function getCampuses(page = 1, pageSize = 10): Promise<Campus[]> {
   return apiGet<CampusListResponse | null>(`/api/v1/academic/campus?page=${page}&pageSize=${pageSize}`).then(data => data?.items ?? [])
 }
 
+export function getCampusesPaged(page = 1, pageSize = 20, search = ''): Promise<CampusListResponse> {
+  if (MOCK_AUTH) {
+    const query = search.trim().toLowerCase()
+    const filtered = query
+      ? mockCampuses.filter(c => `${c.campusCode} ${c.campusName} ${c.location}`.toLowerCase().includes(query))
+      : mockCampuses
+    const start = (page - 1) * pageSize
+    return Promise.resolve({ items: filtered.slice(start, start + pageSize), totalCount: filtered.length, pageNumber: page, pageSize })
+  }
+  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) })
+  if (search.trim()) params.set('search', search.trim())
+  return apiGet<CampusListResponse | null>(`/api/v1/academic/campus?${params.toString()}`)
+    .then(data => data ?? { items: [], totalCount: 0, pageNumber: page, pageSize })
+}
+
 // Lightweight data used for campus dropdowns.
 export interface CampusDropdownItem {
   campusGuid: string
   campusName: string
+  campusCode?: string
+  intCampus?: number
+  campusId?: number
+  id?: string | number
+}
+
+// Extract or derive the integer ID for a campus record across live API, mock, or fallback index.
+export function getCampusId(campus: Campus | CampusDropdownItem, index = 0): number {
+  const anyCampus = campus as any
+  if (typeof anyCampus.intCampus === 'number' && anyCampus.intCampus > 0) {
+    return anyCampus.intCampus
+  }
+  if (typeof anyCampus.campusId === 'number' && anyCampus.campusId > 0) {
+    return anyCampus.campusId
+  }
+  if (typeof anyCampus.id === 'number' && anyCampus.id > 0) {
+    return anyCampus.id
+  }
+  if (typeof anyCampus.campusCode === 'string' && anyCampus.campusCode.trim()) {
+    const parsed = parseInt(anyCampus.campusCode.trim(), 10)
+    if (!Number.isNaN(parsed) && parsed > 0) return parsed
+  }
+  const guidParsed = parseInt(campus.campusGuid, 10)
+  if (!Number.isNaN(guidParsed) && guidParsed > 0) return guidParsed
+  return index + 1
 }
 
 export function getCampusDropdown(): Promise<CampusDropdownItem[]> {

@@ -66,6 +66,28 @@ export function getPayments(page = 1, pageSize = 10, applicationGuid?: string | 
     .then(data => data ?? emptyPage(page, pageSize))
 }
 
+// Confirmed via get-payments.md: pageSize has no upper bound enforced, but
+// useAdvanceStatusByPayment's caller wants every one of this application's
+// payments (it's building a lookup map, not paging a UI), and the number of
+// payments on one application is unknown ahead of time — a hardcoded
+// pageSize risks silently truncating a heavy payer. Pages through properly
+// instead of guessing a "big enough" constant: fetch a page, read the real
+// totalCount back, keep requesting subsequent pages until every item is in
+// hand. PAGE_SIZE here is just the chunk size per request, not a ceiling —
+// the loop keeps going however many pages that takes.
+const ALL_PAYMENTS_PAGE_SIZE = 10
+export async function getAllPaymentsForApplication(applicationGuid: string): Promise<Payment[]> {
+  const items: Payment[] = []
+  let page = 1
+  for (;;) {
+    const result = await getPayments(page, ALL_PAYMENTS_PAGE_SIZE, applicationGuid)
+    items.push(...result.items)
+    if (items.length >= result.totalCount || result.items.length === 0) break
+    page++
+  }
+  return items
+}
+
 // Confirmed via payment-console/get-payment-advances.md — this is the list
 // endpoint that was missing when /finance/advanced-payments was first
 // looked at (only per-application balance existed then, via

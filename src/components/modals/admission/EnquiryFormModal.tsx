@@ -4,6 +4,7 @@ import { ModalProps } from '../types'
 import { SuccessPopup } from '../shared/SuccessPopup'
 import { SearchSelect } from '@/components/SearchSelect'
 import { sanitizePhoneInput } from '@/lib/errorMessages'
+import { scrollToFirstError } from '@/lib/scrollToFirstError'
 
 const EMPTY = {
   firstName: '', lastName: '', phone: '', email: '',
@@ -32,6 +33,7 @@ export function EnquiryFormModal({ isOpen, onClose }: ModalProps) {
     if (!form.channel)          e.channel   = 'Please select an Enquiry Channel'
     if (!form.programme)        e.programme = 'Please select a Programme Interest'
     setErrors(e)
+    scrollToFirstError(e)
     return Object.keys(e).length === 0
   }
 
@@ -59,21 +61,21 @@ export function EnquiryFormModal({ isOpen, onClose }: ModalProps) {
             <input className="ctrl" placeholder="Enter first name" value={form.firstName}
               onChange={e => set('firstName', e.target.value)}
               style={errors.firstName ? { borderColor: 'var(--red)' } : undefined} />
-            {errors.firstName && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.firstName}</p>}
+            {errors.firstName && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.firstName}</p>}
           </div>
           <div className="fg">
             <label className="lbl">Last Name <span className="req">*</span></label>
             <input className="ctrl" placeholder="Enter last name" value={form.lastName}
               onChange={e => set('lastName', e.target.value)}
               style={errors.lastName ? { borderColor: 'var(--red)' } : undefined} />
-            {errors.lastName && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.lastName}</p>}
+            {errors.lastName && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.lastName}</p>}
           </div>
           <div className="fg">
             <label className="lbl">Phone <span className="req">*</span></label>
             <input className="ctrl" type="tel" inputMode="numeric" placeholder="+256 7XX XXX XXX" value={form.phone}
               onChange={e => set('phone', sanitizePhoneInput(e.target.value))}
               style={errors.phone ? { borderColor: 'var(--red)' } : undefined} />
-            {errors.phone && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.phone}</p>}
+            {errors.phone && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.phone}</p>}
           </div>
           <div className="fg">
             <label className="lbl">Email</label>
@@ -87,7 +89,7 @@ export function EnquiryFormModal({ isOpen, onClose }: ModalProps) {
               value={form.channel}
               onChange={v => set('channel', v)}
             />
-            {errors.channel && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.channel}</p>}
+            {errors.channel && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.channel}</p>}
           </div>
           <div className="fg">
             <label className="lbl">Programme Interest <span className="req">*</span></label>
@@ -97,7 +99,7 @@ export function EnquiryFormModal({ isOpen, onClose }: ModalProps) {
               value={form.programme}
               onChange={v => set('programme', v)}
             />
-            {errors.programme && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.programme}</p>}
+            {errors.programme && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.programme}</p>}
           </div>
           <div className="fg">
             <label className="lbl">Preferred Intake</label>

@@ -1,32 +1,36 @@
 'use client'
-import { Fragment, useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Toast } from '@/components/Toast'
 import { SearchSelect } from '@/components/SearchSelect'
 import DatePicker from '@/components/DatePicker'
-import { SuccessPopup } from '@/components/modals/shared/SuccessPopup'
+import { openPdfInNewTab } from '@/lib/openPdf'
+import { getApplicationPaymentReceiptPdf, hasPrintableReceipt } from '@/lib/api/admission/applicationPayment'
 import { FailurePopup } from '@/components/modals/shared/FailurePopup'
-import { useIntakes, useCurrentAcademicIntake } from '@/hooks/academic/useIntakes'
-import { useCampuses } from '@/hooks/config/useCampuses'
-import { useProgramDropdown, useProgramMaster, useProgramMasterByGuid, useProgramMasters } from '@/hooks/academic/useProgramMaster'
+import { useSearchCampusesInfinite } from '@/hooks/config/useCampuses'
+import { useProgramMaster, useProgramMasterByGuid, useSearchProgramMastersInfinite } from '@/hooks/academic/useProgramMaster'
 import { useSemestersForProgram } from '@/hooks/academic/useSemesters'
 import { useBatchTimes } from '@/hooks/config/useBatchTimes'
 import { useBatch, useBatches } from '@/hooks/academic/useBatches'
-import { useCountries } from '@/hooks/config/useCountries'
+import { useCountries, useSearchCountriesInfinite } from '@/hooks/config/useCountries'
 import { useProgramFeeStructures } from '@/hooks/academic/useProgramFeeStructure'
 import { usePagePermissions } from '@/hooks/users/usePagePermissions'
-import { sanitizePhoneInput } from '@/lib/errorMessages'
-import { consumeFilingPrefillRef } from '@/lib/filingHandoff'
+import { sanitizePhoneInput, sanitizeNameInput } from '@/lib/errorMessages'
+import { consumeFilingPrefill } from '@/lib/filingHandoff'
+import { getEnquiryById, getEnquiries } from '@/lib/api/admission/enquiry'
+import { flattenUniquePages } from '@/lib/pagination'
+import { scrollToFirstError } from '@/lib/scrollToFirstError'
 import {
   FilingApplicationSearchResult,
+  useApplicationByPaymentGuid,
   useDeleteQualification,
   useSaveGeneral,
   useSaveQualification,
-  useSearchApplicationsForFiling,
   useSearchApplicationsForFilingInfinite,
   useSubmitApplication,
   useUploadPhoto,
 } from '@/hooks/admission/useApplicationFiling'
+import { filingResultFromNewPayment } from '@/lib/api/admission/applicationFiling'
 
 // Family Details tab removed per the Application Filling requirements doc
 // (req. 10) — sponsorship fields already live in Personal Info.
@@ -82,35 +86,60 @@ function emptyQualRow(id: number): QualRow {
   return { id, institution: '', university: '', passYear: '', grade: '', yearsTaken: '', proofFile: null, savedId: null }
 }
 
-function Field({ label, req, children, span }: { label: string; req?: boolean; span?: number; children: React.ReactNode }) {
+// Qualification duration (yearsTaken) — whole years, per the API.
+const QUAL_DURATION_MIN = 1
+const QUAL_DURATION_MAX = 10
+// POST /application-filling/qualifications limits.
+const QUAL_TEXT_MAX = 200
+const QUAL_GRADE_MAX = 50
+const PASS_YEAR_MIN = 1950
+// POST /application-filling/photo: extension-checked only.
+const PHOTO_EXT_RE = /\.(jpe?g|png|bmp)$/i
+const PHOTO_TYPE_MESSAGE = 'Only JPG, PNG, or BMP images are accepted.'
+
+// `error` renders the same inline field message the academic forms use
+// (.field-err, picked up by scrollToFirstError).
+function Field({ label, req, children, span, error }: { label: string; req?: boolean; span?: number; children: React.ReactNode; error?: string }) {
   return (
     <div className={span === 2 ? 'fg span2' : span === 3 ? 'fg span3' : 'fg'}>
       <label className="lbl">{label}{req && <span className="req">*</span>}</label>
       {children}
+      {error && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{error}</p>}
     </div>
   )
 }
-function Input({ placeholder, type = 'text', readOnly, value, onChange }: { placeholder?: string; type?: string; readOnly?: boolean; value?: string; onChange?: (v: string) => void }) {
+function Input({ placeholder, type = 'text', readOnly, value, onChange, inputMode, maxLength, hasError, minYmd, maxYmd, rangeMessage }: { placeholder?: string; type?: string; readOnly?: boolean; value?: string; onChange?: (v: string) => void; inputMode?: React.HTMLAttributes<HTMLInputElement>['inputMode']; maxLength?: number; hasError?: boolean; minYmd?: string; maxYmd?: string; rangeMessage?: string }) {
   if (type === 'date' && !readOnly) {
-    return <DatePicker value={value} onChange={v => onChange?.(v)} placeholder={placeholder} />
+    return <DatePicker value={value} onChange={v => onChange?.(v)} placeholder={placeholder} minYmd={minYmd} maxYmd={maxYmd} rangeMessage={rangeMessage} hasError={hasError} />
   }
   // .no-spinner strips the native up/down arrows on type="number" fields
-  // (Year, Duration (Years) below) — same class already used for Exchange
-  // Rates' number inputs elsewhere in the app.
+  // (Year below) — same class already used for Exchange Rates' number
+  // inputs elsewhere in the app.
   const className = type === 'number' ? 'ctrl no-spinner' : 'ctrl'
   if (value !== undefined) {
-    return <input className={className} type={type} placeholder={placeholder} readOnly={readOnly} value={value} onChange={e => onChange?.(e.target.value)} />
+    return <input className={className} type={type} placeholder={placeholder} readOnly={readOnly} inputMode={inputMode} maxLength={maxLength} value={value} onChange={e => onChange?.(e.target.value)} style={hasError ? { borderColor: 'var(--red)' } : undefined} aria-invalid={hasError || undefined} />
   }
   return <input className={className} type={type} placeholder={placeholder} readOnly={readOnly} />
 }
 function Select({ options, placeholder, value, onChange }: { options: string[]; placeholder?: string; value?: string; onChange?: (v: string) => void }) {
   return <SearchSelect placeholder={placeholder || 'Select...'} options={options} value={value} onChange={onChange} />
 }
-function FileZone({ hint = 'Click to upload', file, onChange }: { hint?: string; file?: File | null; onChange?: (f: File | null) => void }) {
+function FileZone({ hint = 'Click to upload', file, onChange, hasError }: { hint?: string; file?: File | null; onChange?: (f: File | null) => void; hasError?: boolean }) {
   const [dragActive, setDragActive] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+  // A picked file used to be replaceable but never removable. Clearing also
+  // resets the native input, or re-picking the same file wouldn't fire
+  // onChange. Only clears the local pick — a document already saved to the
+  // application isn't deleted server-side.
+  function removeFile(e: React.MouseEvent) {
+    e.preventDefault(); e.stopPropagation()
+    if (inputRef.current) inputRef.current.value = ''
+    onChange?.(null)
+  }
   return (
     <div
       className={`file-zone${dragActive ? ' drag-active' : ''}`}
+      style={hasError ? { borderColor: 'var(--red)' } : undefined}
       onDragOver={e => { e.preventDefault(); setDragActive(true) }}
       onDragLeave={() => setDragActive(false)}
       onDrop={e => {
@@ -119,9 +148,22 @@ function FileZone({ hint = 'Click to upload', file, onChange }: { hint?: string;
         if (dropped) onChange?.(dropped)
       }}
     >
-      <input type="file" onChange={e => onChange?.(e.target.files?.[0] ?? null)} />
+      <input ref={inputRef} type="file" onChange={e => onChange?.(e.target.files?.[0] ?? null)} />
       <i className={`lni ${file ? 'lni-checkmark-circle' : 'lni-cloud-upload'} file-zone-icon`} style={file ? { color: 'var(--green)' } : undefined} />
       <p>{file ? file.name : hint}</p>
+      {file && onChange && (
+        // Sits above the full-size invisible file input (z-index), so this
+        // click removes instead of opening the file dialog.
+        <button
+          type="button"
+          className="btn btn-neu btn-sm"
+          style={{ position: 'relative', zIndex: 1, marginTop: 8 }}
+          onClick={removeFile}
+          aria-label={`Remove ${file.name}`}
+        >
+          <i className="lni lni-trash-can" aria-hidden="true" /> Remove
+        </button>
+      )}
     </div>
   )
 }
@@ -139,6 +181,15 @@ function initials(name: string): string {
 // (see FilingApplicationSearchResult) — join whatever's present.
 function applicantName(a: FilingApplicationSearchResult): string {
   return [a.firstName, a.lastName].filter(Boolean).join(' ').trim()
+}
+
+// A selected applicant shows as "NAME (APPREF)" in the search box; editing
+// it (e.g. one backspace) turned that whole label into the search term,
+// which the server (matching name OR appRefNo) never matches. When the text
+// still carries the "(APPREF" part, search by that reference instead.
+function applicantSearchTerm(text: string): string {
+  const ref = text.match(/\(([^()]*)\)?\s*$/)?.[1]?.trim()
+  return ref && ref.length >= 2 ? ref : text.trim()
 }
 
 // One row in the Documents tab's "Uploaded Documents" list (req. 11: view/
@@ -206,36 +257,22 @@ export default function FilingPage() {
   const [showApplicantDropdown, setShowApplicantDropdown] = useState(false)
   const [selectedApplication, setSelectedApplication] = useState<FilingApplicationSearchResult | null>(null)
   const [submitted, setSubmitted] = useState(false)
-  // Scoped to the current academic intake — intakeCode is a CONFIRMED real
-  // filter on the underlying /application-payments endpoint (a live
-  // ?intakeCode=20261 request came back properly scoped, ~hundreds of rows
-  // instead of the 442+ that one intake alone already had).
-  //
-  // currentAcademicIntake comes back null whenever no intake in the live
-  // data is flagged currentIntake — CONFIRMED the same real data gap that
-  // broke the Intake dropdown on the enquiry forms earlier (see
-  // online-enquiry/ondesk-enquiry/kiosk-enquiry's own fallback). Without a
-  // fallback here, intakeCode silently never made it into the request at
-  // all. Falls back to the intake with the highest intakeCode (a
-  // year+sequence value like 20261 — the most recently created intake) as
-  // a best-guess "current" one, same "prefer the real flag, never leave the
-  // feature fully broken because of it" approach as the enquiry forms fix.
-  const { data: intakes = [] }    = useIntakes()
-  const { data: currentAcademicIntake } = useCurrentAcademicIntake()
-  const latestIntakeCode = intakes.length
-    ? intakes.reduce((max, i) => (i.intakeCode > max ? i.intakeCode : max), intakes[0].intakeCode)
-    : undefined
-  const effectiveIntakeCode = currentAcademicIntake?.intakeCode ?? latestIntakeCode
-
+  const [countrySearch, setCountrySearch] = useState('')
+  const [countryPickerOpen, setCountryPickerOpen] = useState(false)
+  const [committedCountrySearch, setCommittedCountrySearch] = useState('')
   // searchTerm is CONFIRMED real server-side on this endpoint (2026-09-08) —
   // debounced the same 300ms as the other real-server-search pickers in this
   // app (CourseUnitSearchPicker, Payment Console's student search) so it
   // isn't fired on every single keystroke.
   const [committedApplicantSearch, setCommittedApplicantSearch] = useState('')
   useEffect(() => {
-    const t = setTimeout(() => setCommittedApplicantSearch(applicantSearch.trim()), 300)
+    const t = setTimeout(() => setCommittedApplicantSearch(applicantSearchTerm(applicantSearch)), 300)
     return () => clearTimeout(t)
   }, [applicantSearch])
+  useEffect(() => {
+    const t = setTimeout(() => setCommittedCountrySearch(countrySearch.trim()), 300)
+    return () => clearTimeout(t)
+  }, [countrySearch])
 
   // Real server-paginated, scroll-to-load-more applicant search — replaces
   // the old single pageSize=12000 "fetch nearly everything up front, filter
@@ -250,62 +287,42 @@ export default function FilingPage() {
     data: applicantPages, fetchNextPage: fetchNextApplicantPage, hasNextPage: hasMoreApplicants,
     isFetchingNextPage: isFetchingMoreApplicants, isFetching: isSearchingApplicants, isError: isApplicantSearchError,
   } = useSearchApplicationsForFilingInfinite(
-    committedApplicantSearch, APPLICANT_PAGE_SIZE, showApplicantDropdown && !!committedApplicantSearch, effectiveIntakeCode,
+    committedApplicantSearch, APPLICANT_PAGE_SIZE, showApplicantDropdown && !!committedApplicantSearch,
   )
   const loadedApplicants = applicantPages?.pages.flatMap(p => p.items) ?? []
   // Server already filtered by committedApplicantSearch — no client-side
-  // re-filter needed (or wanted: the server is the source of truth for what
-  // matches, same as every other confirmed-real search in this app).
-  const visibleSearchItems = loadedApplicants
+  // re-filter needed (the server is the source of truth for what matches).
 
   // Same scrollTop > 0 guard the other infinite-scroll dropdowns in this
-  // app use (CourseUnitSearchPicker, Payment Console's student search) — a
-  // plain distance-to-bottom check alone fires spuriously on a short list
-  // right after a new page loads, even with no user interaction.
+  // app use — a plain distance-to-bottom check alone fires spuriously on a
+  // short list right after a new page loads.
   function handleApplicantScroll(e: React.UIEvent<HTMLDivElement>) {
     if (!hasMoreApplicants || isFetchingMoreApplicants) return
     const el = e.currentTarget
     if (el.scrollTop > 0 && el.scrollHeight - el.scrollTop - el.clientHeight < 48) fetchNextApplicantPage()
   }
 
-  // Auto-carries the appRefNo over from Payment's "Proceed to Filing" button
-  // (see lib/filingHandoff.ts) instead of leaving the counsellor to manually
-  // retype/remember it right after generating a receipt — read once on
-  // mount, consumed immediately so a later manual visit/refresh doesn't
-  // keep re-triggering this. Kept as its own dedicated one-shot lookup
-  // (bypassing the 300ms debounce above) rather than waiting on the
-  // interactive dropdown's own debounced search, so the auto-select fires
-  // as soon as possible after landing on the page. pageSize can stay small
-  // now that searchTerm is a real server-side filter (see
-  // getApplicationPayments) — the exact appRefNo should land on page 1 —
-  // where this previously needed pageSize=12000 to reliably find it via
-  // client-side filtering over a near-complete unfiltered fetch.
-  const [prefillRef, setPrefillRef] = useState<string | null>(null)
+  // Closes the results on an outside click, same as Payment Console's search.
+  const applicantBoxRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
-    const ref = consumeFilingPrefillRef()
-    if (!ref) return
-    setPrefillRef(ref)
-    setApplicantSearch(ref)
-    setShowApplicantDropdown(true)
-  }, [])
+    if (!showApplicantDropdown) return
+    function handle(e: MouseEvent) {
+      if (!applicantBoxRef.current?.contains(e.target as Node)) setShowApplicantDropdown(false)
+    }
+    document.addEventListener('mousedown', handle)
+    return () => document.removeEventListener('mousedown', handle)
+  }, [showApplicantDropdown])
 
-  const { data: prefillResults } = useSearchApplicationsForFiling(
-    prefillRef ?? '', 1, 20, !!prefillRef, effectiveIntakeCode,
-  )
-  // Once the search this triggers actually comes back, auto-select the
-  // matching row so the counsellor lands straight on a filled Personal Info
-  // tab instead of still having to click it from the dropdown. If nothing
-  // matches (e.g. the backend hasn't indexed the new payment yet), surface
-  // that plainly rather than leaving an empty dropdown with no explanation.
+  // Payment's "Proceed to Filing" hands over the just-saved payment itself
+  // (lib/filingHandoff.ts). Select it directly, the same as a dropdown pick:
+  // no search, because a just-paid applicant has no application row yet.
+  // Read once on mount and consumed, so a refresh or later visit doesn't
+  // reopen it.
   useEffect(() => {
-    if (!prefillRef || !prefillResults) return
-    const ref = prefillRef
-    setPrefillRef(null)
-    const match = prefillResults.items.find(a => a.appRefNo === ref)
-    if (match) selectApplication(match)
-    else showToast(`Could not find application ${ref} yet — try searching again in a moment, or check the reference number`, 'error')
+    const payment = consumeFilingPrefill()
+    if (payment) selectApplication(filingResultFromNewPayment(payment))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prefillResults])
+  }, [])
 
   // Once an application is picked, warn on leaving until it's actually been
   // submitted for vetting — covers tab close/refresh/typing a new URL/
@@ -358,6 +375,30 @@ export default function FilingPage() {
     setIsRefugee(a.refugee === 1)
     setRefugeeId(a.refugeeId ?? '')
 
+    if (!a.dob) {
+      if (a.enquiryGuid) {
+        getEnquiryById(a.enquiryGuid)
+          .then(enq => {
+            if (enq.dob) setDob(enq.dob.slice(0, 10))
+            if (enq.countryGuid && !a.countryGuid) setCountryGuid(enq.countryGuid)
+          })
+          .catch(() => {})
+      } else if (a.phone || a.emailId) {
+        getEnquiries(1, 10, a.phone || a.emailId || '')
+          .then(res => {
+            const found = res.items.find(
+              e =>
+                (a.phone && e.mobile && e.mobile.replace(/\D/g, '').includes(a.phone.replace(/\D/g, ''))) ||
+                (a.emailId && e.email && e.email.toLowerCase() === a.emailId.toLowerCase()),
+            )
+            if (found && found.dob) {
+              setDob(found.dob.slice(0, 10))
+            }
+          })
+          .catch(() => {})
+      }
+    }
+
     setIntakeGuid(a.intakeGuid ?? '')
     setCampusGuid(a.campusGuid ?? '')
     setProgramGuidState(a.programGuid ?? '')
@@ -390,6 +431,8 @@ export default function FilingPage() {
   const [passportFile, setPassportFile] = useState<File | null>(null)
   const [vStartDate, setVStartDate] = useState('')
   const [vEndDate, setVEndDate] = useState('')
+  // Inline errors on the General tab (currently just the visa date pair).
+  const [generalErrors, setGeneralErrors] = useState<Record<string, string>>({})
   const [visaFile, setVisaFile] = useState<File | null>(null)
   const [isRefugee, setIsRefugee] = useState(false)
   const [refugeeId, setRefugeeId] = useState('')
@@ -410,20 +453,23 @@ export default function FilingPage() {
   const [generalSaved, setGeneralSaved] = useState(false)
   const [intApplication, setIntApplication] = useState<number | null>(null)
 
-  const { data: campuses = [] }   = useCampuses()
-  const { data: programs = [] }   = useProgramMasters()
-  const { data: programDropdown = [] } = useProgramDropdown()
+  const countryQuery = useSearchCountriesInfinite(committedCountrySearch, 20, countryPickerOpen)
+  const countrySearchResults = useMemo(() => flattenUniquePages(countryQuery.data?.pages ?? [], c => c.countryGuid), [countryQuery.data])
+  const campusQuery = useSearchCampusesInfinite('', 20, !!selectedApplication)
+  const campuses = useMemo(() => flattenUniquePages(campusQuery.data?.pages ?? [], c => c.campusGuid), [campusQuery.data])
+  const programQuery = useSearchProgramMastersInfinite('', 20, !!selectedApplication)
+  const programs = useMemo(() => flattenUniquePages(programQuery.data?.pages ?? [], p => p.programGuid), [programQuery.data])
   const { data: singleProgram }   = useProgramMaster(
     programGuid,
-    !!programGuid && !programs.some(p => p.programGuid === programGuid) && !programDropdown.some(p => p.programGuid === programGuid)
+    !!programGuid && !programs.some(p => p.programGuid === programGuid)
   )
   const { data: semesters = [] }  = useSemestersForProgram(programGuid, !!programGuid)
-  const { data: batchTimes = [] } = useBatchTimes()
+  const { data: batchTimes = [] } = useBatchTimes(!!selectedApplication)
   // Same payment-scoped Dropdowns/Batches.bru endpoint that turned out
   // unreliable on the Payment page (200 with an empty array for
   // combinations that do have a matching batch) — use the generic,
   // already-confirmed-correct Batches list filtered client-side instead.
-  const { data: allBatchesData }  = useBatches(1, 1000)
+  const { data: allBatchesData }  = useBatches(1, 20, '', !!selectedApplication)
   const batches = (allBatchesData?.items ?? []).filter(b =>
     b.programGuid === programGuid && b.semesterGuid === semesterGuid && b.batchTimeGuid === batchTimeGuid,
   )
@@ -441,9 +487,9 @@ export default function FilingPage() {
   // real fee structures) — use the generic, already-confirmed-correct
   // Programme Fee Structure list filtered client-side instead, same fix as
   // applied there.
-  const { data: allFeeStructuresData } = useProgramFeeStructures(1, 1000)
+  const { data: allFeeStructuresData } = useProgramFeeStructures(1, 20, undefined, !!selectedApplication)
   const fees = (allFeeStructuresData?.items ?? []).filter(f => f.programGuid === programGuid && f.status)
-  const { data: countries = [] }  = useCountries()
+  const { data: countries = [] }  = useCountries(!!selectedApplication || countryPickerOpen)
 
   // CONFIRMED live: a real selected application's programGuid (locked/
   // prefilled from the payment record, see selectApplication above) can
@@ -470,11 +516,6 @@ export default function FilingPage() {
     for (const p of programs) {
       map.set(p.programGuid, `${p.programName} (${p.programCode})`)
     }
-    for (const p of programDropdown) {
-      if (!map.has(p.programGuid)) {
-        map.set(p.programGuid, `${p.programName} (${p.programCode})`)
-      }
-    }
     if (selectedProgramFallback && !map.has(selectedProgramFallback.programGuid)) {
       map.set(selectedProgramFallback.programGuid, `${selectedProgramFallback.programName} (${selectedProgramFallback.programCode})`)
     }
@@ -484,7 +525,7 @@ export default function FilingPage() {
       map.set(currentProgGuid, fallback)
     }
     return Array.from(map.entries()).map(([value, label]) => ({ value, label }))
-  }, [programs, programDropdown, selectedProgramFallback, singleProgram, programGuid, selectedApplication?.programGuid, selectedApplication?.programName])
+  }, [programs, selectedProgramFallback, singleProgram, programGuid, selectedApplication?.programGuid, selectedApplication?.programName])
 
   const semesterOptions  = semesters.map(s => ({ value: s.semesterGuid, label: s.semName }))
   const batchTimeOptions = batchTimes.map(bt => ({ value: bt.batchTimeGuid, label: bt.batchTime }))
@@ -492,11 +533,26 @@ export default function FilingPage() {
     ...batches.map(b => ({ value: b.batchGuid, label: b.batchCode })),
     ...(selectedBatchFallback ? [{ value: selectedBatchFallback.batchGuid, label: selectedBatchFallback.batchCode }] : []),
   ]
-  const feeOptions       = fees.map(f => ({ value: f.feeHdGuid, label: `${f.feeDesc} (${f.feeCode})` }))
-  const countryOptions   = countries.map(c => ({ value: c.countryGuid, label: c.countryName }))
+  const countryOptions   = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const c of countries) map.set(c.countryGuid, c.countryName)
+    for (const c of countrySearchResults) {
+      if (!map.has(c.countryGuid)) map.set(c.countryGuid, c.countryName)
+    }
+    return Array.from(map.entries()).map(([value, label]) => ({ value, label }))
+  }, [countries, countrySearchResults])
 
   // Passport/Visa/Refugee sections only apply to non-home-country nationals.
-  const isForeign = countryGuid !== '' && !countries.find(c => c.countryGuid === countryGuid)?.defaultCountry
+  // Compares against the ONE home country (defaultCountry == 1) instead of
+  // reading the picked country's own flag as truthy: a flag that comes back
+  // as "0" (string) is truthy, which made every nationality look like home
+  // and kept these sections locked. Number() accepts 1 or "1"; Uganda by
+  // code/name is the fallback if no country is flagged.
+  const homeCountryGuid = (
+    countries.find(c => Number(c.defaultCountry) === 1)
+    ?? countries.find(c => c.countryCode?.toUpperCase() === 'UGA' || c.countryName?.trim().toLowerCase() === 'uganda')
+  )?.countryGuid
+  const isForeign = countryGuid !== '' && !!homeCountryGuid && countryGuid !== homeCountryGuid
 
   // Per the requirements doc (req. 8): entering any Passport or Visa detail
   // locks out Refugee Details entirely. Clearing isRefugee/refugeeId/
@@ -515,6 +571,155 @@ export default function FilingPage() {
   const [spCountryGuid, setSpCountryGuid] = useState('')
   const [spPhone, setSpPhone] = useState('')
 
+  // Best-effort enrichment from GET
+  // /application-filling/by-payment/{paymentGuid} (get-application-by-guid.md)
+  // — the search source above (application-payments) doesn't carry every
+  // personal-detail field (see FilingApplicationSearchResult's own notes),
+  // and this endpoint's full ApplicationDetailDto can fill in what it left
+  // null. Confirmed by the backend team (2026-09-10) to be a genuinely
+  // narrow window: it only returns data while the application's Action ==
+  // Submitted. It 400s both for the ordinary "still being filled in" case
+  // this page mostly handles AND for one that has already been vetted/
+  // rejected/registered — so this realistically only ever enriches an
+  // applicant who was fully filed and submitted in a prior session and
+  // hasn't been vetted yet. Either 400 is expected and handled as "nothing
+  // to enrich with", not an error. selectedApplication.applicationGuid is
+  // actually backed by the payment record's paymentGuid, not a real
+  // application-filling guid (see mapApplicationPaymentToSearchResult's own
+  // comment) — this by-payment route is what that value is genuinely meant
+  // for, replacing an earlier call to the plain {applicationGuid} route that
+  // only "worked" by coincidence (a mismatched guid there 400s the same way
+  // a not-yet-submitted application does).
+  const {
+    data: applicationDetail,
+    isError: applicationDetailFailed,
+    isFetched: applicationDetailFetched,
+  } = useApplicationByPaymentGuid(
+    selectedApplication?.applicationGuid,
+    // Re-enabled (2026-09-10) per request. Still expected to 400 for the
+    // vast majority of selections (see the comment above) — that's handled
+    // as a quiet no-op by the enrichment effect below, not a real failure.
+    !!selectedApplication,
+  )
+
+  // Sponsor details can now come pre-filled from the enquiry (sponsor
+  // fallback, 2026-10-15). by-payment sends spCountryName alongside the
+  // guid, so seed it as an option — the paged country picker may not have
+  // loaded that country yet, which would leave the field looking blank.
+  const spCountryOptions = useMemo(() => {
+    const name = applicationDetail?.spCountryName
+    if (!spCountryGuid || spCountryGuid !== applicationDetail?.spCountryGuid || !name) return countryOptions
+    if (countryOptions.some(o => o.value === spCountryGuid)) return countryOptions
+    return [{ value: spCountryGuid, label: name }, ...countryOptions]
+  }, [countryOptions, spCountryGuid, applicationDetail?.spCountryGuid, applicationDetail?.spCountryName])
+
+  // The sponsor phone's dial-code country, when spPhone came from the
+  // enquiry (null when it's the application's own). The save request has no
+  // dial-code field, so it's shown as a hint rather than stored.
+  const spPhoneCountryHint = applicationDetail?.spPhoneCountryName && spPhone && spPhone === applicationDetail.spPhone
+    ? applicationDetail.spPhoneCountryName
+    : null
+
+  // The locked Fee Structure's label: by-payment now returns feeName/feeCode
+  // for the application's own fee head, so it's added here whenever the
+  // general fee-structure list (one page, filtered client-side) doesn't
+  // carry it — otherwise the field rendered blank. Both fields are nullable.
+  const feeOptions = useMemo(() => {
+    const options = fees.map(f => ({ value: f.feeHdGuid, label: `${f.feeDesc} (${f.feeCode})` }))
+    const detailFeeGuid = applicationDetail?.feeHdGuid
+    const detailFeeLabel = applicationDetail?.feeName
+      ? (applicationDetail.feeCode && applicationDetail.feeCode !== applicationDetail.feeName ? `${applicationDetail.feeName} (${applicationDetail.feeCode})` : applicationDetail.feeName)
+      : applicationDetail?.feeCode
+    if (detailFeeGuid && detailFeeLabel && !options.some(o => o.value === detailFeeGuid)) {
+      options.unshift({ value: detailFeeGuid, label: detailFeeLabel })
+    }
+    return options
+  }, [fees, applicationDetail?.feeHdGuid, applicationDetail?.feeName, applicationDetail?.feeCode])
+
+  const [enrichedForGuid, setEnrichedForGuid] = useState<string | null>(null)
+  useEffect(() => {
+    if (!selectedApplication || !applicationDetailFetched) return
+    if (enrichedForGuid === selectedApplication.applicationGuid) return
+    setEnrichedForGuid(selectedApplication.applicationGuid)
+
+    if (applicationDetail) {
+      // Backend quirk confirmed live (2026-09-11): some nullable string
+      // fields come back as the literal string "null" instead of a real
+      // JSON null (spName/spEmail/spPhone/refugeeId seen so far) — treated
+      // the same as an actual null here so an "only fill if empty" guard
+      // below doesn't end up prefilling a field with the text "null".
+      const orNull = (s: string | null | undefined) => (s && s !== 'null' ? s : null)
+
+      if (!firstName && orNull(applicationDetail.firstName)) setFirstName(applicationDetail.firstName as string)
+      if (!lastName && orNull(applicationDetail.lastName)) setLastName(applicationDetail.lastName as string)
+      if (!email && orNull(applicationDetail.emailId)) setEmail(applicationDetail.emailId as string)
+      if (!phone && orNull(applicationDetail.phone)) setPhone(applicationDetail.phone as string)
+      if (!dob && applicationDetail.dob) setDob(applicationDetail.dob.slice(0, 10))
+      // by-payment can send only genderLabel ("Female"/"Male") with no
+      // numeric gender — fall back to the label so the field isn't left blank.
+      const genderFromLabel = GENDERS.find(g => g.toLowerCase() === (applicationDetail.genderLabel ?? '').trim().toLowerCase())
+      if (!gender && applicationDetail.gender != null) setGender(applicationDetail.gender === 1 ? 'Male' : 'Female')
+      else if (!gender && genderFromLabel) setGender(genderFromLabel)
+      if (!countryGuid && orNull(applicationDetail.countryGuid)) setCountryGuid(applicationDetail.countryGuid as string)
+      if (!nationalId && orNull(applicationDetail.nationalId)) setNationalId(applicationDetail.nationalId as string)
+      if (!passportNo && orNull(applicationDetail.passportNo)) setPassportNo(applicationDetail.passportNo as string)
+      // Visa dates — ApplicationListItem-only fields (not on
+      // FilingApplicationSearchResult, so selectApplication() above never
+      // had these to prefill from) — first genuinely new data this
+      // enrichment call adds rather than just filling a gap selectApplication
+      // already tried to.
+      if (!vStartDate && applicationDetail.vStartDate) setVStartDate(applicationDetail.vStartDate.slice(0, 10))
+      if (!vEndDate && applicationDetail.vEndDate) setVEndDate(applicationDetail.vEndDate.slice(0, 10))
+      // Same label-only case as gender: refugeeLabel "Yes" with no numeric refugee.
+      if (!isRefugee && (applicationDetail.refugee === 1 || applicationDetail.refugeeLabel?.trim().toLowerCase() === 'yes')) {
+        setIsRefugee(true)
+        setRefugeeId(orNull(applicationDetail.refugeeId) ?? '')
+      }
+      // Sponsor (Family tab) — same "genuinely new, not on
+      // FilingApplicationSearchResult" case as the visa dates above.
+      if (!spName && orNull(applicationDetail.spName)) setSpName(applicationDetail.spName as string)
+      if (!spEmail && orNull(applicationDetail.spEmail)) setSpEmail(applicationDetail.spEmail as string)
+      if (!spCountryGuid && orNull(applicationDetail.spCountryGuid)) setSpCountryGuid(applicationDetail.spCountryGuid as string)
+      if (!spPhone && orNull(applicationDetail.spPhone)) setSpPhone(applicationDetail.spPhone as string)
+      // Programme Details — the locked/disabled Campus/Programme/Fee
+      // Structure/Semester/Batch Time/Batch dropdowns (see
+      // handleSaveGeneralAndAdvance's own comment) read straight off this
+      // state, normally set by selectApplication() from the payment-search
+      // result. Confirmed live (2026-09-11) that source can come back with
+      // these still null even though this by-payment endpoint has the real
+      // guids — filled in here the same "only if still empty" way, using
+      // the raw setters (not setProgramGuid/setSemesterGuid/
+      // setBatchTimeGuid, which cascade-clear the fields below them and
+      // would fight each other run back-to-back here).
+      if (!intakeGuid && orNull(applicationDetail.intakeGuid)) setIntakeGuid(applicationDetail.intakeGuid as string)
+      if (!campusGuid && orNull(applicationDetail.campusGuid)) setCampusGuid(applicationDetail.campusGuid as string)
+      if (!programGuid && orNull(applicationDetail.programGuid)) setProgramGuidState(applicationDetail.programGuid as string)
+      if (!semesterGuid && orNull(applicationDetail.semesterGuid)) setSemesterGuidState(applicationDetail.semesterGuid as string)
+      if (!batchTimeGuid && orNull(applicationDetail.batchTimeGuid)) setBatchTimeGuidState(applicationDetail.batchTimeGuid as string)
+      if (!batchGuid && orNull(applicationDetail.batchGuid)) setBatchGuid(applicationDetail.batchGuid as string)
+      if (!feeHdGuid && orNull(applicationDetail.feeHdGuid)) setFeeHdGuid(applicationDetail.feeHdGuid as string)
+      // Previously-uploaded document file names — merged onto
+      // selectedApplication itself (not its own form state) since the
+      // Documents tab's DocRow reads savedName straight off
+      // selectedApplication.*UserFileName; FilingApplicationSearchResult
+      // (the payment record this came from) never carries these, so they're
+      // always empty until this enrichment fills them in.
+      setSelectedApplication(prev => (prev ? {
+        ...prev,
+        idUserFileName: prev.idUserFileName ?? orNull(applicationDetail.idUserFileName),
+        passUserFileName: prev.passUserFileName ?? orNull(applicationDetail.passUserFileName),
+        visaUserFileName: prev.visaUserFileName ?? orNull(applicationDetail.visaUserFileName),
+        studUserFileName: prev.studUserFileName ?? orNull(applicationDetail.studUserFileName),
+      } : prev))
+    } else if (applicationDetailFailed) {
+      // Quiet, non-blocking — this is the expected outcome for the vast
+      // majority of selections (still-mid-filing applications), not a
+      // real failure the counsellor needs to act on.
+      showToast('No prior completed application record found to pull extra details from', 'info')
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedApplication, applicationDetail, applicationDetailFailed, applicationDetailFetched, enrichedForGuid])
+
   const saveGeneral = useSaveGeneral()
 
   function handleSaveGeneralAndAdvance() {
@@ -528,19 +733,30 @@ export default function FilingPage() {
       showToast('This application is missing Campus/Programme/Fee Structure data — check the source record', 'error')
       return
     }
-    if (isRefugee && !refugeeId.trim()) { showToast('Refugee ID is required for refugee students', 'error'); return }
+    const e: Record<string, string> = {}
+    // Typing can't add digits (sanitizeNameInput), but names prefilled from
+    // the enquiry or an earlier record can still contain them.
+    if (!firstName.trim()) e.firstName = 'First Name is required'
+    else if (/\d/.test(firstName)) e.firstName = 'First Name can’t contain numbers'
+    if (!lastName.trim()) e.lastName = 'Last Name is required'
+    else if (/\d/.test(lastName)) e.lastName = 'Last Name can’t contain numbers'
+    // The pickers already block an out-of-order pair, but dates prefilled
+    // from an earlier record can still arrive that way.
+    if (vStartDate && vEndDate && vStartDate > vEndDate) e.vEndDate = 'Visa expiry can’t be before the visa start date'
+    // API: refugeeId required when refugee = 1.
+    if (isRefugee && !refugeeId.trim()) e.refugeeId = 'Refugee ID is required when refugee status is selected.'
+    setGeneralErrors(e)
+    if (Object.keys(e).length) { scrollToFirstError(e); return }
 
-    // Intake.intakeCode is a number on the wire (e.g. 20264) — this API's
-    // intakeCode field is a plain string (e.g. "2026"), so stringify it.
-    const selectedIntake = intakes.find(i => i.intakeGuid === intakeGuid)
-
+    // The selected application already carries the real intakeCode from the
+    // server-side search response; no separate intake list lookup is needed.
     saveGeneral.mutate(
       {
         appRefNo: selectedApplication.appRefNo,
         // Always null now — see the note above this component's state
         // declarations for why the field itself was dropped.
         enquiryGuid: null,
-        intakeCode: selectedIntake ? String(selectedIntake.intakeCode) : null,
+        intakeCode: selectedApplication.intakeCode ? String(selectedApplication.intakeCode) : null,
         emailId: email.trim() || null,
         dob: dob || null,
         firstName: firstName.trim() || null,
@@ -572,7 +788,15 @@ export default function FilingPage() {
           setIntApplication(res.intApplication); setGeneralSaved(true)
           showToast('Application details saved', 'success'); setActiveTab('qualifications')
         },
-        onError: (error: Error) => showToast(error.message || 'Failed to save application details', 'error'),
+        onError: (error: Error) => {
+          if (/refugee id/i.test(error.message)) {
+            const fe = { refugeeId: error.message }
+            setGeneralErrors(prev => ({ ...prev, ...fe }))
+            scrollToFirstError(fe)
+            return
+          }
+          showToast(error.message || 'Failed to save application details', 'error')
+        },
       },
     )
   }
@@ -583,14 +807,63 @@ export default function FilingPage() {
   const saveQualification = useSaveQualification()
   const deleteQualification = useDeleteQualification()
 
+  // Inline field errors per qualification row, keyed by row id then field.
+  const [qualErrors, setQualErrors] = useState<Record<number, Record<string, string>>>({})
+
   function updateQualRow(id: number, patch: Partial<QualRow>) {
     setQualRows(rows => rows.map(r => (r.id === id ? { ...r, ...patch } : r)))
+    // Editing a field clears its own message, like the academic forms.
+    setQualErrors(prev => {
+      const rowErrs = prev[id]
+      if (!rowErrs || !Object.keys(patch).some(k => rowErrs[k])) return prev
+      const next = { ...rowErrs }
+      for (const k of Object.keys(patch)) delete next[k]
+      return { ...prev, [id]: next }
+    })
+  }
+
+  // Required checks plus the POST /application-filling/qualifications rules
+  // (2026-10 handoff). Rule messages match the API's own wording.
+  function qualRowErrors(row: QualRow): Record<string, string> {
+    const e: Record<string, string> = {}
+    if (!row.institution.trim()) e.institution = 'Institution is required'
+    else if (!/\p{L}/u.test(row.institution)) e.institution = 'Institution name must contain letters and cannot be only numbers.'
+    else if (row.institution.trim().length > QUAL_TEXT_MAX) e.institution = `Institution must be ${QUAL_TEXT_MAX} characters or fewer`
+    if (!row.university.trim()) e.university = 'University / Awarding Board is required'
+    else if (!/\p{L}/u.test(row.university)) e.university = 'University / board name must contain letters and cannot be only numbers.'
+    else if (row.university.trim().length > QUAL_TEXT_MAX) e.university = `University / Awarding Board must be ${QUAL_TEXT_MAX} characters or fewer`
+    // Server checks against the current UTC year.
+    const passYear = Number(row.passYear)
+    const thisYear = new Date().getUTCFullYear()
+    if (!row.passYear) e.passYear = 'Year is required'
+    else if (!Number.isInteger(passYear) || passYear < PASS_YEAR_MIN || passYear > thisYear) e.passYear = `Year must be between ${PASS_YEAR_MIN} and ${thisYear}`
+    if (!row.grade.trim()) e.grade = 'Grade is required'
+    else if (row.grade.trim().length > QUAL_GRADE_MAX) e.grade = `Grade must be ${QUAL_GRADE_MAX} characters or fewer`
+    const years = Number(row.yearsTaken)
+    if (!row.yearsTaken) e.yearsTaken = 'Duration is required'
+    else if (!Number.isInteger(years) || years < QUAL_DURATION_MIN || years > QUAL_DURATION_MAX) e.yearsTaken = 'Duration must be between 1 and 10 years.'
+    if (!row.proofFile) e.proofFile = 'Proof Document is required'
+    return e
+  }
+
+  // Server-side rule failures that belong to a specific field.
+  function qualServerFieldError(message: string): Record<string, string> | null {
+    if (/institution name/i.test(message)) return { institution: message }
+    if (/university \/ board name/i.test(message)) return { university: message }
+    if (/duration must be/i.test(message)) return { yearsTaken: message }
+    if (/pass ?year|year of completion/i.test(message)) return { passYear: message }
+    if (/grade/i.test(message)) return { grade: message }
+    if (/proof document/i.test(message)) return { proofFile: message }
+    return null
   }
 
   function handleSaveQualRow(row: QualRow) {
     if (!selectedApplication) { showToast('Select an application above first', 'error'); return }
-    if (!row.institution.trim() || !row.university.trim() || !row.passYear || !row.grade.trim() || !row.yearsTaken || !row.proofFile) {
-      showToast('Institution, University, Year, Grade, Duration and Proof Document are all required', 'error'); return
+    const errs = qualRowErrors(row)
+    if (Object.keys(errs).length) {
+      setQualErrors(prev => ({ ...prev, [row.id]: errs }))
+      scrollToFirstError(errs)
+      return
     }
     saveQualification.mutate(
       {
@@ -600,11 +873,16 @@ export default function FilingPage() {
         passYear: Number(row.passYear),
         grade: row.grade.trim(),
         yearsTaken: Number(row.yearsTaken),
-        proofFile: row.proofFile,
+        // Non-null: qualRowErrors above requires a proof file.
+        proofFile: row.proofFile!,
       },
       {
         onSuccess: res => { updateQualRow(row.id, { savedId: res.intApplicationQual }); showToast('Qualification saved', 'success') },
-        onError: (error: Error) => showToast(error.message || 'Failed to save qualification', 'error'),
+        onError: (error: Error) => {
+          const fieldErr = qualServerFieldError(error.message || '')
+          if (fieldErr) { setQualErrors(prev => ({ ...prev, [row.id]: { ...prev[row.id], ...fieldErr } })); scrollToFirstError(fieldErr); return }
+          showToast(error.message || 'Failed to save qualification', 'error')
+        },
       },
     )
   }
@@ -617,15 +895,79 @@ export default function FilingPage() {
     })
   }
 
-  const allQualsSaved = qualRows.length > 0 && qualRows.every(r => r.savedId != null)
+  const [isSavingAllQuals, setIsSavingAllQuals] = useState(false)
+  const unsavedCount = qualRows.filter(r => r.savedId == null).length
+  const allQualsSaved = qualRows.length > 0 && unsavedCount === 0
 
-  function handleSaveLastQual() {
-    const targetRow = qualRows.slice().reverse().find(r => r.savedId == null) || qualRows[qualRows.length - 1]
-    if (targetRow) handleSaveQualRow(targetRow)
+  async function handleSaveAllQualifications() {
+    if (!selectedApplication) {
+      showToast('Select an application above first', 'error')
+      return
+    }
+
+    const unsavedRows = qualRows.filter(r => r.savedId == null)
+    if (unsavedRows.length === 0) {
+      setActiveTab('documents')
+      return
+    }
+
+    // Validate every unsaved row at once and show each problem under its own
+    // field, scrolling to the first one.
+    const allErrors: Record<number, Record<string, string>> = {}
+    for (const row of unsavedRows) {
+      const errs = qualRowErrors(row)
+      if (Object.keys(errs).length) allErrors[row.id] = errs
+    }
+    if (Object.keys(allErrors).length) {
+      setQualErrors(allErrors)
+      scrollToFirstError(allErrors)
+      return
+    }
+    setQualErrors({})
+
+    setIsSavingAllQuals(true)
+    try {
+      const results = await Promise.all(
+        unsavedRows.map(row =>
+          saveQualification.mutateAsync({
+            appRefNo: selectedApplication.appRefNo,
+            institution: row.institution.trim(),
+            university: row.university.trim(),
+            passYear: Number(row.passYear),
+            grade: row.grade.trim(),
+            yearsTaken: Number(row.yearsTaken),
+            proofFile: row.proofFile!,
+          }).then(res => ({ id: row.id, savedId: res.intApplicationQual }))
+            // Remember which row failed so a field-level message can land on it.
+            .catch((err: Error) => { throw Object.assign(err, { qualRowId: row.id }) })
+        )
+      )
+
+      setQualRows(prev =>
+        prev.map(r => {
+          const match = results.find(res => res.id === r.id)
+          return match ? { ...r, savedId: match.savedId } : r
+        })
+      )
+
+      showToast(`${unsavedRows.length} qualification${unsavedRows.length > 1 ? 's' : ''} saved successfully`, 'success')
+    } catch (error: any) {
+      const fieldErr = qualServerFieldError(error?.message || '')
+      if (fieldErr && error?.qualRowId != null) {
+        const rowId: number = error.qualRowId
+        setQualErrors(prev => ({ ...prev, [rowId]: { ...prev[rowId], ...fieldErr } }))
+        scrollToFirstError(fieldErr)
+      } else {
+        showToast(error?.message || 'Failed to save one or more qualifications', 'error')
+      }
+    } finally {
+      setIsSavingAllQuals(false)
+    }
   }
 
   function renderQualRow(row: QualRow, index: number) {
     const saved = row.savedId != null
+    const err = qualErrors[row.id] ?? {}
     return (
       <div key={row.id} className={`qual-card mb-3 p-3 rounded-lg border border-g200${saved ? ' saved' : ''}`}>
         <div className="flex items-center gap-2 mb-2">
@@ -633,17 +975,34 @@ export default function FilingPage() {
           <span className="text-xs font-semibold text-g500">Qualification {index + 1}</span>
         </div>
         <div className="g3">
-          <Field label="Institution" req><Input placeholder="School / University" value={row.institution} onChange={v => updateQualRow(row.id, { institution: v })} readOnly={saved} /></Field>
-          <Field label="University / Awarding Board" req><Input placeholder="e.g. Makerere University" value={row.university} onChange={v => updateQualRow(row.id, { university: v })} readOnly={saved} /></Field>
-          <Field label="Year" req><Input type="number" placeholder="2023" value={row.passYear} onChange={v => updateQualRow(row.id, { passYear: v })} readOnly={saved} /></Field>
+          <Field label="Institution" req error={err.institution}><Input placeholder="School / University" maxLength={QUAL_TEXT_MAX} value={row.institution} onChange={v => updateQualRow(row.id, { institution: v })} readOnly={saved} hasError={!!err.institution} /></Field>
+          <Field label="University / Awarding Board" req error={err.university}><Input placeholder="e.g. Makerere University" maxLength={QUAL_TEXT_MAX} value={row.university} onChange={v => updateQualRow(row.id, { university: v })} readOnly={saved} hasError={!!err.university} /></Field>
+          <Field label="Year" req error={err.passYear}><Input type="number" placeholder="2023" value={row.passYear} onChange={v => updateQualRow(row.id, { passYear: v })} readOnly={saved} hasError={!!err.passYear} /></Field>
         </div>
         <div className="g3 mt-3">
-          <Field label="Grade" req><Input placeholder="e.g. First Class, 4.2 CGPA" value={row.grade} onChange={v => updateQualRow(row.id, { grade: v })} readOnly={saved} /></Field>
-          <Field label="Duration (Years)" req><Input type="number" placeholder="3" value={row.yearsTaken} onChange={v => updateQualRow(row.id, { yearsTaken: v })} readOnly={saved} /></Field>
-          <Field label="Proof Document" req>
+          <Field label="Grade" req error={err.grade}><Input placeholder="e.g. First Class, 4.2 CGPA" maxLength={QUAL_GRADE_MAX} value={row.grade} onChange={v => updateQualRow(row.id, { grade: v })} readOnly={saved} hasError={!!err.grade} /></Field>
+          <Field label="Duration (Years)" req error={err.yearsTaken}>
+            {/* Whole years 1–10 only (API rule). Text + numeric keypad rather
+                than type="number", which lets through "e", decimals and
+                negatives; keystrokes that would leave 1–10 are ignored. */}
+            <Input
+              inputMode="numeric"
+              maxLength={2}
+              placeholder="1–10"
+              value={row.yearsTaken}
+              readOnly={saved}
+              hasError={!!err.yearsTaken}
+              onChange={v => {
+                const digits = v.replace(/\D/g, '')
+                const n = Number(digits)
+                if (digits === '' || (n >= QUAL_DURATION_MIN && n <= QUAL_DURATION_MAX)) updateQualRow(row.id, { yearsTaken: digits })
+              }}
+            />
+          </Field>
+          <Field label="Proof Document" req error={err.proofFile}>
             {saved
               ? <p className="text-sm text-g500 mt-1">{row.proofFile?.name ?? 'Uploaded'}</p>
-              : <FileZone file={row.proofFile} onChange={f => updateQualRow(row.id, { proofFile: f })} />}
+              : <FileZone file={row.proofFile} onChange={f => updateQualRow(row.id, { proofFile: f })} hasError={!!err.proofFile} />}
           </Field>
         </div>
         <div className="flex justify-end items-center gap-2 mt-3">
@@ -665,30 +1024,61 @@ export default function FilingPage() {
 
   // ── Documents / Photo / Submit ──────────────────────────────────────────
   const [photoFile, setPhotoFile] = useState<File | null>(null)
+  const [photoError, setPhotoError] = useState<string | null>(null)
   const [photoSaved, setPhotoSaved] = useState(false)
-  const [declarationAccepted, setDeclarationAccepted] = useState(false)
   const uploadPhoto = useUploadPhoto()
   const submitApplication = useSubmitApplication()
 
+  useEffect(() => {
+    setPhotoSaved(!!selectedApplication?.studUserFileName)
+    setPhotoFile(null); setPhotoError(null)
+  }, [selectedApplication])
+
+  const hasPhoto = photoSaved || !!selectedApplication?.studUserFileName
   const qualifiedCount = qualRows.filter(r => r.savedId != null).length
-  const canSubmit = generalSaved && intApplication != null && qualifiedCount > 0 && declarationAccepted
-  // Drives the progress strip under the pipeline — same four checkpoints as
-  // the Documents tab's own "Application Status" checklist plus the final
-  // declaration, so the two never disagree about what "done" means.
+  const canSubmit = generalSaved && intApplication != null && qualifiedCount > 0 && hasPhoto
+  // Drives the progress strip under the pipeline — same three checkpoints as
+  // the Documents tab's own "Application Status" checklist, so the two
+  // never disagree about what "done" means. Was four checkpoints including
+  // a declaration/consent checkbox, removed 2026-09-15 per request.
   const filingProgressPct = Math.round(
-    ([generalSaved, qualifiedCount > 0, photoSaved, declarationAccepted].filter(Boolean).length / 4) * 100,
+    ([generalSaved, qualifiedCount > 0, hasPhoto].filter(Boolean).length / 3) * 100,
   )
 
   function handleSavePhoto() {
-    if (!selectedApplication || !photoFile) return
+    if (!selectedApplication || !photoFile) {
+      setPhotoError('Please select a photo file first')
+      scrollToFirstError({ photo: 'x' })
+      return
+    }
+    if (!PHOTO_EXT_RE.test(photoFile.name)) {
+      setPhotoError(PHOTO_TYPE_MESSAGE)
+      scrollToFirstError({ photo: 'x' })
+      return
+    }
     uploadPhoto.mutate({ appRefNo: selectedApplication.appRefNo, photo: photoFile }, {
-      onSuccess: () => { setPhotoSaved(true); showToast('Photo uploaded', 'success') },
-      onError: (error: Error) => showToast(error.message || 'Failed to upload photo', 'error'),
+      onSuccess: () => { setPhotoSaved(true); showToast('Photo uploaded successfully', 'success') },
+      onError: (error: Error) => {
+        if (/jpg|png|bmp|photo/i.test(error.message)) { setPhotoError(error.message); scrollToFirstError({ photo: 'x' }); return }
+        showToast(error.message || 'Failed to upload photo', 'error')
+      },
     })
   }
 
   function handleSubmitApplication() {
-    if (!selectedApplication || intApplication == null) return
+    if (!selectedApplication || intApplication == null) {
+      showToast('Please save Personal & Programme Details first.', 'error')
+      return
+    }
+    if (qualifiedCount === 0) {
+      showToast('Please add and save at least one qualification before submitting.', 'error')
+      return
+    }
+    if (!hasPhoto) {
+      showToast('Applicant profile photo is required. Please upload the photo before submitting.', 'error')
+      return
+    }
+
     submitApplication.mutate({ intApplication, appRefNo: selectedApplication.appRefNo }, {
       // setSubmitted(true) both stops the unsaved-changes warning and
       // triggers the full-screen success popup below — the actual redirect
@@ -703,41 +1093,84 @@ export default function FilingPage() {
     })
   }
 
+  // After submitting: print the application payment receipt
+  // (get-application-payment-receipt.md). selectedApplication.applicationGuid
+  // is the payment's paymentGuid (see mapApplicationPaymentToSearchResult).
+  const canPrintReceipt = !!selectedApplication?.applicationGuid && selectedApplication.receiptNo !== undefined
+    && hasPrintableReceipt({ exemptionType: selectedApplication.exemptionType, receiptNo: selectedApplication.receiptNo })
+  const [printingReceipt, setPrintingReceipt] = useState(false)
+  const [receiptError, setReceiptError] = useState<string | null>(null)
+  async function printFilingReceipt() {
+    if (!selectedApplication || printingReceipt) return
+    setPrintingReceipt(true)
+    setReceiptError(null)
+    const paymentGuid = selectedApplication.applicationGuid
+    try {
+      await openPdfInNewTab(() => getApplicationPaymentReceiptPdf(paymentGuid), `Receipt_${selectedApplication.receiptNo ?? paymentGuid}.pdf`)
+    } catch (err) {
+      setReceiptError(err instanceof Error && err.message ? err.message : 'Could not load the receipt.')
+    } finally {
+      setPrintingReceipt(false)
+    }
+  }
+
   // Left-side identity panel shared by all three stages (Personal Info,
   // Qualifications, Documents) — a single definition rather than
   // duplicating the same avatar/name/facts/progress markup three times.
   // null before an application is selected, but that's fine: every place
   // this is actually rendered already sits behind its own `!selectedApplication`
   // guard.
-  const summaryPanel = selectedApplication && (
-    <aside className="filing-summary-panel">
-      <div className="filing-summary-avatar-wrap">
-        <div className="filing-summary-avatar">{initials(`${firstName} ${lastName}`.trim() || applicantName(selectedApplication))}</div>
-        <label className="filing-summary-avatar-edit" title="Upload profile photo">
-          <input type="file" accept="image/*" />
-          <i className="lni lni-camera-2" />
-        </label>
-      </div>
-      <div className="filing-summary-name">{`${firstName} ${lastName}`.trim() || applicantName(selectedApplication) || 'Applicant'}</div>
-      <span className="badge badge-blue">{selectedApplication.appRefNo}</span>
+  // Commented out per request (2026-09-10) — the student card is hidden on
+  // Application Filing for now. Left in place, not deleted, so it's a
+  // one-line revert (just uncomment the JSX below and drop the `null`).
+  const summaryPanel = null
+  // selectedApplication && (
+  //   <aside className="filing-summary-panel">
+  //     <div className="filing-summary-avatar-wrap">
+  //       <div className="filing-summary-avatar">{initials(`${firstName} ${lastName}`.trim() || applicantName(selectedApplication))}</div>
+  //       <label className="filing-summary-avatar-edit" title="Upload profile photo">
+  //         <input
+  //           type="file"
+  //           accept="image/*"
+  //           onChange={e => {
+  //             const file = e.target.files?.[0]
+  //             if (file && selectedApplication) {
+  //               setPhotoFile(file)
+  //               uploadPhoto.mutate({ appRefNo: selectedApplication.appRefNo, photo: file }, {
+  //                 onSuccess: () => { setPhotoSaved(true); showToast('Photo uploaded successfully', 'success') },
+  //                 onError: (error: Error) => showToast(error.message || 'Failed to upload photo', 'error'),
+  //               })
+  //             }
+  //           }}
+  //         />
+  //         {/* lni-camera-2 isn't a real LineIcons 4.0 class (confirmed: every
+  //             other camera icon in this app — profile/page.tsx,
+  //             odel-student-preview/page.tsx — uses plain lni-camera and
+  //             renders) — the glyph never painted, leaving a blank white
+  //             circle with no visible cue that this was an upload control. */}
+  //         <i className="lni lni-camera" />
+  //       </label>
+  //     </div>
+  //     <div className="filing-summary-name">{`${firstName} ${lastName}`.trim() || applicantName(selectedApplication) || 'Applicant'}</div>
+  //     <span className="badge badge-blue">{selectedApplication.appRefNo}</span>
 
-      <div className="filing-summary-meta">
-        <div className="filing-summary-meta-row"><i className="lni lni-envelope" /> <span>{email || '—'}</span></div>
-        <div className="filing-summary-meta-row"><i className="lni lni-phone" /> <span>{phone ? `${phoneCode} ${phone}` : '—'}</span></div>
-      </div>
+  //     <div className="filing-summary-meta">
+  //       <div className="filing-summary-meta-row"><i className="lni lni-envelope" /> <span>{email || '—'}</span></div>
+  //       <div className="filing-summary-meta-row"><i className="lni lni-phone" /> <span>{phone ? `${phoneCode} ${phone}` : '—'}</span></div>
+  //     </div>
 
-      <div className="filing-summary-facts">
-        <div className="filing-summary-fact"><span>Nationality</span><strong>{countryOptions.find(c => c.value === countryGuid)?.label ?? '—'}</strong></div>
-        <div className="filing-summary-fact"><span>Campus</span><strong>{campusOptions.find(c => c.value === campusGuid)?.label ?? '—'}</strong></div>
-        <div className="filing-summary-fact"><span>Programme</span><strong>{programOptions.find(p => p.value === programGuid)?.label ?? '—'}</strong></div>
-      </div>
+  //     <div className="filing-summary-facts">
+  //       <div className="filing-summary-fact"><span>Nationality</span><strong>{countryOptions.find(c => c.value === countryGuid)?.label ?? '—'}</strong></div>
+  //       <div className="filing-summary-fact"><span>Campus</span><strong>{campusOptions.find(c => c.value === campusGuid)?.label ?? '—'}</strong></div>
+  //       <div className="filing-summary-fact"><span>Programme</span><strong>{programOptions.find(p => p.value === programGuid)?.label ?? '—'}</strong></div>
+  //     </div>
 
-      <div className="filing-summary-progress">
-        <div className="prog-bar-track"><div className="prog-bar-fill" style={{ width: `${filingProgressPct}%` }} /></div>
-        <span className="filing-progress-label">{filingProgressPct}% complete</span>
-      </div>
-    </aside>
-  )
+  //     <div className="filing-summary-progress">
+  //       <div className="prog-bar-track"><div className="prog-bar-fill" style={{ width: `${filingProgressPct}%` }} /></div>
+  //       <span className="filing-progress-label">{filingProgressPct}% complete</span>
+  //     </div>
+  //   </aside>
+  // )
 
   return (
     <div id="page-filing">
@@ -773,39 +1206,53 @@ export default function FilingPage() {
         <div className="g2">
           <div className="fg">
             <label className="lbl">Applicant<span className="req">*</span></label>
-            <div className="relative">
-              <input className="ctrl" placeholder="Search applicant ref no, name, email or phone..."
-                value={selectedApplication ? `${selectedApplication.appRefNo} — ${applicantName(selectedApplication)}` : applicantSearch}
-                onChange={e => { setApplicantSearch(e.target.value); setShowApplicantDropdown(true); setSelectedApplication(null) }}
-                onFocus={() => setShowApplicantDropdown(true)} />
+            {/* Same search bar + results list as Payment Console's Student
+                Search: icon input, floating list, name over ref · phone · email.
+                Server-searched (debounced 300ms), scroll to load more. */}
+            <div style={{ position: 'relative' }} ref={applicantBoxRef}>
+              <div className="inp-wrap">
+                <span className="inp-icon"><i className="lni lni-search-alt"></i></span>
+                <input
+                  className="ctrl"
+                  type="text"
+                  placeholder="e.g. APP20261/388 or Masereka Elijah"
+                  value={selectedApplication ? `${applicantName(selectedApplication) || '—'} (${selectedApplication.appRefNo})` : applicantSearch}
+                  onChange={e => { setApplicantSearch(e.target.value); setShowApplicantDropdown(true); setSelectedApplication(null) }}
+                  onFocus={() => setShowApplicantDropdown(true)}
+                />
+              </div>
               {showApplicantDropdown && (
                 <div
-                  className="applicant-dd absolute left-0 right-0 top-full mt-1 bg-white border border-g200 rounded-lg shadow-lg z-20 max-h-48 overflow-y-auto"
+                  className="mt-1"
+                  style={{
+                    position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 20,
+                    background: 'var(--white)', border: '1.5px solid var(--b200)', borderRadius: 'var(--rsm)',
+                    boxShadow: 'var(--neu-out)', maxHeight: 260, overflowY: 'auto',
+                  }}
                   onScroll={handleApplicantScroll}
                 >
                   {!applicantSearch.trim() ? (
-                    <div className="p-3 text-sm text-g400 flex items-center gap-2"><i className="lni lni-search-alt" /> Type to search…</div>
-                  ) : isSearchingApplicants && loadedApplicants.length === 0 ? (
-                    <div className="p-3 text-sm text-g400 flex items-center gap-2"><i className="lni lni-reload" /> Searching…</div>
+                    <div className="text-g400 px-3 py-2" style={{ fontSize: 12.5 }}>Type a name, ref no, phone or email to search.</div>
+                  ) : (isSearchingApplicants || applicantSearch.trim() !== committedApplicantSearch) && loadedApplicants.length === 0 ? (
+                    <div className="text-g400 px-3 py-2" style={{ fontSize: 12.5 }}>Searching…</div>
                   ) : isApplicantSearchError && loadedApplicants.length === 0 ? (
-                    <div className="p-3 text-sm text-clr-red flex items-center gap-2"><i className="lni lni-warning" /> Search failed. Please try again.</div>
-                  ) : visibleSearchItems.length === 0 ? (
-                    <div className="p-3 text-sm text-g400">
-                      No results {hasMoreApplicants ? 'in what’s loaded so far — keep scrolling to search further.' : 'found.'}
-                    </div>
+                    <div className="text-clr-red px-3 py-2" style={{ fontSize: 12.5 }}><i className="lni lni-warning"></i> Search failed. Please try again.</div>
+                  ) : loadedApplicants.length === 0 ? (
+                    <div className="text-g400 px-3 py-2" style={{ fontSize: 12.5 }}>No matching applications found.</div>
                   ) : (
                     <>
-                      {visibleSearchItems.map(a => (
-                        <button key={a.appRefNo} className="applicant-row" onClick={() => selectApplication(a)}>
-                          <span className="av-chip">{initials(applicantName(a))}</span>
-                          <span className="flex-1 min-w-0 flex flex-col">
-                            <span className="font-semibold text-g800 truncate">{applicantName(a) || '—'}</span>
-                            <span className="text-xs text-g400">{a.appRefNo}</span>
-                          </span>
-                        </button>
+                      {loadedApplicants.map(a => (
+                        <div
+                          key={a.appRefNo}
+                          className="cursor-pointer px-3 py-2 hover:bg-b50 border-b border-g100 last:border-b-0"
+                          onClick={() => selectApplication(a)}
+                        >
+                          <div className="font-bold">{applicantName(a) || '—'}</div>
+                          <div className="text-g500" style={{ fontSize: 11 }}>{a.appRefNo} · {a.phone || '—'} · {a.emailId || '—'}</div>
+                        </div>
                       ))}
                       {isFetchingMoreApplicants && (
-                        <div className="p-2 text-center text-xs text-g400"><i className="lni lni-reload" /> Loading more…</div>
+                        <div className="text-g400 px-3 py-2" style={{ fontSize: 12 }}>Loading more…</div>
                       )}
                     </>
                   )}
@@ -853,7 +1300,7 @@ export default function FilingPage() {
             <div className="filing-stepper-wrap">
               <div className="filing-stepper">
                 {TABS.map((t, i) => {
-                  const tabDone = t.id === 'personal' ? generalSaved : t.id === 'qualifications' ? qualifiedCount > 0 : photoSaved && declarationAccepted
+                  const tabDone = t.id === 'personal' ? generalSaved : t.id === 'qualifications' ? qualifiedCount > 0 : hasPhoto
                   const isActive = activeTab === t.id
                   const currentIndex = TABS.findIndex(x => x.id === activeTab)
                   return (
@@ -890,14 +1337,27 @@ export default function FilingPage() {
                   {summaryPanel}
                   <div className="filing-form-col">
                     <div className="g3">
-                      <Field label="First Name" req><Input placeholder="First name" value={firstName} onChange={setFirstName} /></Field>
+                      <Field label="First Name" req error={generalErrors.firstName}><Input placeholder="First name" value={firstName} onChange={v => { setFirstName(sanitizeNameInput(v)); setGeneralErrors(p => ({ ...p, firstName: '' })) }} hasError={!!generalErrors.firstName} /></Field>
                       {/* <Field label="Middle Name"><Input placeholder="Middle name" /></Field> */}
-                      <Field label="Last Name" req><Input placeholder="Last name" value={lastName} onChange={setLastName} /></Field>
+                      <Field label="Last Name" req error={generalErrors.lastName}><Input placeholder="Last name" value={lastName} onChange={v => { setLastName(sanitizeNameInput(v)); setGeneralErrors(p => ({ ...p, lastName: '' })) }} hasError={!!generalErrors.lastName} /></Field>
                       <Field label="Gender" req><Select options={GENDERS} value={gender} onChange={setGender} /></Field>
                     </div>
                     <div className="g3 mt-3">
                       <Field label="Date of Birth" req><Input type="date" value={dob} onChange={setDob} /></Field>
-                      <Field label="Nationality" req><SearchSelect options={countryOptions} value={countryGuid} placeholder="-- Select Country --" onChange={setCountryGuid} /></Field>
+                      <Field label="Nationality" req>
+                        <SearchSelect
+                          options={countryOptions}
+                          value={countryGuid}
+                          placeholder="-- Select Country --"
+                          onChange={setCountryGuid}
+                          onSearch={setCountrySearch}
+                          onOpenChange={setCountryPickerOpen}
+                          isLoading={countryQuery.isLoading}
+                          hasNextPage={countryQuery.hasNextPage}
+                          isFetchingNextPage={countryQuery.isFetchingNextPage}
+                          onLoadMore={() => countryQuery.fetchNextPage()}
+                        />
+                      </Field>
                       <Field label="National ID"><Input placeholder="CM-XXXXX-XXXX" value={nationalId} onChange={setNationalId} /></Field>
                     </div>
                     <div className="g3 mt-3">
@@ -956,16 +1416,40 @@ export default function FilingPage() {
                       <p className="text-g400 mt-2" style={{ fontSize: 'var(--fs-xs)' }}>Applies to non-Ugandan nationals — select a Nationality above to unlock.</p>
                     ) : (
                       <>
-                        <div className="g2 mt-3">
+                        {/* One consistent 3-column grid for the whole
+                            section (was a 2-col Passport row followed by a
+                            separate 3-col Visa row — uneven, and the odd
+                            column count out of step with the rest of the
+                            form's own g3 rows). */}
+                        <div className="g3 mt-3">
                           <Field label="Passport Number"><Input placeholder="AB1234567" value={passportNo} onChange={setPassportNo} /></Field>
                           <Field label="Passport Copy"><FileZone file={passportFile} onChange={setPassportFile} /></Field>
                           {/* <Field label="Passport Expiry"><Input type="date" /></Field><Field label="Country of Issue"><Select options={COUNTRIES_OF_ISSUE} /></Field>
                           <Field label="Visa Number"><Input placeholder="VIS-XXXX" /></Field>
                           <Field label="Visa Type"><Select options={['Student', 'Work', 'Tourist', 'Diplomatic']} /></Field> */}
-                        </div>
-                        <div className="g3 mt-3">
-                          <Field label="Visa Start Date"><Input type="date" value={vStartDate} onChange={setVStartDate} /></Field>
-                          <Field label="Visa Expiry"><Input type="date" value={vEndDate} onChange={setVEndDate} /></Field>
+                          {/* Start can't be after expiry and expiry can't be before
+                              start (same day is fine) — each picker is bounded by
+                              the other's value. */}
+                          <Field label="Visa Start Date" error={generalErrors.vStartDate}>
+                            <Input
+                              type="date"
+                              value={vStartDate}
+                              onChange={v => { setVStartDate(v); setGeneralErrors(p => ({ ...p, vStartDate: '', vEndDate: '' })) }}
+                              maxYmd={vEndDate || undefined}
+                              rangeMessage="Visa start date can’t be after the visa expiry"
+                              hasError={!!generalErrors.vStartDate}
+                            />
+                          </Field>
+                          <Field label="Visa Expiry" error={generalErrors.vEndDate}>
+                            <Input
+                              type="date"
+                              value={vEndDate}
+                              onChange={v => { setVEndDate(v); setGeneralErrors(p => ({ ...p, vStartDate: '', vEndDate: '' })) }}
+                              minYmd={vStartDate || undefined}
+                              rangeMessage="Visa expiry can’t be before the visa start date"
+                              hasError={!!generalErrors.vEndDate}
+                            />
+                          </Field>
                           <Field label="Visa Copy"><FileZone file={visaFile} onChange={setVisaFile} /></Field>
                         </div>
                       </>
@@ -984,7 +1468,7 @@ export default function FilingPage() {
                         </label>
                         {isRefugee && (
                           <div className="g3 mt-3">
-                            <Field label="Refugee ID" req><Input placeholder="Refugee ID number" value={refugeeId} onChange={setRefugeeId} /></Field>
+                            <Field label="Refugee ID" req error={generalErrors.refugeeId}><Input placeholder="Refugee ID number" value={refugeeId} onChange={v => { setRefugeeId(v); setGeneralErrors(p => ({ ...p, refugeeId: "" })) }} hasError={!!generalErrors.refugeeId} /></Field>
                             {/* <Field label="UNHCR Case Number"><Input placeholder="UNH-XXXX" /></Field> */}
                             <Field label="Refugee Certificate"><FileZone file={refugeeFile} onChange={setRefugeeFile} /></Field>
                           </div>
@@ -995,11 +1479,27 @@ export default function FilingPage() {
                     <div className="sec-divider mt-5">Sponsorship Details</div>
                     <div className="g3 mt-3">
                       <Field label="Sponsor Name"><Input placeholder="Sponsor name" value={spName} onChange={setSpName} /></Field>
-                      <Field label="Sponsor Phone"><Input type="tel" placeholder="+256 7XX XXX XXX" value={spPhone} onChange={v => setSpPhone(sanitizePhoneInput(v))} /></Field>
+                      <Field label="Sponsor Phone">
+                        <Input type="tel" placeholder="+256 7XX XXX XXX" value={spPhone} onChange={v => setSpPhone(sanitizePhoneInput(v))} />
+                        {spPhoneCountryHint && <p className="text-xs text-g500 mt-1">From the enquiry · dial code country: {spPhoneCountryHint}</p>}
+                      </Field>
                       <Field label="Sponsor Email"><Input type="email" placeholder="sponsor@email.com" value={spEmail} onChange={setSpEmail} /></Field>
                     </div>
                     <div className="g3 mt-3">
-                      <Field label="Sponsor Country"><SearchSelect options={countryOptions} value={spCountryGuid} placeholder="-- Select Country --" onChange={setSpCountryGuid} /></Field>
+                      <Field label="Sponsor Country">
+                        <SearchSelect
+                          options={spCountryOptions}
+                          value={spCountryGuid}
+                          placeholder="-- Select Country --"
+                          onChange={setSpCountryGuid}
+                          onSearch={setCountrySearch}
+                          onOpenChange={setCountryPickerOpen}
+                          isLoading={countryQuery.isLoading}
+                          hasNextPage={countryQuery.hasNextPage}
+                          isFetchingNextPage={countryQuery.isFetchingNextPage}
+                          onLoadMore={() => countryQuery.fetchNextPage()}
+                        />
+                      </Field>
                       <div className="fg" />
                       <div className="fg" />
                     </div>
@@ -1047,10 +1547,10 @@ export default function FilingPage() {
                         <button
                           type="button"
                           className="btn btn-primary"
-                          disabled={saveQualification.isPending || !permissions.add}
-                          onClick={handleSaveLastQual}
+                          disabled={isSavingAllQuals || saveQualification.isPending || !permissions.add}
+                          onClick={handleSaveAllQualifications}
                         >
-                          {saveQualification.isPending ? 'Saving…' : 'Save Qualification'}
+                          {isSavingAllQuals ? 'Saving Qualifications…' : `Save Qualification${unsavedCount > 1 ? `s (${unsavedCount})` : ''}`}
                         </button>
                       ) : (
                         <button
@@ -1075,11 +1575,41 @@ export default function FilingPage() {
                   <div className="filing-form-col">
                     <div className="sec-divider">Student Photo</div>
                     <div className="g2 mt-3">
-                      <Field label="Photo" req><FileZone hint="Click to upload passport-style photo (JPG/JPEG/PNG/BMP)" file={photoFile} onChange={setPhotoFile} /></Field>
-                      <div className="flex items-end">
-                        <button className="btn text-xs" disabled={!photoFile || uploadPhoto.isPending || photoSaved || !permissions.add} onClick={handleSavePhoto}>
-                          {photoSaved ? <><i className="lni lni-checkmark-circle" /> Uploaded</> : uploadPhoto.isPending ? 'Uploading…' : 'Upload Photo'}
+                      <Field label="Photo" req error={photoError ?? undefined}>
+                        <FileZone
+                          hint="Click to upload passport-style photo (JPG/JPEG/PNG/BMP)"
+                          file={photoFile}
+                          onChange={f => {
+                            // Reject other types on pick so they never reach upload.
+                            if (f && !PHOTO_EXT_RE.test(f.name)) { setPhotoError(PHOTO_TYPE_MESSAGE); return }
+                            setPhotoError(null)
+                            setPhotoFile(f); if (f) setPhotoSaved(false)
+                          }}
+                        />
+                      </Field>
+                      <div className="flex flex-col items-start justify-end gap-1">
+                        {/* Was a bare `btn text-xs` with no color variant — this page's
+                            other primary actions (Save & Continue, Submit Application)
+                            all use btn-primary, so next to those this one read as plain
+                            text rather than a clickable button. Users picked a photo in
+                            the FileZone above and had no visual cue that a second click
+                            here was still needed to actually save it. btn-success once a
+                            file is picked (not yet saved) draws the eye to the pending
+                            action; falls back to btn-neu once there's nothing to do. */}
+                        <button
+                          className={`btn btn-sm${photoSaved ? ' btn-neu' : photoFile ? ' btn-success' : ' btn-neu'}`}
+                          disabled={!photoFile || uploadPhoto.isPending || (photoSaved && !photoFile) || !permissions.add}
+                          onClick={handleSavePhoto}
+                        >
+                          {photoSaved
+                            ? <><i className="lni lni-checkmark-circle" /> Uploaded</>
+                            : uploadPhoto.isPending
+                            ? <><i className="lni lni-reload" /> Uploading…</>
+                            : <><i className="lni lni-cloud-upload" /> Upload Photo</>}
                         </button>
+                        {photoFile && !photoSaved && !uploadPhoto.isPending && (
+                          <span className="text-xs text-g400">Click Upload Photo to save it</span>
+                        )}
                       </div>
                     </div>
 
@@ -1107,23 +1637,29 @@ export default function FilingPage() {
                         <span className="flex-1 text-sm text-g700">Qualifications</span>
                         <span className="chk-status text-xs">{qualifiedCount} saved</span>
                       </div>
-                      <div className={`chk-item ${photoSaved ? 'pass' : 'pending'}`}>
-                        <i className={`lni ${photoSaved ? 'lni-checkmark-circle' : 'lni-timer'}`} />
+                      <div className={`chk-item ${hasPhoto ? 'pass' : 'pending'}`}>
+                        <i className={`lni ${hasPhoto ? 'lni-checkmark-circle' : 'lni-timer'}`} />
                         <span className="flex-1 text-sm text-g700">Student Photo</span>
-                        <span className="chk-status text-xs">{photoSaved ? 'Uploaded' : 'Pending'}</span>
+                        <span className="chk-status text-xs">{hasPhoto ? 'Uploaded' : 'Required — Pending'}</span>
                       </div>
                     </div>
 
-                    <label className="flex items-center gap-2 mt-5" style={{ fontSize: 'var(--fs-sm)', cursor: 'pointer' }}>
-                      <input type="checkbox" checked={declarationAccepted} onChange={e => setDeclarationAccepted(e.target.checked)} style={{ width: 16, height: 16 }} />
-                      <span className="font-medium text-g700">I confirm the information provided is correct.</span>
-                    </label>
-
-                    <div className="flex justify-between mt-5">
+                    <div className="flex justify-between items-center mt-5">
                       <button className="btn" onClick={() => setActiveTab('qualifications')}><i className="lni lni-arrow-left" /> Qualifications</button>
-                      <button className="btn btn-primary btn-submit-ready" disabled={!canSubmit || submitApplication.isPending || !permissions.add} onClick={handleSubmitApplication}>
-                        <i className="lni lni-checkmark" /> {submitApplication.isPending ? 'Submitting…' : 'Submit Application for Vetting'}
-                      </button>
+                      <div className="flex flex-col items-end gap-1">
+                        {!hasPhoto && (
+                          <span className="text-xs text-clr-red font-medium flex items-center gap-1">
+                            <i className="lni lni-warning" /> Applicant profile photo is required before submitting
+                          </span>
+                        )}
+                        <button
+                          className={`btn btn-primary btn-submit-ready${!canSubmit ? ' opacity-75' : ''}`}
+                          disabled={submitApplication.isPending || !permissions.add}
+                          onClick={handleSubmitApplication}
+                        >
+                          <i className="lni lni-checkmark" /> {submitApplication.isPending ? 'Submitting…' : 'Submit Application for Vetting'}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1135,14 +1671,36 @@ export default function FilingPage() {
 
       <Toast toast={toast} />
 
+      {/* No auto-close (unlike SuccessPopup): the user needs time to print the
+          application payment receipt before moving on to Vetting. */}
       {submitted && (
         <div className="modal-overlay open">
-          <div className="modal" style={{ maxWidth: 400 }}>
-            <SuccessPopup
-              title="Application Submitted!"
-              subtitle={`${selectedApplication?.appRefNo ?? 'Application'} has been submitted for vetting.`}
-              onClose={() => router.push('/admission/vetting')}
-            />
+          <div className="modal" style={{ maxWidth: 420 }} role="dialog" aria-modal="true" aria-labelledby="filing-submitted-title">
+            <div style={{ textAlign: 'center', padding: '32px 28px 26px' }}>
+              <div className="pc-receipt-check" style={{ fontSize: 30, marginBottom: 10 }}><i className="lni lni-checkmark-circle"></i></div>
+              <div id="filing-submitted-title" className="font-bold text-g900" style={{ fontSize: 'var(--fs-lg)' }}>Application Submitted!</div>
+              <p className="text-g500 mt-1" style={{ fontSize: 13 }}>
+                {selectedApplication?.appRefNo ?? 'The application'} has been submitted for vetting.
+              </p>
+              {receiptError && (
+                <div className="warn-box mt-4" role="alert" style={{ textAlign: 'left' }}>
+                  <i className="lni lni-warning" style={{ color: 'var(--amber)', fontSize: 15, flexShrink: 0 }} />
+                  <div style={{ fontSize: 12.5 }}>{receiptError}</div>
+                </div>
+              )}
+              <div className="flex gap-2 justify-center mt-5 flex-wrap">
+                {/* Normal payments with a receipt only — exemptions have none. */}
+                {canPrintReceipt && (
+                  <button className="btn btn-neu" disabled={printingReceipt} onClick={printFilingReceipt}>
+                    <i className={`lni ${printingReceipt ? 'lni-spinner-arrow spin' : receiptError ? 'lni-reload' : 'lni-printer'}`} />{' '}
+                    {printingReceipt ? 'Opening…' : receiptError ? 'Try again' : 'Print Receipt'}
+                  </button>
+                )}
+                <button className="btn btn-primary" onClick={() => router.push('/admission/vetting')}>
+                  Continue to Vetting <i className="lni lni-arrow-right" />
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

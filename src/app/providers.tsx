@@ -1,11 +1,13 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { Query, QueryClient, QueryClientProvider, QueryKey, useQueryClient } from '@tanstack/react-query'
 import { AuthError, refreshSession } from '@/lib/auth'
 import { getSessionIdentity, setSessionIdentity, clearSessionIdentity } from '@/lib/session'
 import { NotificationToastHost } from '@/components/NotificationToastHost'
 import { useNotificationsHubBridge } from '@/hooks/useNotifications'
+import { MENU_KEY } from '@/hooks/users/useMenu'
+import { REPORT_JOBS_KEY } from '@/lib/reportDownloads'
 
 const MOCK_AUTH = process.env.NEXT_PUBLIC_AUTH_MOCK === 'true'
 
@@ -109,6 +111,62 @@ function NotificationsBridge() {
   return null
 }
 
+// App-shell queries (sidebar menu, header bell/downloads/current intake)
+// that survive page changes — they're on screen on every page, so dropping
+// them would just refetch and flicker the shell on each click. Prefix match.
+const SHELL_QUERY_KEYS: readonly QueryKey[] = [
+  MENU_KEY,
+  ['notifications'],
+  REPORT_JOBS_KEY,
+  ['intakes', 'current-academic'],
+]
+
+function isShellQuery(query: Query) {
+  return SHELL_QUERY_KEYS.some(prefix => prefix.every((part, i) => query.queryKey[i] === part))
+}
+
+// Fresh data on every page change, per request (2026-10-15). With the
+// app-wide staleTime: Infinity below, anything fetched once stayed cached
+// until a mutation invalidated it, so other users' changes never showed up
+// on navigation. On each pathname change:
+//   - queries no longer observed (the previous page's) are dropped outright;
+//   - queries the new page shares with the old one (still active, so kept
+//     by react-query) are invalidated so they refetch once — skipping any
+//     already fetching, so a page's own first load isn't sent twice.
+// Rendered after {children} in Providers so its effect runs after the new
+// page's — its queries are already subscribed by the time this sorts
+// active/inactive.
+function PageCacheReset() {
+  const pathname = usePathname()
+  const queryClient = useQueryClient()
+  const previousPathname = useRef(pathname)
+
+  useEffect(() => {
+    if (previousPathname.current === pathname) return
+    previousPathname.current = pathname
+    queryClient.removeQueries({ type: 'inactive', predicate: q => !isShellQuery(q) })
+    queryClient.invalidateQueries({ type: 'active', predicate: q => !isShellQuery(q) && q.state.fetchStatus === 'idle' })
+  }, [pathname, queryClient])
+
+  return null
+}
+
+// Disables mouse wheel scrolling from unintentionally incrementing/decrementing
+function NumberInputScrollPrevent() {
+  useEffect(() => {
+    const handleWheel = () => {
+      const el = document.activeElement
+      if (el instanceof HTMLInputElement && el.type === 'number') {
+        el.blur()
+      }
+    }
+    window.addEventListener('wheel', handleWheel, { passive: true })
+    return () => window.removeEventListener('wheel', handleWheel)
+  }, [])
+
+  return null
+}
+
 export function Providers({ children }: { children: React.ReactNode }) {
   // App-wide "cache until invalidated" default — react-query's own default
   // staleTime is 0, which made every page's data stale the instant it
@@ -126,14 +184,29 @@ export function Providers({ children }: { children: React.ReactNode }) {
   // open) are unaffected.
   //
   // Trade-off worth knowing: a change made by a *different* logged-in user
-  // won't show up here until something invalidates this cache (your own
-  // save on that same data, or a full reload) — this was already true for
-  // every hook that set staleTime: Infinity individually before this change,
-  // just now it's the default instead of an opt-in.
+  // won't show up while you stay on the same page — PageCacheReset above
+  // clears page data on every navigation, so it does on the next page
+  // change (or your own save on that same data).
+  //
+  // No automatic retries, anywhere. A failed request (403 forbidden, 404,
+  // 400, 5xx) is shown to the user once and only re-sent when they click
+  // Retry or something invalidates it — the client never re-asks the server
+  // on its own. react-query's defaults otherwise retry 3× and, since a
+  // failed query has no data and so always counts as stale, re-fire it on
+  // every window focus, remount and reconnect, which hammered endpoints the
+  // user has no permission for. A hook needing live updates must opt in
+  // explicitly (refetchInterval / refetchOnWindowFocus), never inherit it.
   const [queryClient] = useState(() => new QueryClient({
     defaultOptions: {
       queries: {
         staleTime: Infinity,
+        retry: false,
+        retryOnMount: false,
+        refetchOnWindowFocus: false,
+        refetchOnReconnect: false,
+      },
+      mutations: {
+        retry: false,
       },
     },
   }))
@@ -142,7 +215,11 @@ export function Providers({ children }: { children: React.ReactNode }) {
     <QueryClientProvider client={queryClient}>
       <SessionKeepAlive />
       <NotificationsBridge />
+      <NumberInputScrollPrevent />
       {children}
+      {/* After {children} on purpose — sibling effects run in tree order,
+          so this sees the new page's queries already subscribed. */}
+      <PageCacheReset />
       <NotificationToastHost />
     </QueryClientProvider>
   )

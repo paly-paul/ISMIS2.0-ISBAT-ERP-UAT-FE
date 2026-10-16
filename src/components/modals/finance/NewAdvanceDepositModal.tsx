@@ -1,11 +1,13 @@
 'use client'
 import { useEffect, useState } from 'react'
+import { stripLeadingZeros } from '@/lib/errorMessages'
 import { ModalProps } from '../types'
 import DatePicker from '@/components/DatePicker'
 import { SearchSelect } from '@/components/SearchSelect'
 import { useFinanceCurrencies, getDefaultFinanceCurrencyGuid } from '@/hooks/finance/useFinanceCurrencies'
 import { useReceiptBooks } from '@/hooks/finance/useReceiptBooks'
 import { useProcBanks } from '@/hooks/finance/useProcBanks'
+import { usePagePermissions } from '@/hooks/users/usePagePermissions'
 import {
   useSearchStudents,
   useCreateAdvanceDeposit,
@@ -39,6 +41,7 @@ interface DepositResult {
 // is triggered from advanced-payments' "New Deposit" button rather than a
 // dedicated page.
 export function NewAdvanceDepositModal({ isOpen, onClose, showToast }: ModalProps) {
+  const permissions = usePagePermissions()
   const [search, setSearch] = useState('')
   const [committedSearch, setCommittedSearch] = useState('')
   const [selectedApplicationGuid, setSelectedApplicationGuid] = useState<string | null>(null)
@@ -55,10 +58,10 @@ export function NewAdvanceDepositModal({ isOpen, onClose, showToast }: ModalProp
 
   const [result, setResult] = useState<DepositResult | null>(null)
 
-  const { data: currencies = [] } = useFinanceCurrencies()
-  const { data: allReceiptBooks = [] } = useReceiptBooks()
+  const { data: currencies = [] } = useFinanceCurrencies(isOpen)
+  const { data: allReceiptBooks = [] } = useReceiptBooks(isOpen)
   const activeReceiptBooks = allReceiptBooks.filter(r => r.status === 1)
-  const { data: allProcBanks = [] } = useProcBanks()
+  const { data: allProcBanks = [] } = useProcBanks(isOpen)
   const banks = allProcBanks.filter(b => b.status === 2)
   const receiptBooks = activeReceiptBooks.filter(r => r.category === PAY_TYPE_TO_RECEIPT_CATEGORY[Number(payType)])
   const showBankFields = Number(payType) > 1
@@ -114,7 +117,7 @@ export function NewAdvanceDepositModal({ isOpen, onClose, showToast }: ModalProp
   }
 
   function handleSave() {
-    if (!selectedApplicationGuid) { showToast('Please select a student first.', 'warn'); return }
+    if (!permissions.create || !selectedApplicationGuid) { showToast('Please select a student first.', 'warn'); return }
     const amt = parseFloat(amount) || 0
     if (amt <= 0) { showToast('Amount must be greater than 0.', 'warn'); return }
     if (!selectedCurrency) { showToast('Please select a currency.', 'warn'); return }
@@ -148,7 +151,7 @@ export function NewAdvanceDepositModal({ isOpen, onClose, showToast }: ModalProp
   if (!isOpen) return null
 
   return (
-    <div className="modal-overlay open" onClick={handleClose}>
+    <div className="modal-overlay open">
       <div className="modal modal-md" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }} onClick={e => e.stopPropagation()}>
         <div className="modal-hdr modal-hdr-blue" style={{ flexShrink: 0 }}>
           <div className="modal-title"><i className="lni lni-arrow-up-circle"></i> New Advance Deposit</div>
@@ -213,7 +216,7 @@ export function NewAdvanceDepositModal({ isOpen, onClose, showToast }: ModalProp
                   <div className="g2 mb-[14px] mt-[14px]">
                     <div className="fg">
                       <div className="lbl">Amount <span className="req">*</span></div>
-                      <input type="number" min={0} step={0.01} className="ctrl" placeholder="0.00" value={amount} onChange={e => setAmount(e.target.value)} />
+                      <input type="number" min={0} step={0.01} className="ctrl" placeholder="0.00" value={amount} onChange={e => setAmount(stripLeadingZeros(e.target.value))} />
                     </div>
                     <div className="fg">
                       <div className="lbl">Currency <span className="req">*</span></div>
@@ -276,7 +279,7 @@ export function NewAdvanceDepositModal({ isOpen, onClose, showToast }: ModalProp
         {!result && (
           <div className="modal-footer" style={{ flexShrink: 0 }}>
             <button className="btn btn-neu" onClick={handleClose}>Cancel</button>
-            <button className="btn btn-primary" disabled={!selectedApplicationGuid || createAdvanceDeposit.isPending} onClick={handleSave}>
+            <button className="btn btn-primary" disabled={!selectedApplicationGuid || createAdvanceDeposit.isPending || !permissions.create} onClick={handleSave}>
               <i className="lni lni-save"></i> {createAdvanceDeposit.isPending ? 'Saving…' : 'Save Deposit'}
             </button>
           </div>

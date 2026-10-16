@@ -6,6 +6,7 @@ import { FailurePopup } from '../shared/FailurePopup'
 import { CurrencyInput } from '@/lib/api/finance/currencyMaster'
 import { useCurrency } from '@/hooks/finance/useCurrencies'
 import { AuthError } from '@/lib/api/client'
+import { scrollToFirstError } from '@/lib/scrollToFirstError'
 
 // Single form for both Add and Edit — the two only ever differed in title
 // text, prefill, and which mutation fires.
@@ -54,6 +55,7 @@ export function CurrencyFormModal({ isOpen, onClose, showToast, mode, currencyGu
     if (!currencyCode.trim()) e.currencyCode = 'Currency Code is required'
     if (!currencyName.trim()) e.currencyName = 'Currency Name is required'
     setErrors(e)
+    scrollToFirstError(e)
     return Object.keys(e).length === 0
   }
 
@@ -159,7 +161,7 @@ export function CurrencyFormModal({ isOpen, onClose, showToast, mode, currencyGu
               onChange={e => { setCurrencyCode(e.target.value); if (errors.currencyCode) setErrors(p => ({ ...p, currencyCode: '' })) }}
               style={errors.currencyCode ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.currencyCode && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.currencyCode}</p>}
+            {errors.currencyCode && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.currencyCode}</p>}
           </div>
           <div className="fg">
             <div className="lbl">Currency Name <span className="req">*</span></div>
@@ -171,7 +173,7 @@ export function CurrencyFormModal({ isOpen, onClose, showToast, mode, currencyGu
               onChange={e => { setCurrencyName(e.target.value); if (errors.currencyName) setErrors(p => ({ ...p, currencyName: '' })) }}
               style={errors.currencyName ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.currencyName && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.currencyName}</p>}
+            {errors.currencyName && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.currencyName}</p>}
           </div>
           <div className="fg span2">
             <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', marginTop: 4 }}>

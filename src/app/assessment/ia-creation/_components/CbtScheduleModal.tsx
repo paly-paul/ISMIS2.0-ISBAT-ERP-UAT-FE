@@ -1,9 +1,10 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Toast } from '@/components/Toast'
 import { SearchSelect } from '@/components/SearchSelect'
 import DatePicker from '@/components/DatePicker'
+import TimePicker from '@/components/TimePicker'
 import { useIaTestSchedule, useUpdateIaTestSchedule } from '@/hooks/assessment/useIaTestSchedule'
 import { useExamRules } from '@/hooks/assessment/useExamRules'
 import { SuccessPopup } from '@/components/modals/shared/SuccessPopup'
@@ -17,12 +18,29 @@ interface CbtScheduleModalProps {
   unitName: string
 }
 
+function getTodayYmd(): string {
+  const now = new Date()
+  const y = now.getFullYear()
+  const m = String(now.getMonth() + 1).padStart(2, '0')
+  const d = String(now.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
+}
+
 export function CbtScheduleModal({ isOpen, onClose, testGuid, unitCode, unitName }: CbtScheduleModalProps) {
   const [toast, setToast] = useState<{ msg: string; type: string } | null>(null)
+  const toastTimerRef = useRef<NodeJS.Timeout | null>(null)
   const [saved, setSaved] = useState(false)
   const showToast = (msg: string, type: string = 'success') => {
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current)
+    }
     setToast({ msg, type })
-    setTimeout(() => setToast(null), 3500)
+    const isErrorOrWarn = ['error', 'err', 'danger', 'warn', 'warning'].includes((type || '').toLowerCase().trim())
+    const duration = isErrorOrWarn ? 8000 : 4000
+    toastTimerRef.current = setTimeout(() => {
+      setToast(null)
+      toastTimerRef.current = null
+    }, duration)
   }
 
   // Fetch current schedule
@@ -34,12 +52,42 @@ export function CbtScheduleModal({ isOpen, onClose, testGuid, unitCode, unitName
   const [startTime, setStartTime] = useState('')
   const [endDate, setEndDate] = useState('')
   const [endTime, setEndTime] = useState('')
-  const [duration, setDuration] = useState<number | ''>('')
+  const [duration, setDuration] = useState<number | ''>(90)
   const [maxMark, setMaxMark] = useState<number | ''>('')
   const [testType, setTestType] = useState<number>(0)
   const [publishStatus, setPublishStatus] = useState<number>(0)
   const [examRuleGuid, setExamRuleGuid] = useState<string>('')
   const [lookupOpen, setLookupOpen] = useState(false)
+
+  function handleStartDateChange(d: string) {
+    const today = getTodayYmd()
+    if (d && d < today) {
+      showToast('Before date is not possible', 'error')
+      return
+    }
+    setStartDate(d)
+    if (d && endDate && endDate < d) {
+      showToast('Before date is not possible', 'error')
+      setEndDate('')
+    }
+  }
+
+  function handleEndDateChange(d: string) {
+    const today = getTodayYmd()
+    const minAllowed = startDate || today
+    if (d && d < minAllowed) {
+      showToast('Before date is not possible', 'error')
+      return
+    }
+    setEndDate(d)
+  }
+
+  function handleEndTimeChange(t: string) {
+    setEndTime(t)
+    if (startDate && endDate && startDate === endDate && startTime && t && t <= startTime) {
+      showToast('End Time must be after Start Time', 'error')
+    }
+  }
 
   // Fetch Exam Rules for the dropdown
   const { data: rulesData, isLoading: rulesLoading } = useExamRules(1, 100, '', isOpen)
@@ -69,7 +117,12 @@ export function CbtScheduleModal({ isOpen, onClose, testGuid, unitCode, unitName
         setEndDate('')
         setEndTime('')
       }
-      setDuration(schedule.durationMinutes ?? '')
+      const isAlreadyScheduled = Boolean(schedule.scheduledStartDateTime && schedule.scheduledEndDateTime)
+      if (isAlreadyScheduled && schedule.durationMinutes) {
+        setDuration(schedule.durationMinutes)
+      } else {
+        setDuration(90)
+      }
       setMaxMark(schedule.maxMark ?? '')
       setTestType(schedule.testType ?? 0)
       setPublishStatus(schedule.publishStatus ?? 0)
@@ -84,26 +137,13 @@ export function CbtScheduleModal({ isOpen, onClose, testGuid, unitCode, unitName
         setStartTime('')
         setEndDate('')
         setEndTime('')
-        setDuration('')
+        setDuration(90)
         setMaxMark('')
         setTestType(0)
         setPublishStatus(0)
         setExamRuleGuid('')
     }
   }, [schedule, isOpen])
-
-  // Auto-calculate duration based on start and end date/time
-  useEffect(() => {
-    if (startDate && startTime && endDate && endTime) {
-      const startDt = new Date(`${startDate}T${startTime}`)
-      const endDt = new Date(`${endDate}T${endTime}`)
-      if (!isNaN(startDt.getTime()) && !isNaN(endDt.getTime()) && endDt > startDt) {
-        const diffMs = endDt.getTime() - startDt.getTime()
-        const diffMins = Math.floor(diffMs / 60000)
-        setDuration(diffMins)
-      }
-    }
-  }, [startDate, startTime, endDate, endTime])
 
   async function handleSave() {
     if (!testGuid) return
@@ -142,7 +182,10 @@ export function CbtScheduleModal({ isOpen, onClose, testGuid, unitCode, unitName
       showToast('CBT Scheduled successfully')
       setSaved(true)
     } catch (err: any) {
-      if (err.code === 'not_found' || err.message?.includes('404')) {
+      const errMsg = (err?.message || '').toLowerCase()
+      if (errMsg.includes('question') || errMsg.includes('paper') || errMsg.includes('qp')) {
+        showToast('Please upload the question paper before scheduling the exam.', 'error')
+      } else if (err.code === 'not_found' || err.message?.includes('404')) {
         showToast('This Class Test or Exam Rule does not exist.', 'error')
       } else if (err.code === 'bad_request' || err.code === 'validation_error') {
         showToast(err.message || 'Validation failed. Check your inputs.', 'error')
@@ -156,7 +199,7 @@ export function CbtScheduleModal({ isOpen, onClose, testGuid, unitCode, unitName
 
   if (saved) {
     return (
-      <div className="modal-overlay open" onClick={onClose}>
+      <div className="modal-overlay open">
         <div className="modal" style={{ maxWidth: 400 }} onClick={e => e.stopPropagation()}>
           <SuccessPopup
             title="Class Test Scheduled!"
@@ -169,7 +212,7 @@ export function CbtScheduleModal({ isOpen, onClose, testGuid, unitCode, unitName
   }
 
   return (
-    <div className="modal-overlay open" onClick={onClose}>
+    <div className="modal-overlay open">
       <div className="modal modal-md modal-flex" style={{ maxWidth: '700px', borderRadius: '12px' }} onClick={e => e.stopPropagation()}>
         {/* Header */}
         <div className="modal-hdr modal-hdr-blue" style={{ display: 'flex', alignItems: 'center', padding: '16px 20px' }}>
@@ -192,16 +235,30 @@ export function CbtScheduleModal({ isOpen, onClose, testGuid, unitCode, unitName
                 </div>
             </div>
 
+            {/* ASM-045: Notice to upload question paper before scheduling */}
+            <div className="mb-6 p-3.5 bg-amber-50/90 border border-amber-200 rounded-lg flex items-start gap-3 text-xs text-amber-900 shadow-xs">
+              <i className="lni lni-warning text-amber-600 text-base flex-shrink-0 mt-0.5"></i>
+              <div className="leading-relaxed">
+                <span className="font-semibold text-amber-950">Notice:</span> Please ensure the question paper is uploaded before scheduling the exam.
+              </div>
+            </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {/* Dates */}
               <div>
                 <label className="lbl">Start Date & Time <span className="text-red-500">*</span></label>
                 <div className="flex gap-2 mt-1">
                   <div className="flex-1">
-                    <DatePicker value={startDate} onChange={setStartDate} />
+                    <DatePicker 
+                      value={startDate} 
+                      onChange={handleStartDateChange} 
+                      minYmd={getTodayYmd()} 
+                      rangeMessage="Before date is not possible"
+                      onError={msg => showToast(msg, 'error')}
+                    />
                   </div>
-                  <div className="w-[110px]">
-                    <input type="time" className="ctrl w-full" value={startTime} onChange={e => setStartTime(e.target.value)} />
+                  <div className="w-[140px]">
+                    <TimePicker value={startTime} onChange={setStartTime} />
                   </div>
                 </div>
               </div>
@@ -209,10 +266,16 @@ export function CbtScheduleModal({ isOpen, onClose, testGuid, unitCode, unitName
                 <label className="lbl">End Date & Time <span className="text-red-500">*</span></label>
                 <div className="flex gap-2 mt-1">
                   <div className="flex-1">
-                    <DatePicker value={endDate} onChange={setEndDate} />
+                    <DatePicker 
+                      value={endDate} 
+                      onChange={handleEndDateChange} 
+                      minYmd={startDate || getTodayYmd()} 
+                      rangeMessage="Before date is not possible"
+                      onError={msg => showToast(msg, 'error')}
+                    />
                   </div>
-                  <div className="w-[110px]">
-                    <input type="time" className="ctrl w-full" value={endTime} onChange={e => setEndTime(e.target.value)} />
+                  <div className="w-[140px]">
+                    <TimePicker value={endTime} onChange={handleEndTimeChange} />
                   </div>
                 </div>
               </div>
@@ -311,15 +374,6 @@ export function CbtScheduleModal({ isOpen, onClose, testGuid, unitCode, unitName
                 />
               </div>
             </div>
-            
-            <div className="mt-8 bg-[#eff6ff] border border-[#dbeafe] rounded-md p-3 flex gap-3 text-[12.5px] text-[#3b82f6] items-start">
-              <div className="mt-0.5 text-[#2563eb]">
-                <i className="lni lni-information"></i>
-              </div>
-              <div>
-                Timing is controlled server-side. Balance time is saved to database on every student action (Save Next, Previous, Submit, Window Close) to handle connectivity interruptions.
-              </div>
-            </div>
 
             {/* Footer */}
             <div className="flex justify-end gap-3 mt-6 pt-6 border-t border-slate-200">
@@ -337,11 +391,12 @@ export function CbtScheduleModal({ isOpen, onClose, testGuid, unitCode, unitName
           </div>
         </div>
       </div>
-      <Toast toast={toast} />
+      <Toast toast={toast} onClose={() => setToast(null)} />
       <ExamRuleLookupModal 
         isOpen={lookupOpen} 
         onClose={() => setLookupOpen(false)} 
         onSelect={guid => setExamRuleGuid(guid)} 
+        selectedGuid={examRuleGuid}
       />
     </div>
   )

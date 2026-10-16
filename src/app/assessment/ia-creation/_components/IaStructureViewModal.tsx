@@ -39,7 +39,7 @@ export function IaStructureViewModal({ row, progName, semName, onClose, onEditCw
   // No editLink needed anymore, we use callbacks
 
   return (
-    <div className="modal-overlay open" onClick={onClose}>
+    <div className="modal-overlay open">
       <div className="modal modal-md modal-flex" style={{ maxWidth: '800px', borderRadius: '12px' }} onClick={e => e.stopPropagation()}>
         
         {/* Header */}

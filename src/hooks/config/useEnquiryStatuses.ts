@@ -3,7 +3,7 @@ import { createEnquiryStatus, deleteEnquiryStatus, EnquiryStatus, EnquiryStatusI
 
 const ENQUIRY_STATUSES_KEY = ['enquiry-statuses']
 
-export function useEnquiryStatuses() {
+export function useEnquiryStatuses(enabled = true) {
   return useQuery({
     queryKey: ENQUIRY_STATUSES_KEY,
     queryFn: () => getEnquiryStatuses(),
@@ -12,6 +12,7 @@ export function useEnquiryStatuses() {
     // instead of on every remount/window focus.
     staleTime: Infinity,
     gcTime: Infinity,
+    enabled,
   })
 }
 

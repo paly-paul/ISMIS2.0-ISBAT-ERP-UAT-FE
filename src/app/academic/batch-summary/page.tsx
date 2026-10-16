@@ -5,9 +5,10 @@ import { ScrollTable } from '@/components/ScrollTable'
 import { EmptyState } from '@/components/EmptyState'
 import { TableLoadingState } from '@/components/TableLoadingState'
 import { Pagination } from '@/components/Pagination'
-import { usePagination } from '@/hooks/usePagination'
 import { useCampusDropdown } from '@/hooks/config/useCampuses'
 import { useBatchSummary } from '@/hooks/academic/useBatchSummary'
+import { InfiniteSearchSelect } from '@/components/InfiniteSearchSelect'
+import { getIntakesPaged } from '@/lib/api/academic/intake'
 
 // Ported from isbat_student_module.html's Batch Summary page. Campus
 // dropdown loads from GET /academic/campus/dropdown on mount
@@ -49,17 +50,37 @@ function semesterLabelFromCode(semCode: number): string {
 const PAGE_SIZE = 10
 
 export default function Page() {
-  const [intake, setIntake] = useState('Spring 2026')
   const [campusGuid, setCampusGuid] = useState('')
+  const [page, setPage] = useState(1)
   const { data: campuses = [] } = useCampusDropdown()
-  const { data: rows = [], isLoading } = useBatchSummary(campusGuid || null)
-  const stats = useMemo(() => statsFromRows(rows), [rows])
+  // The endpoint returns every batch for the campus in one go (no server
+  // paging — see useBatchSummary), so page it here. Before, the table showed
+  // the whole list on page 1 and the same list again on every other page.
+  // Intake filter is server-side (?intakeGuid=, ACD-015). Empty = the current
+  // admission intake, the endpoint's default — not every intake.
+  const [intakeGuid, setIntakeGuid] = useState('')
+  // isPlaceholderData: the rows on screen are the previous filter's, kept
+  // while the new one loads — dimmed with a pill so it's clear they're stale.
+  const { data, isLoading, isPlaceholderData: isRefetching } = useBatchSummary(campusGuid || null, intakeGuid || null)
 
-  const { page, setPage, totalPages, totalCount, pageItems } = usePagination(rows, PAGE_SIZE)
+  const allRows = useMemo(() => data?.items ?? [], [data])
+  const totalCount = allRows.length
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE))
+  const safePage = Math.min(page, totalPages)
+  const rows = allRows.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE)
+  // Stat tiles cover every batch for the campus, not just the visible page.
+  const stats = useMemo(() => statsFromRows(allRows), [allRows])
 
   // Land back on page 1 whenever the campus filter changes — the previous
   // page offset almost never lands on a valid page of the newly-filtered set.
-  useEffect(() => { setPage(1) }, [campusGuid, setPage])
+  useEffect(() => { setPage(1) }, [campusGuid, intakeGuid])
+
+  // Keep the page state clamped if the list shrinks (e.g. a stricter campus
+  // filter) — only against loaded data, so a pending fetch can't bounce
+  // the page back to 1.
+  useEffect(() => {
+    if (data && page !== safePage) setPage(safePage)
+  }, [data, page, safePage])
 
   return (
     <div className="page active" id="page-batch-summary">
@@ -73,18 +94,24 @@ export default function Page() {
             value={campusGuid}
             onChange={setCampusGuid}
           />
-          <SearchSelect
-            style={{ width: 200 }}
-            options={['Spring 2026', 'Fall 2025', 'Spring 2025']}
-            value={intake}
-            onChange={setIntake}
-          />
+          {/* Sent as ?intakeGuid=. With none picked the endpoint lists the
+              current admission intake, hence the label. */}
+          <div style={{ width: 220 }}>
+            <InfiniteSearchSelect
+              queryKey={['intakes', 'batch-summary']}
+              fetchPage={getIntakesPaged}
+              toOption={i => ({ value: i.intakeGuid, label: `${i.intakeCode} — ${i.description}` })}
+              allLabel="Current Intake"
+              value={intakeGuid}
+              onChange={setIntakeGuid}
+            />
+          </div>
           <button className="btn btn-neu btn-sm"><i className="lni lni-download"></i> Export</button>
         </div>
       </div>
 
-      <div className="stats-row">
-        <div className="stat-card"><div className="stat-lbl">Total Batches</div><div className="stat-num" style={{ color: 'var(--b700)' }}>{stats.totalBatches}</div><div className="stat-sub">{campusGuid ? 'At this campus' : 'Active this intake'}</div></div>
+      <div className="stats-row" style={{ opacity: isRefetching ? 0.45 : 1, transition: 'opacity .15s ease' }}>
+        <div className="stat-card"><div className="stat-lbl">Total Batches</div><div className="stat-num" style={{ color: 'var(--b700)' }}>{stats.totalBatches}</div><div className="stat-sub">{[campusGuid ? 'At this campus' : 'All campuses', intakeGuid ? 'In this intake' : 'Current intake'].join(' · ')}</div></div>
         <div className="stat-card [--b700:var(--green)] [--b400:#34d399]"><div className="stat-lbl">Total Students</div><div className="stat-num" style={{ color: 'var(--green)' }}>{stats.totalStudents}</div><div className="stat-sub up">Across all batches</div></div>
         <div className="stat-card"><div className="stat-lbl">Avg Batch Size</div><div className="stat-num">{stats.avgBatchSize}</div><div className="stat-sub">students / batch</div></div>
       </div>
@@ -93,6 +120,12 @@ export default function Page() {
         <div className="card-hdr">
           <div className="card-title"><span className="ctitle-icon"><i className="lni lni-users"></i></span> Batches{campusGuid ? ` · ${campuses.find(c => c.campusGuid === campusGuid)?.campusName ?? ''}` : ''}</div>
         </div>
+        <div className={`tbl-refetch-wrap${isRefetching ? ' is-refetching' : ''}`} aria-busy={isRefetching}>
+        {isRefetching && (
+          <div className="tbl-refetch-pill" role="status">
+            <i className="lni lni-reload" /> Loading batches…
+          </div>
+        )}
         <ScrollTable>
           <table>
             <thead>
@@ -108,17 +141,17 @@ export default function Page() {
             <tbody>
               {isLoading
                 ? <TableLoadingState colSpan={6} />
-                : pageItems.length === 0
-                  ? <EmptyState colSpan={6} hasFilters={!!campusGuid} onClearFilters={() => setCampusGuid('')} />
-                  : pageItems.map((r, i) => (
+                : rows.length === 0
+                  ? <EmptyState colSpan={6} hasFilters={!!campusGuid || !!intakeGuid} onClearFilters={() => { setCampusGuid(''); setIntakeGuid('') }} />
+                  : rows.map((r, i) => (
                     // batchGuid alone isn't a safe key — the real endpoint's
                     // field names aren't confirmed yet (see file header) and
                     // a live response has been seen leaving it blank/
                     // duplicated across rows; the absolute row index (page-
                     // qualified, matching the Sl. No column) is always
                     // unique regardless of what the guid comes back as.
-                    <tr key={`${r.batchGuid || 'row'}-${(page - 1) * PAGE_SIZE + i}`}>
-                      <td className="text-g500">{r.slNo ?? (page - 1) * PAGE_SIZE + i + 1}</td>
+                    <tr key={`${r.batchGuid || 'row'}-${(safePage - 1) * PAGE_SIZE + i}`}>
+                      <td className="text-g500">{r.slNo ?? (safePage - 1) * PAGE_SIZE + i + 1}</td>
                       <td><span className="font-bold font-mono text-blue">{r.batchCode}</span></td>
                       <td>{r.programName}</td>
                       <td>{semesterLabelFromCode(r.semCode)}</td>
@@ -129,7 +162,8 @@ export default function Page() {
             </tbody>
           </table>
         </ScrollTable>
-        <Pagination page={page} totalPages={totalPages} totalCount={totalCount} itemLabel="batches" onPageChange={setPage} />
+        </div>
+        <Pagination page={safePage} totalPages={totalPages} totalCount={totalCount} itemLabel="batches" onPageChange={setPage} />
       </div>
     </div>
   )

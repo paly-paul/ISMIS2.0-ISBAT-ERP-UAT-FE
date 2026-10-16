@@ -1,22 +1,25 @@
 'use client'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { getCourseUnitById } from '@/lib/api/academic/courseUnit'
+import { DocumentPreviewModal } from '../shared/DocumentPreviewModal'
 import { ModalProps } from '../types'
 import { SuccessPopup } from '../shared/SuccessPopup'
 import { FailurePopup } from '../shared/FailurePopup'
 import { SearchSelect } from '@/components/SearchSelect'
 import DatePicker from '@/components/DatePicker'
-import { MultiSelect } from '@/components/MultiSelect'
+import { stripLeadingZeros } from '@/lib/errorMessages'
+import { StreamMultiSearchPicker } from '@/components/StreamMultiSearchPicker'
+import { useStreamsByGuids } from '@/hooks/config/useStreams'
 import { ProgramMasterInput } from '@/lib/api/academic/programMaster'
-import { useProgramLevels } from '@/hooks/academic/useProgramLevels'
-import { useProgramGroups } from '@/hooks/academic/useProgramGroups'
-import { useFaculties } from '@/hooks/config/useFaculties'
-import { useCurrencies } from '@/hooks/finance/useCurrencies'
+import { useSearchProgramLevelsInfinite } from '@/hooks/academic/useProgramLevels'
+import { useSearchProgramGroupsInfinite } from '@/hooks/academic/useProgramGroups'
+import { useSearchCurrenciesInfinite } from '@/hooks/finance/useCurrencies'
 import { useFinanceCurrencies } from '@/hooks/finance/useFinanceCurrencies'
-import { useStreams } from '@/hooks/config/useStreams'
 import { useCourseUnit, useCourseUnitsByGuids } from '@/hooks/academic/useCourseUnits'
 import { CourseUnitSearchPicker, CourseUnitPickOption } from '@/components/CourseUnitSearchPicker'
-import { useIntakes, useCurrentAcademicIntake } from '@/hooks/academic/useIntakes'
+import { useIntakesByGuids, useCurrentAcademicIntake } from '@/hooks/academic/useIntakes'
+import { IntakeSearchPicker } from '@/components/IntakeSearchPicker'
 import { useUnitTypes } from '@/hooks/config/useUnitTypes'
 import { useUnitCategories } from '@/hooks/config/useUnitCategories'
 import { useLedgers } from '@/hooks/finance/useLedgers'
@@ -39,6 +42,8 @@ import {
   ProgramFeeStructureUpdateInput,
 } from '@/hooks/academic/useProgramFeeStructure'
 import { AuthError } from '@/lib/api/client'
+import { flattenUniquePages } from '@/lib/pagination'
+import { scrollToFirstError } from '@/lib/scrollToFirstError'
 
 // Toggle between UGX and USD.
 const LOCAL_OR_FOREIGN_OPTS = [
@@ -286,6 +291,8 @@ export function ProgrammeModal({ isOpen, onClose, showToast, mode, programGuid, 
   // empty) data — so Save then submits nothing for either, even though they
   // looked filled in on screen a moment earlier.
   const prefilledForRef = useRef<string | null>(null)
+  // Set by the Edit prefill; see editBaselineRef below.
+  const [baselinePending, setBaselinePending] = useState(false)
   // Semester count isn't fixed — it varies per programme. Starts at 1 and
   // grows to match the picked Programme Level's semCount (Add mode) or the
   // real semesters returned by program-course-units (Edit mode); the user
@@ -311,6 +318,18 @@ export function ProgrammeModal({ isOpen, onClose, showToast, mode, programGuid, 
   const [programName, setProgramName] = useState('')
   const [programGroupGuid, setProgramGroupGuid] = useState('')
   const [programLevelGuid, setProgramLevelGuid] = useState('')
+  const [programGroupSearch, setProgramGroupSearch] = useState('')
+  const [programLevelSearch, setProgramLevelSearch] = useState('')
+  const [committedProgramGroupSearch, setCommittedProgramGroupSearch] = useState('')
+  const [committedProgramLevelSearch, setCommittedProgramLevelSearch] = useState('')
+  const [programGroupPickerOpen, setProgramGroupPickerOpen] = useState(false)
+  const [programLevelPickerOpen, setProgramLevelPickerOpen] = useState(false)
+  const [programGroupLabel, setProgramGroupLabel] = useState('')
+  const [programLevelLabel, setProgramLevelLabel] = useState('')
+  const [streamNames, setStreamNames] = useState<Record<string, string>>({})
+  const [currencySearch, setCurrencySearch] = useState('')
+  const [committedCurrencySearch, setCommittedCurrencySearch] = useState('')
+  const [currencyPickerOpen, setCurrencyPickerOpen] = useState(false)
   const [facultyGuid, setFacultyGuid] = useState('')
   const [appFee, setAppFee] = useState('')
   const [lateFee, setLateFee] = useState('')
@@ -372,18 +391,63 @@ export function ProgrammeModal({ isOpen, onClose, showToast, mode, programGuid, 
   // see validateStep2 / Program_Master_Change_Requests_Final.md.
   const [step2Error, setStep2Error] = useState<string | null>(null)
 
-  const { data: programLevels = [] } = useProgramLevels()
+  useEffect(() => {
+    const timer = setTimeout(() => setCommittedProgramGroupSearch(programGroupSearch.trim()), 300)
+    return () => clearTimeout(timer)
+  }, [programGroupSearch])
+
+  useEffect(() => {
+    const timer = setTimeout(() => setCommittedProgramLevelSearch(programLevelSearch.trim()), 300)
+    return () => clearTimeout(timer)
+  }, [programLevelSearch])
+
+  useEffect(() => {
+    const timer = setTimeout(() => setCommittedCurrencySearch(currencySearch.trim()), 300)
+    return () => clearTimeout(timer)
+  }, [currencySearch])
+
+  const programGroupQuery = useSearchProgramGroupsInfinite(
+    committedProgramGroupSearch,
+    20,
+    isOpen && programGroupPickerOpen,
+  )
+  const programLevelQuery = useSearchProgramLevelsInfinite(
+    committedProgramLevelSearch,
+    20,
+    isOpen && programLevelPickerOpen,
+  )
+  const currencyQuery = useSearchCurrenciesInfinite(committedCurrencySearch, 20, isOpen && currencyPickerOpen)
+
+  const programGroups = useMemo(() => {
+    const items = flattenUniquePages(programGroupQuery.data?.pages ?? [], g => g.programGroupGuid)
+    if (programGroupGuid && programGroupLabel && !items.some(g => g.programGroupGuid === programGroupGuid)) {
+      items.unshift({ programGroupGuid, groupCode: '', groupName: programGroupLabel, programLevelGuid } as typeof items[number])
+    }
+    return items
+  }, [programGroupGuid, programGroupLabel, programGroupQuery.data, programLevelGuid])
+  const programLevels = useMemo(() => {
+    const items = flattenUniquePages(programLevelQuery.data?.pages ?? [], p => p.programLevelGuid)
+    if (programLevelGuid && programLevelLabel && !items.some(p => p.programLevelGuid === programLevelGuid)) {
+      items.unshift({ programLevelGuid, levelName: programLevelLabel } as typeof items[number])
+    }
+    return items
+  }, [programLevelGuid, programLevelLabel, programLevelQuery.data])
   const programLevelOptions = programLevels.map(p => ({ value: p.programLevelGuid, label: p.levelName }))
   const selectedProgramLevel = programLevels.find(p => p.programLevelGuid === programLevelGuid)
-
-  const { data: programGroups = [] } = useProgramGroups()
   const programGroupOptions = programGroups.map(g => ({ value: g.programGroupGuid, label: `${g.groupCode} — ${g.groupName}` }))
 
-  const { data: faculties = [] } = useFaculties()
-  const facultyOptions = faculties.map(f => ({ value: f.facultyGuid, label: `${f.facultyCode} — ${f.facultyName}` }))
-  const selectedFaculty = faculties.find(f => f.facultyGuid === facultyGuid)
+  // facultyGuid itself is still submitted on save (carried through from
+  // fullDetails in Edit mode — see the prefill effect below), but this modal
+  // has no actual Faculty picker in its UI (Step 1 never renders one), so
+  // there's nothing here to feed a facultyOptions dropdown — useFaculties()'s
+  // full list used to be fetched unconditionally (later gated to isOpen) for
+  // no reason at all. Dropped entirely per "no need to fallback" — see the
+  // same call this session already removed from Payment Console.
 
-  const { data: currencies = [] } = useCurrencies(isOpen)
+  const currencies = useMemo(
+    () => flattenUniquePages(currencyQuery.data?.pages ?? [], c => String(c.intCurrency)),
+    [currencyQuery.data],
+  )
   // Lec/Cec/Acec (Lateral Entry/Credit Exemption/Aptech Credit Exemption Fee
   // Currency) still take Currency.intCurrency (a number) — those are NOT
   // confirmed to have switched to guids the way the top-level programme
@@ -408,10 +472,24 @@ export function ProgrammeModal({ isOpen, onClose, showToast, mode, programGuid, 
     item => ({ guid: item.currencyGuid, name: item.currencyName }),
   )
 
-  const { data: streams = [] } = useStreams()
-  const streamOptions = streams.map(s => ({ value: s.streamGuid, label: `${s.streamCode} — ${s.streamName}` }))
-  // Step 2's per-semester picker only offers what was picked in Step 1.
-  const semesterStreamOptions = streamOptions.filter(o => streamGuids.includes(o.value))
+  // Specialization(s) is now StreamMultiSearchPicker's own infinite-scroll
+  // search (2026-09-10) instead of a MultiSelect fed by useStreams(isOpen)'s
+  // capped 1000-row snapshot — confirmed live that GET
+  // /api/v1/academic/specializations genuinely supports page/pageSize/search
+  // together. Step 2's per-semester picker only offers what was picked in
+  // Step 1, which is always a small, bounded set regardless — resolved via
+  // the same batched-by-guid lookup StreamMultiSearchPicker itself uses for
+  // its selected-chip labels, rather than holding the whole stream list here
+  // too.
+  // streamNames is only filled from full-details (Edit), and can come back
+  // empty. Resolve the rest by guid, same lookup the picker uses, so chips and
+  // the Step 2 picker never show a raw GUID.
+  const streamsByGuid = useStreamsByGuids(streamGuids)
+  const semesterStreamOptions = streamGuids.map(guid => {
+    const s = streamsByGuid.get(guid)
+    const label = s ? `${s.streamCode} — ${s.streamName}` : (streamNames[guid] || 'Loading…')
+    return { value: guid, label }
+  })
 
 
   // Syllabus/Outline/Taught By detail panel (Step 2's "Additional Feature")
@@ -423,16 +501,33 @@ export function ProgrammeModal({ isOpen, onClose, showToast, mode, programGuid, 
   // either.
   const expandedUnit = (semUnits[activeAcc] ?? []).find(u => u.id === expandedUnitId)
   const { data: expandedUnitDetail, isLoading: expandedUnitLoading } = useCourseUnit(expandedUnit?.guid ?? null, !!expandedUnit)
+  // Syllabus opens in the in-page preview (ACD-027), not a plain link. The
+  // cached URL is a presigned link that expires in 5 minutes, so fetch the
+  // unit fresh at click time, same as Course Units' own handleSyllabus.
+  const [syllabusOpening, setSyllabusOpening] = useState(false)
+  const [syllabusPreview, setSyllabusPreview] = useState<{ url: string; title: string } | null>(null)
+  async function viewSyllabus(courseUnitGuid: string) {
+    setSyllabusOpening(true)
+    try {
+      const fresh = await getCourseUnitById(courseUnitGuid)
+      if (!fresh.syllabus) { showToast('Syllabus is no longer attached to this unit', 'error'); return }
+      setSyllabusPreview({ url: fresh.syllabus, title: `Syllabus — ${fresh.courseUnitCode}` })
+    } catch {
+      showToast('Failed to load the syllabus document. Please try again.', 'error')
+    } finally {
+      setSyllabusOpening(false)
+    }
+  }
 
   // Unit Type / Unit Category dropdowns in Course Unit Allocation — real
   // masters from src/app/config/unit-type & unit-category. ProgramUnitInput.
   // unitType/unitCat send the guid directly (unitTypeGuid/unitCatGuid), the
   // same guid-based convention used elsewhere in this backend (e.g.
   // programLevelGuid, courseUnitRepetitionGuid).
-  const { data: unitTypes = [] } = useUnitTypes(isOpen)
+  const { data: unitTypes = [] } = useUnitTypes(isOpen && step === 2)
   const unitTypeOptions = unitTypes.map(t => ({ value: t.unitTypeGuid, label: t.unitTypeName }))
 
-  const { data: unitCategories = [] } = useUnitCategories(isOpen)
+  const { data: unitCategories = [] } = useUnitCategories(isOpen && step === 2)
   const unitCategoryOptions = unitCategories.map(c => ({ value: c.unitCatGuid, label: c.unitCatName }))
   // The per-unit specialization picker only makes sense for a unit whose
   // category is literally named "Specialization" in the real master — there's
@@ -442,7 +537,7 @@ export function ProgrammeModal({ isOpen, onClose, showToast, mode, programGuid, 
     return !!cat && cat.unitCatName.trim().toLowerCase() === 'specialization'
   }
 
-  const { data: ledgers = [] } = useLedgers(isOpen)
+  const { data: ledgers = [] } = useLedgers(isOpen && step === 3)
   // Base options from the Ledger master list, PLUS a synthesized option for
   // any ledger/currency guid already sitting on a loaded fee item (from
   // full-details) that isn't in its respective master list — using the real
@@ -467,17 +562,28 @@ export function ProgrammeModal({ isOpen, onClose, showToast, mode, programGuid, 
     item => ({ guid: item.ledger, name: item.ledgerName }),
   )
 
-  const { data: intakes = [] } = useIntakes(isOpen)
-  // Per-fee-structure Intake — a real intakeGuid in both modes now (see the
-  // FeeStructure type comment on intakeGuid); the top-level programme Intake
-  // (intakeGuid on ProgramMasterInput, Step 1) is a separate field entirely.
-  const programIntakeOptions = intakes.map(i => ({ value: i.intakeGuid, label: `${i.intakeCode} — ${i.description}` }))
   // Per Fee_Structure_Change_Requests.md #3/#4 (mirrored from the standalone
   // /academic/fee-structure page) — Step 3's per-structure Intake is now
   // always read-only: in Edit mode it shows whatever intake the structure
   // already has, in Create mode it's forced onto the Current Academic
   // Intake instead of offering a picker at all.
-  const { data: currentAcademicIntake } = useCurrentAcademicIntake(isOpen)
+  const { data: currentAcademicIntake } = useCurrentAcademicIntake(isOpen && mode !== 'edit')
+
+  // Resolves the display label ("intakeCode — description") for the
+  // top-level Programme Intake plus whichever intake each fee structure
+  // already carries — a bounded batched-by-guid lookup (useIntakesByGuids)
+  // instead of holding the whole intake list in memory just to look labels
+  // up, now that this modal's Intake pickers are IntakeSearchPicker's own
+  // search/scroll fetch rather than a plain SearchSelect over a full list.
+  const intakesByGuid = useIntakesByGuids([intakeGuid, ...feeStructures.map(s => s.intakeGuid)])
+  function intakeLabel(guid: string): string | null {
+    if (!guid) return null
+    if (currentAcademicIntake && currentAcademicIntake.intakeGuid === guid) {
+      return `${currentAcademicIntake.intakeCode} — ${currentAcademicIntake.description}`
+    }
+    const found = intakesByGuid.get(guid)
+    return found ? `${found.intakeCode} — ${found.description}` : null
+  }
 
   // Full course-unit/fee-structure breakdown for the programme being edited —
   // update-complete fully replaces both collections, so this is required to
@@ -561,21 +667,25 @@ export function ProgrammeModal({ isOpen, onClose, showToast, mode, programGuid, 
     setProgramCode(fullDetails.programCode)
     setProgramName(fullDetails.programName)
     setProgramGroupGuid(fullDetails.programGroupGuid)
+    setProgramGroupLabel(fullDetails.programGroupName ?? '')
     setProgramLevelGuid(fullDetails.programLevelGuid)
+    setProgramLevelLabel(fullDetails.programLevelName ?? '')
     setFacultyGuid(fullDetails.facultyGuid)
     // Confirmed live (2026-09-07) that full-details DOES return a real
     // currencyGuid — overrides whatever the initialCurrencyGuid-driven
     // effect above set from the (often-null) list row the moment this
     // richer fetch resolves.
     setCurrencyGuid(fullDetails.currencyGuid ?? '')
-    setAppFee(String(fullDetails.appFee))
-    setLateFee(String(fullDetails.lateFee))
+    // Same as the level prefill: 0 or null shows as an empty box.
+    setAppFee(fullDetails.appFee ? String(fullDetails.appFee) : '')
+    setLateFee(fullDetails.lateFee ? String(fullDetails.lateFee) : '')
     setUnitCount(String(fullDetails.unitCount))
     setDateAcc(fullDetails.dateAcc ? fullDetails.dateAcc.slice(0, 10) : '')
     // full-details returns streamGuids (plural) — Create/Update's top-level
     // field only accepts one (see the streamGuids state comment above), but
     // that's just the top-level field's limit, not this multi-select's.
     setStreamGuids(fullDetails.streamGuids ?? [])
+    setStreamNames(Object.fromEntries((fullDetails.streamGuids ?? []).map((guid, i) => [guid, fullDetails.streamNames?.[i] ?? ''])))
     setIntakeGuid(fullDetails.intakeGuid ?? '')
     setPgmStatus(fullDetails.pgmStatus)
     setNoIa(fullDetails.noIa)
@@ -731,8 +841,30 @@ export function ProgrammeModal({ isOpen, onClose, showToast, mode, programGuid, 
     setFeeStructures(structures)
     setActiveFeeIdx(0)
     setActiveAcc(0)
+    setBaselinePending(true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, fullDetails, programCourseUnitRows, mode])
+
+  // Edit mode: each step's Update only calls its API when that step's values
+  // differ from what was prefilled (or last saved). The snapshots hold just
+  // what each request sends. The baseline is taken on the render AFTER the
+  // prefill effect, once its setState calls have landed; taking it inside the
+  // effect would read the old, blank values.
+  const step1Snapshot = JSON.stringify([
+    programCode.trim(), programName.trim(), pgmStatus, noIa, programGroupGuid, programLevelGuid,
+    currencyGuid, unitCount, appFee, lateFee, [...streamGuids].sort(), intakeGuid, !!accLetterFile,
+  ])
+  const step2Snapshot = JSON.stringify(semUnits.map(us => us.map(u => [u.guid, u.streamGuid, u.unitType, u.unitCat])))
+  const step3Snapshot = JSON.stringify(feeStructures)
+  const editBaselineRef = useRef<{ s1: string; s2: string; s3: string } | null>(null)
+  useEffect(() => {
+    if (!baselinePending) return
+    editBaselineRef.current = { s1: step1Snapshot, s2: step2Snapshot, s3: step3Snapshot }
+    setBaselinePending(false)
+  }, [baselinePending, step1Snapshot, step2Snapshot, step3Snapshot])
+  const step1Unchanged = editBaselineRef.current?.s1 === step1Snapshot
+  const step2Unchanged = editBaselineRef.current?.s2 === step2Snapshot
+  const step3Unchanged = editBaselineRef.current?.s3 === step3Snapshot
 
   // Create mode has no per-structure Intake picker any more (#4) — every
   // fee structure is forced onto whatever intake is currently flagged
@@ -781,8 +913,10 @@ export function ProgrammeModal({ isOpen, onClose, showToast, mode, programGuid, 
     if (step1Errors.programLevelGuid) setStep1Errors(p => ({ ...p, programLevelGuid: '' }))
     const level = programLevels.find(p => p.programLevelGuid === guid)
     if (level) {
-      setAppFee(String(level.appFee))
-      setLateFee(String(level.lateFee))
+      // A level with no fee set comes back as 0. Leave the box empty then,
+      // so the user types the real fee instead of saving a default 0.
+      setAppFee(level.appFee ? String(level.appFee) : '')
+      setLateFee(level.lateFee ? String(level.lateFee) : '')
       // Level.currencyGuid itself is unconfirmed on GET (see the comment on
       // ProgramLevel.currencyGuid in programLevel.ts) — resolve the level's
       // own currencyCode against useFinanceCurrencies() instead, same
@@ -800,15 +934,23 @@ export function ProgrammeModal({ isOpen, onClose, showToast, mode, programGuid, 
     }
   }
 
+  // Header rules from the program-master validator: code ≤ 25, name ≤ 150,
+  // level required, unitCount > 0 when given, appFee ≥ 0. The backend does
+  // not check lateFee at all, so the ≥ 0 rule for it lives only here.
   function validateStep1() {
     const e: Record<string, string> = {}
     if (!programCode.trim()) e.programCode = 'Programme Code is required'
+    else if (programCode.trim().length > 25) e.programCode = 'Programme Code must be 25 characters or fewer'
     if (!programName.trim()) e.programName = 'Programme Name is required'
+    else if (programName.trim().length > 150) e.programName = 'Programme Name must be 150 characters or fewer'
     if (!programGroupGuid) e.programGroupGuid = 'Please select a Programme Group'
     if (!programLevelGuid) e.programLevelGuid = 'Please select a Programme Level'
     if (!intakeGuid) e.intakeGuid = 'Please select an Intake'
+    if (unitCount.trim() && (!Number.isInteger(+unitCount) || +unitCount <= 0)) e.unitCount = 'No. of Course Units must be a whole number greater than 0, or left blank'
     if (appFee === '') e.appFee = 'Application Fee is required'
+    else if (+appFee < 0) e.appFee = 'Application Fee can\'t be negative'
     if (lateFee === '') e.lateFee = 'Late Fee is required'
+    else if (+lateFee < 0) e.lateFee = 'Late Fee can\'t be negative'
     if (!currencyGuid) e.currencyCode = 'Please select a Currency'
     // No. of Course Units, Accreditation Date, and Specialization are all
     // optional per Program_Master_Change_Requests_Final.md — unitCount is
@@ -817,7 +959,33 @@ export function ProgrammeModal({ isOpen, onClose, showToast, mode, programGuid, 
     // Intake no longer has a dropdown to validate at all — it's auto-filled
     // from the Current Academic Intake (see the effect below).
     setStep1Errors(e)
+    scrollToFirstError(e)
     return Object.keys(e).length === 0
+  }
+
+  // Puts a Step 1 header failure from the backend on the field it's about and
+  // returns to Step 1. Returns false for anything else (caller shows the popup).
+  // Covers duplicate_program_code and the per-entity not_found messages.
+  function applyStep1ServerError(err: unknown): boolean {
+    if (!(err instanceof AuthError)) return false
+    let field: string | null = null
+    let msg = err.message
+    if (err.code === 'duplicate_program_code') {
+      field = 'programCode'
+      msg = err.message || 'A programme with this code already exists.'
+    } else if (err.code === 'not_found') {
+      if (/program level/i.test(err.message)) { field = 'programLevelGuid'; msg = 'This programme level no longer exists. Pick another one.' }
+      else if (/program group/i.test(err.message)) { field = 'programGroupGuid'; msg = 'This programme group no longer exists. Pick another one.' }
+      else if (/intake/i.test(err.message)) { field = 'intakeGuid'; msg = 'This intake no longer exists. Pick another one.' }
+      else if (/specialization/i.test(err.message)) { field = 'streamGuids'; msg = 'One of the selected specializations no longer exists. Remove it and try again.' }
+    }
+    if (!field) return false
+    const e = { [field]: msg }
+    setStep1Errors(prev => ({ ...prev, ...e }))
+    setStep(1)
+    scrollToFirstError(e)
+    showToast(msg, 'error')
+    return true
   }
 
   // No. of Course Units (Step 1) is optional — when left blank, Course Unit
@@ -855,10 +1023,11 @@ export function ProgrammeModal({ isOpen, onClose, showToast, mode, programGuid, 
       showToast('Programme GUID is missing.', 'error')
       return
     }
+    if (step1Unchanged) { setStep(2); return }
 
     const input: ProgramMasterUpdateStep1Input = {
-      programCode,
-      programName,
+      programCode: programCode.trim(),
+      programName: programName.trim(),
       pgmStatus,
       noIa,
       programGroupGuid: programGroupGuid || undefined,
@@ -869,13 +1038,19 @@ export function ProgrammeModal({ isOpen, onClose, showToast, mode, programGuid, 
       lateFee: lateFee !== '' ? +lateFee : 0,
       streamGuids: streamGuids.length > 0 ? streamGuids : undefined,
       intakeGuid: intakeGuid || undefined,
+      // No inputs for these in the form, but they're loaded from full-details.
+      // Send them back so this header update can't blank them out.
+      facultyGuid: facultyGuid || undefined,
+      dateAcc: dateAcc ? `${dateAcc}T00:00:00` : null,
     }
 
     try {
       await updateProgramStep1.mutateAsync({ programGuid, input })
+      if (editBaselineRef.current) editBaselineRef.current.s1 = step1Snapshot
       showToast('Basic details updated successfully', 'success')
       setStep(2)
     } catch (err) {
+      if (applyStep1ServerError(err)) return
       const code = err instanceof AuthError ? err.code : undefined
       const msg =
         err instanceof Error
@@ -894,6 +1069,7 @@ export function ProgrammeModal({ isOpen, onClose, showToast, mode, programGuid, 
       showToast('Programme GUID is missing.', 'error')
       return
     }
+    if (step2Unchanged) { setStep(3); return }
 
     const unitsPayload = semUnits.flatMap((units, si) =>
       units.map(u => {
@@ -924,6 +1100,7 @@ export function ProgrammeModal({ isOpen, onClose, showToast, mode, programGuid, 
 
     try {
       await updateProgramCourseUnits.mutateAsync({ programGuid, input })
+      if (editBaselineRef.current) editBaselineRef.current.s2 = step2Snapshot
       showToast('Course units updated successfully', 'success')
       setStep(3)
     } catch (err) {
@@ -946,6 +1123,11 @@ export function ProgrammeModal({ isOpen, onClose, showToast, mode, programGuid, 
     }
     if (!allFeeComplete) {
       showToast('Please complete required fee structure details', 'error')
+      return
+    }
+    if (step3Unchanged) {
+      handleClose()
+      router.push('/academic/programme-master')
       return
     }
 
@@ -1044,7 +1226,7 @@ export function ProgrammeModal({ isOpen, onClose, showToast, mode, programGuid, 
     if (createdProgramGuid) { setStep(2); return }
 
     const input: ProgramMasterCreateInput = {
-      programCode, programName, programLevelGuid, pgmStatus, noIa, programGroupGuid,
+      programCode: programCode.trim(), programName: programName.trim(), programLevelGuid, pgmStatus, noIa, programGroupGuid,
       unitCount: +unitCount || 0, appFee: +appFee || 0, lateFee: +lateFee || 0,
       facultyGuid, currencyGuid, dateAcc: dateAcc ? `${dateAcc}T00:00:00` : null,
       streamGuids, intakeGuid, accLetterFile,
@@ -1056,6 +1238,7 @@ export function ProgrammeModal({ isOpen, onClose, showToast, mode, programGuid, 
       showToast('Programme details saved', 'success')
       setStep(2)
     } catch (err) {
+      if (applyStep1ServerError(err)) return
       const code = err instanceof AuthError ? err.code : undefined
       const msg = err instanceof Error ? (err.message || `Failed to save programme details${code ? ` (${code})` : ''}. Please try again.`) : 'Failed to save programme details. Please try again.'
       setFailure(msg)
@@ -1149,6 +1332,7 @@ export function ProgrammeModal({ isOpen, onClose, showToast, mode, programGuid, 
 
   function handleClose() {
     prefilledForRef.current = null
+    editBaselineRef.current = null
     setStep(1); setSaved(false); setFailure(null)
     setFeeStructures(makeDefaultFeeStructures(1))
     setActiveFeeIdx(0); setFeeAccordion(0); setActiveAcc(0); setCopySourceId('')
@@ -1226,7 +1410,7 @@ export function ProgrammeModal({ isOpen, onClose, showToast, mode, programGuid, 
       }))
 
       const updateInput: ProgramMasterUpdateInput = {
-        programCode, programName, programLevelGuid, pgmStatus, noIa, programGroupGuid,
+        programCode: programCode.trim(), programName: programName.trim(), programLevelGuid, pgmStatus, noIa, programGroupGuid,
         unitCount: +unitCount || 0, appFee: +appFee || 0, lateFee: +lateFee || 0,
         facultyGuid, currencyGuid, dateAcc: dateAcc ? `${dateAcc}T00:00:00` : null,
         // Top-level field now takes the full multi-select — see the
@@ -1241,6 +1425,7 @@ export function ProgrammeModal({ isOpen, onClose, showToast, mode, programGuid, 
         {
           onSuccess: () => { setSaved(true); showToast('Programme updated successfully', 'success') },
           onError: (error: Error) => {
+            if (applyStep1ServerError(error)) return
             const code = error instanceof AuthError ? error.code : undefined
             const msg = error.message || `Failed to update programme${code ? ` (${code})` : ''}. Please try again.`
             setFailure(msg)
@@ -1627,22 +1812,24 @@ export function ProgrammeModal({ isOpen, onClose, showToast, mode, programGuid, 
                   <input
                     className="ctrl"
                     placeholder="e.g. BCA-2031"
+                    maxLength={25}
                     value={programCode}
                     onChange={e => { setProgramCode(e.target.value); if (step1Errors.programCode) setStep1Errors(p => ({ ...p, programCode: '' })) }}
                     style={step1Errors.programCode ? { borderColor: 'var(--red)' } : undefined}
                   />
-                  {step1Errors.programCode && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{step1Errors.programCode}</p>}
+                  {step1Errors.programCode && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{step1Errors.programCode}</p>}
                 </div>
                 <div className="fg span2">
                   <div className="lbl">Programme Name <span className="req">*</span></div>
                   <input
                     className="ctrl"
                     placeholder="e.g. Bachelor of Computer Applications 2031"
+                    maxLength={150}
                     value={programName}
                     onChange={e => { setProgramName(e.target.value); if (step1Errors.programName) setStep1Errors(p => ({ ...p, programName: '' })) }}
                     style={step1Errors.programName ? { borderColor: 'var(--red)' } : undefined}
                   />
-                  {step1Errors.programName && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{step1Errors.programName}</p>}
+                  {step1Errors.programName && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{step1Errors.programName}</p>}
                 </div>
 
                 <div className="fg">
@@ -1652,8 +1839,14 @@ export function ProgrammeModal({ isOpen, onClose, showToast, mode, programGuid, 
                     value={programGroupGuid}
                     onChange={selectProgramGroup}
                     options={programGroupOptions}
+                    onSearch={setProgramGroupSearch}
+                    onOpenChange={setProgramGroupPickerOpen}
+                    isLoading={programGroupQuery.isLoading}
+                    hasNextPage={programGroupQuery.hasNextPage}
+                    isFetchingNextPage={programGroupQuery.isFetchingNextPage}
+                    onLoadMore={() => programGroupQuery.fetchNextPage()}
                   />
-                  {step1Errors.programGroupGuid && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{step1Errors.programGroupGuid}</p>}
+                  {step1Errors.programGroupGuid && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{step1Errors.programGroupGuid}</p>}
                 </div>
                 <div className="fg span2">
                   <div className="lbl" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -1673,8 +1866,19 @@ export function ProgrammeModal({ isOpen, onClose, showToast, mode, programGuid, 
                       )}
                     </span>
                   </div>
-                  <SearchSelect placeholder="— Select level —" value={programLevelGuid} onChange={selectProgramLevel} options={programLevelOptions} />
-                  {step1Errors.programLevelGuid && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{step1Errors.programLevelGuid}</p>}
+                  <SearchSelect
+                    placeholder="— Select level —"
+                    value={programLevelGuid}
+                    onChange={selectProgramLevel}
+                    options={programLevelOptions}
+                    onSearch={setProgramLevelSearch}
+                    onOpenChange={setProgramLevelPickerOpen}
+                    isLoading={programLevelQuery.isLoading}
+                    hasNextPage={programLevelQuery.hasNextPage}
+                    isFetchingNextPage={programLevelQuery.isFetchingNextPage}
+                    onLoadMore={() => programLevelQuery.fetchNextPage()}
+                  />
+                  {step1Errors.programLevelGuid && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{step1Errors.programLevelGuid}</p>}
                   <div className="flex gap-2 flex-wrap mt-2">
                     <span className="lvl-chip"><span className="lvl-chip-lbl">No. of Years</span><span className="lvl-chip-val">{selectedProgramLevel?.yearCount ?? '—'}</span></span>
                     <span className="lvl-chip"><span className="lvl-chip-lbl">No. of Semesters</span><span className="lvl-chip-val">{selectedProgramLevel?.semCount ?? '—'}</span></span>
@@ -1687,11 +1891,14 @@ export function ProgrammeModal({ isOpen, onClose, showToast, mode, programGuid, 
                   <input
                     className="ctrl"
                     type="number"
-                    min={0}
+                    min={1}
+                    step={1}
                     placeholder="e.g. 24"
                     value={unitCount}
-                    onChange={e => setUnitCount(e.target.value)}
+                    onChange={e => { setUnitCount(e.target.value); if (step1Errors.unitCount) setStep1Errors(p => ({ ...p, unitCount: '' })) }}
+                    style={step1Errors.unitCount ? { borderColor: 'var(--red)' } : undefined}
                   />
+                  {step1Errors.unitCount && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{step1Errors.unitCount}</p>}
                 </div>
                 <div className="fg span2">
                   <div className="lbl">Application Fee &amp; Late Fee <span className="req">*</span></div>
@@ -1727,35 +1934,36 @@ export function ProgrammeModal({ isOpen, onClose, showToast, mode, programGuid, 
                       : 'Please select the programme\'s base currency.'}
                   </div>
                   {(step1Errors.appFee || step1Errors.lateFee || step1Errors.currencyCode) && (
-                    <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{step1Errors.appFee || step1Errors.lateFee || step1Errors.currencyCode}</p>
+                    <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{step1Errors.appFee || step1Errors.lateFee || step1Errors.currencyCode}</p>
                   )}
                 </div>
 
                 <div className="fg">
                   <div className="lbl">Intake</div>
-                  <SearchSelect
+                  <IntakeSearchPicker
                     placeholder="— Select intake —"
-                    value={intakeGuid}
-                    options={programIntakeOptions}
-                    onChange={v => { setIntakeGuid(v); if (step1Errors.intakeGuid) setStep1Errors(p => ({ ...p, intakeGuid: '' })) }}
+                    selectedLabel={intakeLabel(intakeGuid)}
+                    onSelect={i => { setIntakeGuid(i.intakeGuid); if (step1Errors.intakeGuid) setStep1Errors(p => ({ ...p, intakeGuid: '' })) }}
+                    onClear={() => setIntakeGuid('')}
                   />
-                  {step1Errors.intakeGuid && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{step1Errors.intakeGuid}</p>}
+                  {step1Errors.intakeGuid && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{step1Errors.intakeGuid}</p>}
                 </div>
                 <div className="fg span2">
                   <div className="lbl">Specialization(s)</div>
-                  <MultiSelect
+                  <StreamMultiSearchPicker
                     placeholder="— Select specialization(s) —"
                     value={streamGuids}
                     onChange={vals => {
                       setStreamGuids(vals)
                       // Drop any per-unit pick (Step 2) that's no longer part of this selection.
                       setSemUnits(prev => prev.map(units => units.map(u => (u.streamGuid && vals.includes(u.streamGuid)) ? u : { ...u, streamGuid: '' })))
+                      if (step1Errors.streamGuids) setStep1Errors(p => ({ ...p, streamGuids: '' }))
                     }}
-                    options={streamOptions}
                   />
+                  {step1Errors.streamGuids && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{step1Errors.streamGuids}</p>}
                   {streamGuids.length > 0 && (
                     <div className="flex flex-wrap gap-2" style={{ marginTop: 8 }}>
-                      {streamOptions.filter(o => streamGuids.includes(o.value)).map(o => (
+                      {semesterStreamOptions.map(o => (
                         <span key={o.value} className="badge badge-blue">{o.label}</span>
                       ))}
                     </div>
@@ -1970,11 +2178,11 @@ export function ProgrammeModal({ isOpen, onClose, showToast, mode, programGuid, 
                       back to an editable picker in exactly that case. */}
                   <div className="fg m-0">
                     <div className="lbl">Intake</div>
-                    <SearchSelect
+                    <IntakeSearchPicker
                       placeholder={mode === 'edit' ? '— Select intake —' : (currentAcademicIntake ? undefined : '— Select intake —')}
-                      value={activeFeeStruct.intakeGuid}
-                      options={programIntakeOptions}
-                      onChange={val => updateFeeStructureMeta('intakeGuid', val)}
+                      selectedLabel={intakeLabel(activeFeeStruct.intakeGuid)}
+                      onSelect={i => updateFeeStructureMeta('intakeGuid', i.intakeGuid)}
+                      onClear={() => updateFeeStructureMeta('intakeGuid', '')}
                       disabled={mode === 'edit' || !!currentAcademicIntake}
                     />
                   </div>
@@ -2040,7 +2248,18 @@ export function ProgrammeModal({ isOpen, onClose, showToast, mode, programGuid, 
                         edit. */}
                     <div className="fg m-0">
                       <div className="lbl">Currency <span className="text-g400 font-normal normal-case">(Lateral Entry / Credit Exemption / Aptech Credit Exemption)</span></div>
-                      <SearchSelect placeholder="Currency" options={currencyIntOptions} value={activeFeeStruct.lateralEntryFeeCurrency} onChange={updateSharedFeeCurrency} />
+                      <SearchSelect
+                        placeholder="Currency"
+                        options={currencyIntOptions}
+                        value={activeFeeStruct.lateralEntryFeeCurrency}
+                        onChange={updateSharedFeeCurrency}
+                        onSearch={setCurrencySearch}
+                        onOpenChange={setCurrencyPickerOpen}
+                        isLoading={currencyQuery.isLoading}
+                        hasNextPage={currencyQuery.hasNextPage}
+                        isFetchingNextPage={currencyQuery.isFetchingNextPage}
+                        onLoadMore={() => currencyQuery.fetchNextPage()}
+                      />
                     </div>
                   </div>
                 </div>
@@ -2120,7 +2339,7 @@ export function ProgrammeModal({ isOpen, onClose, showToast, mode, programGuid, 
                                   </div>
                                   <SearchSelect placeholder="— Select Ledger —" options={ledgerOptions} value={f.ledger} onChange={val => updateItem(si, f.id, 'ledger', val)} />
                                   <input className="ctrl" value={idx + 1} readOnly disabled title="Auto-assigned from this item's position — drag the handle or use the Pri. arrows to reorder" />
-                                  <input className="ctrl" value={f.amount} onChange={e => updateItem(si, f.id, 'amount', e.target.value)} type="number" min={0} placeholder="0" />
+                                  <input className="ctrl" value={f.amount} onChange={e => updateItem(si, f.id, 'amount', stripLeadingZeros(e.target.value))} type="number" min={0} placeholder="0" />
                                   <SearchSelect placeholder="— Currency —" options={financeCurrencyOptions} value={f.currencyGuid} onChange={val => selectFeeItemCurrency(si, f.id, val)} />
                                   <button className="btn btn-danger btn-sm" style={{ width: 32, height: 32, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }} onClick={() => removeItem(si, f.id)}><i className="lni lni-trash-can"></i></button>
                                 </div>
@@ -2408,7 +2627,7 @@ export function ProgrammeModal({ isOpen, onClose, showToast, mode, programGuid, 
                     <div>
                       <div className="lbl" style={{ fontSize: 11 }}>Syllabus</div>
                       {expandedUnitDetail.syllabus
-                        ? <a href={expandedUnitDetail.syllabus} target="_blank" rel="noopener noreferrer" className="btn btn-neu btn-sm" style={{ display: 'inline-flex', fontSize: 11.5 }}><i className="lni lni-download"></i> View Syllabus</a>
+                        ? <button type="button" className="btn btn-neu btn-sm" style={{ display: 'inline-flex', fontSize: 11.5 }} disabled={syllabusOpening} onClick={() => viewSyllabus(expandedUnitDetail.courseUnitGuid)}><i className="lni lni-eye"></i> {syllabusOpening ? 'Opening…' : 'View Syllabus'}</button>
                         : <span className="text-g400 italic" style={{ fontSize: 12 }}>No syllabus uploaded</span>
                       }
                     </div>
@@ -2454,6 +2673,14 @@ export function ProgrammeModal({ isOpen, onClose, showToast, mode, programGuid, 
           </div>
         </div>
       )}
+
+      {/* Last, so it stacks above the Syllabus/Outline popup that opens it. */}
+      <DocumentPreviewModal
+        isOpen={!!syllabusPreview}
+        onClose={() => setSyllabusPreview(null)}
+        url={syllabusPreview?.url ?? null}
+        title={syllabusPreview?.title}
+      />
     </div>
   )
 }

@@ -102,18 +102,22 @@ export interface ProgramMaster {
   pgmStatus: boolean
   noIa: boolean
   programGroupGuid: string
+  programGroupName?: string
   unitCount: number
   programLevelGuid: string
+  programLevelName?: string
   yearCount: number
   semCount: number
   facultyGuid: string
-  dateAcc: string
+  facultyName?: string
+  dateAcc: string | null
   accLetter: string | null
   appFee: number
   lateFee: number
   currencyGuid: string | null
   intakeGuid: string
   streamGuids: string[]
+  streams?: { streamGuid: string; streamName: string }[]
   semesters: unknown[]
 }
 
@@ -242,11 +246,14 @@ export function createProgramMaster(input: ProgramMasterInput): Promise<ProgramM
   formData.append('pgmStatus', String(input.pgmStatus))
   formData.append('noIa', String(input.noIa))
   formData.append('programGroupGuid', input.programGroupGuid)
-  formData.append('unitCount', String(input.unitCount))
+  // Optional, but the validator rejects 0 when present, so a blank field
+  // must be omitted rather than sent as 0.
+  if (input.unitCount > 0) formData.append('unitCount', String(input.unitCount))
   formData.append('appFee', String(input.appFee))
   formData.append('lateFee', String(input.lateFee))
-  formData.append('facultyGuid', input.facultyGuid)
-  formData.append('currencyGuid', input.currencyGuid)
+  // Guid? fields: an empty string fails model binding with a 400, so omit.
+  if (input.facultyGuid) formData.append('facultyGuid', input.facultyGuid)
+  if (input.currencyGuid) formData.append('currencyGuid', input.currencyGuid)
   // Accreditation Date is optional (no required marker in Step 1) —
   // confirmed per program_master_frontend_fixes.md that sending "T00:00:00"
   // with no actual date picked was a real bug, not a harmless placeholder.
@@ -341,11 +348,14 @@ export function createProgramMasterStep1(input: ProgramMasterCreateInput): Promi
   formData.append('pgmStatus', String(input.pgmStatus))
   formData.append('noIa', String(input.noIa))
   formData.append('programGroupGuid', input.programGroupGuid)
-  formData.append('unitCount', String(input.unitCount))
+  // Optional, but the validator rejects 0 when present, so a blank field
+  // must be omitted rather than sent as 0.
+  if (input.unitCount > 0) formData.append('unitCount', String(input.unitCount))
   formData.append('appFee', String(input.appFee))
   formData.append('lateFee', String(input.lateFee))
-  formData.append('facultyGuid', input.facultyGuid)
-  formData.append('currencyGuid', input.currencyGuid)
+  // Guid? fields: an empty string fails model binding with a 400, so omit.
+  if (input.facultyGuid) formData.append('facultyGuid', input.facultyGuid)
+  if (input.currencyGuid) formData.append('currencyGuid', input.currencyGuid)
   // Same "omit rather than send a bogus/empty value" conventions as
   // createProgramMaster above — see its comments on these same fields.
   if (input.dateAcc) formData.append('dateAcc', input.dateAcc)
@@ -365,6 +375,43 @@ export function getProgramMasters(search = ''): Promise<ProgramMaster[]> {
       if (data && Array.isArray(data.data)) return data.data
       return []
     })
+}
+
+export interface ProgramMasterListResponse {
+  items: ProgramMaster[]
+  totalCount: number
+  pageNumber: number
+  pageSize: number
+}
+
+// Real page/pageSize/search variant (2026-09-09, confirmed the endpoint
+// supports all three) — for the Course Units page's own "All Programmes"
+// filter, which used to read off getProgramMasters()' capped 1000-row
+// snapshot. That plain function above stays as-is for its other callers
+// (programme-master's own table, ProgrammeModal, etc.), which don't need
+// scroll-to-load-more. Backs useSearchProgramMastersInfinite below.
+export function getProgramMastersPage(page = 1, pageSize = 20, search = ''): Promise<ProgramMasterListResponse> {
+  const q = search.trim()
+  if (MOCK_AUTH) {
+    const filtered = q
+      ? mockProgramMasters.filter(p => `${p.programCode} ${p.programName}`.toLowerCase().includes(q.toLowerCase()))
+      : mockProgramMasters
+    const start = (page - 1) * pageSize
+    return Promise.resolve({ items: filtered.slice(start, start + pageSize), totalCount: filtered.length, pageNumber: page, pageSize })
+  }
+  // Deployed programme-master builds have used both page and pageNumber;
+  // keep them synchronized so infinite scrolling cannot receive page 1 again.
+  const params = new URLSearchParams({ page: String(page), pageNumber: String(page), pageSize: String(pageSize) })
+  if (q) params.set('search', q)
+  return apiGet<any>(`/api/v1/academic/program-master?${params.toString()}`).then(data => {
+    const items: ProgramMaster[] = Array.isArray(data) ? data : Array.isArray(data?.items) ? data.items : []
+    return {
+      items,
+      totalCount: typeof data?.totalCount === 'number' ? data.totalCount : items.length,
+      pageNumber: data?.pageNumber ?? page,
+      pageSize: data?.pageSize ?? pageSize,
+    }
+  })
 }
 
 export interface ProgramDropdownItem {
@@ -408,6 +455,21 @@ export function getProgramMastersByCampus(campusGuid: string): Promise<ProgramMa
   if (MOCK_AUTH) return Promise.resolve(mockProgramMasters)
   return apiGet<ProgramMaster[] | null>(`/api/v1/academic/program-master/by-campus/${campusGuid}`)
     .then((data: any) => Array.isArray(data) ? data : (data && typeof data === 'object' ? (data.items || Object.values(data).find(Array.isArray) || []) : []))
+}
+
+export function getProgramMastersByCampusPaged(campusGuid: string, page = 1, pageSize = 20, search = ''): Promise<ProgramMasterListResponse> {
+  if (MOCK_AUTH) {
+    const query = search.trim().toLowerCase()
+    const filtered = mockProgramMasters.filter(p => !query || `${p.programCode} ${p.programName}`.toLowerCase().includes(query))
+    const start = (page - 1) * pageSize
+    return Promise.resolve({ items: filtered.slice(start, start + pageSize), totalCount: filtered.length, pageNumber: page, pageSize })
+  }
+  const params = new URLSearchParams({ page: String(page), pageNumber: String(page), pageSize: String(pageSize) })
+  if (search.trim()) params.set('search', search.trim())
+  return apiGet<any>(`/api/v1/academic/program-master/by-campus/${campusGuid}?${params.toString()}`).then(data => {
+    const items: ProgramMaster[] = Array.isArray(data) ? data : Array.isArray(data?.items) ? data.items : []
+    return { items, totalCount: typeof data?.totalCount === 'number' ? data.totalCount : items.length, pageNumber: data?.pageNumber ?? page, pageSize: data?.pageSize ?? pageSize }
+  })
 }
 
 // --- Full details / Update / Delete ---------------------------------------
@@ -486,12 +548,14 @@ export interface ProgramMasterFullDetails {
   pgmStatus: boolean
   noIa: boolean
   programGroupGuid: string
+  programGroupName?: string | null
   unitCount: number
   programLevelGuid: string
+  programLevelName?: string | null
   yearCount: number
   semCount: number
   facultyGuid: string
-  dateAcc: string
+  dateAcc: string | null
   accLetter: string | null
   appFee: number
   lateFee: number
@@ -505,6 +569,7 @@ export interface ProgramMasterFullDetails {
   currencyName?: string | null
   intakeGuid: string | null
   streamGuids: string[]
+  streamNames?: string[]
   semesters: ProgramSemesterDetail[]
   programUnits: ProgramUnitDetail[]
   feeStructures: FeeStructureDetail[]
@@ -670,12 +735,15 @@ export function updateProgramMasterComplete(programGuid: string, input: ProgramM
   formData.append('pgmStatus', String(input.pgmStatus))
   formData.append('noIa', String(input.noIa))
   formData.append('programGroupGuid', input.programGroupGuid)
-  formData.append('unitCount', String(input.unitCount))
+  // Optional, but the validator rejects 0 when present, so a blank field
+  // must be omitted rather than sent as 0.
+  if (input.unitCount > 0) formData.append('unitCount', String(input.unitCount))
   formData.append('appFee', String(input.appFee))
   formData.append('lateFee', String(input.lateFee))
   formData.append('programLevelGuid', input.programLevelGuid)
-  formData.append('facultyGuid', input.facultyGuid)
-  formData.append('currencyGuid', input.currencyGuid)
+  // Guid? fields: an empty string fails model binding with a 400, so omit.
+  if (input.facultyGuid) formData.append('facultyGuid', input.facultyGuid)
+  if (input.currencyGuid) formData.append('currencyGuid', input.currencyGuid)
   // Same "omit rather than send a bogus date" fix as Create — see the note
   // on ProgramMasterInput.dateAcc.
   if (input.dateAcc) formData.append('dateAcc', input.dateAcc)

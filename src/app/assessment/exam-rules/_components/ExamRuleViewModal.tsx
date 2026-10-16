@@ -35,7 +35,7 @@ export function ExamRuleViewModal({ isOpen, onClose, onEdit, viewingGuid }: Exam
   const displaySections = sections.length > 0 ? sections : [{ id: 'A', title: 'Section A', data: null }]
 
   return (
-    <div className="modal-overlay open" onClick={onClose}>
+    <div className="modal-overlay open">
       <div className="modal modal-lg modal-flex" onClick={e => e.stopPropagation()}>
         <div className="modal-hdr modal-hdr-blue" style={{ display: 'flex', alignItems: 'center', paddingRight: 16 }}>
           <div className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>

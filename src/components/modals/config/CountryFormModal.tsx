@@ -5,6 +5,7 @@ import { SuccessPopup } from '../shared/SuccessPopup'
 import { FailurePopup } from '../shared/FailurePopup'
 import { Country, CountryInput } from '@/lib/api/academic/country'
 import { AuthError } from '@/lib/api/client'
+import { scrollToFirstError } from '@/lib/scrollToFirstError'
 
 interface CountryFormModalProps extends ModalProps {
   mode: 'new' | 'edit'
@@ -60,6 +61,7 @@ export function CountryFormModal({ isOpen, onClose, showToast, mode, country, cr
     if (!countryPrefix.trim())      e.countryPrefix = 'Dial Prefix is required'
     else if (countryPrefix.trim().length > 10) e.countryPrefix = 'Dial Prefix must be 10 characters or fewer'
     setErrors(e)
+    scrollToFirstError(e)
     return Object.keys(e).length === 0
   }
 
@@ -130,7 +132,7 @@ export function CountryFormModal({ isOpen, onClose, showToast, mode, country, cr
               onChange={e => { setCountryCode(e.target.value); if (errors.countryCode) setErrors(p => ({ ...p, countryCode: '' })) }}
               style={errors.countryCode ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.countryCode && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.countryCode}</p>}
+            {errors.countryCode && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.countryCode}</p>}
           </div>
           <div className="fg">
             <div className="lbl">Dial Prefix <span className="req">*</span></div>
@@ -144,7 +146,7 @@ export function CountryFormModal({ isOpen, onClose, showToast, mode, country, cr
               onChange={e => { setCountryPrefix(e.target.value.replace(/[^0-9+]/g, '')); if (errors.countryPrefix) setErrors(p => ({ ...p, countryPrefix: '' })) }}
               style={errors.countryPrefix ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.countryPrefix && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.countryPrefix}</p>}
+            {errors.countryPrefix && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.countryPrefix}</p>}
           </div>
           <div className="fg span2">
             <div className="lbl">Country Name <span className="req">*</span></div>
@@ -157,7 +159,7 @@ export function CountryFormModal({ isOpen, onClose, showToast, mode, country, cr
               onChange={e => { setCountryName(e.target.value); if (errors.countryName) setErrors(p => ({ ...p, countryName: '' })) }}
               style={errors.countryName ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.countryName && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.countryName}</p>}
+            {errors.countryName && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.countryName}</p>}
           </div>
           <div className="fg span2">
             <div className="lbl">Nationality <span className="req">*</span></div>
@@ -170,7 +172,7 @@ export function CountryFormModal({ isOpen, onClose, showToast, mode, country, cr
               onChange={e => { setNationality(e.target.value); if (errors.nationality) setErrors(p => ({ ...p, nationality: '' })) }}
               style={errors.nationality ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.nationality && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.nationality}</p>}
+            {errors.nationality && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.nationality}</p>}
           </div>
           <div className="fg span2">
             <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', marginTop: 4 }}>

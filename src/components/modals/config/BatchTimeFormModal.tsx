@@ -6,6 +6,7 @@ import { FailurePopup } from '../shared/FailurePopup'
 import { BatchTimeInput } from '@/lib/api/academic/batchTime'
 import { useBatchTime } from '@/hooks/config/useBatchTimes'
 import { AuthError } from '@/lib/api/client'
+import { scrollToFirstError } from '@/lib/scrollToFirstError'
 
 interface BatchTimeFormModalProps extends ModalProps {
   mode: 'new' | 'edit'
@@ -54,6 +55,7 @@ export function BatchTimeFormModal({ isOpen, onClose, showToast, mode, batchTime
     if (!batchTime.trim()) e.batchTime = 'Batch Time is required'
     if (!batchTimeCode.trim()) e.batchTimeCode = 'Batch Time Code is required'
     setErrors(e)
+    scrollToFirstError(e)
     return Object.keys(e).length === 0
   }
 
@@ -145,7 +147,7 @@ export function BatchTimeFormModal({ isOpen, onClose, showToast, mode, batchTime
               onChange={e => { setBatchTime(e.target.value); clearError('batchTime') }}
               style={errors.batchTime ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.batchTime && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.batchTime}</p>}
+            {errors.batchTime && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.batchTime}</p>}
           </div>
           <div className="fg">
             <div className="lbl">Batch Time Code <span className="req">*</span></div>
@@ -158,7 +160,7 @@ export function BatchTimeFormModal({ isOpen, onClose, showToast, mode, batchTime
               onChange={e => { setBatchTimeCode(e.target.value.toUpperCase()); clearError('batchTimeCode') }}
               style={errors.batchTimeCode ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.batchTimeCode && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.batchTimeCode}</p>}
+            {errors.batchTimeCode && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.batchTimeCode}</p>}
           </div>
         </div>
         <div className="modal-footer">

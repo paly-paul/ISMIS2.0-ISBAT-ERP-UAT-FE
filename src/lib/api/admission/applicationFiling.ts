@@ -65,6 +65,11 @@ export interface FilingApplicationSearchResult {
   provLetterSend: number | null
   accLetterSend: number | null
   createdDate: string
+  // From the application-payment record (Filing's search source): decides
+  // whether the payment's receipt can be printed after submitting — a normal
+  // payment with a receipt number. Undefined for other search sources.
+  receiptNo?: number | null
+  exemptionType?: unknown
 }
 
 export interface FilingApplicationSearchResponse {
@@ -127,6 +132,11 @@ export interface ApplicationListItem {
   programGuid: string | null
   semesterGuid: string | null
   feeHdGuid: string | null
+  // Resolved fee head code/description. Only GET /by-payment/{paymentGuid}
+  // fills these; GET /application-filling/{applicationGuid} returns them
+  // null. Also null when feeHdGuid is null or the fee head can't be found.
+  feeCode?: string | null
+  feeName?: string | null
   batchTimeGuid: string | null
   batchGuid: string | null
   refugee: number | null
@@ -148,8 +158,29 @@ export interface ApplicationListItem {
   accLetterDate: string | null
   studCategory: number | null
   universityEmail: string | null
-  createdDate: string
+  createdDate: string | null
   modifiedDate: string | null
+  actionLabel?: string | null
+  saveStatusLabel?: string | null
+  programName?: string | null
+  intakeName?: string | null
+  campusName?: string | null
+  countryName?: string | null
+  // Sponsor fallback (2026-10-15): with no sponsor details of its own, an
+  // application created from an enquiry returns the enquiry's spName/
+  // spEmail/spCountryGuid/spPhone, per field (the application's own values
+  // win). spPhoneCountryGuid is the sponsor phone's dial-code country — null
+  // when spPhone is the application's own. The two names are only filled on
+  // /{guid}, /{int}/detail and /by-payment; finance + list send null.
+  spPhoneCountryGuid?: string | null
+  spCountryName?: string | null
+  spPhoneCountryName?: string | null
+  genderLabel?: string | null
+  refugeeLabel?: string | null
+  docVerifiedLabel?: string | null
+  admLetterSendLabel?: string | null
+  provLetterSendLabel?: string | null
+  accLetterSendLabel?: string | null
 }
 
 interface ApplicationListResponse {
@@ -160,6 +191,62 @@ interface ApplicationListResponse {
 }
 
 const mockApplications: ApplicationListItem[] = []
+
+// Per get-application-by-guid.md — GET /api/v1/admissions/application-filling/{applicationGuid}
+// (GetCompletedApplicationByIdQuery). The doc describes the response only as
+// "the full record: identifiers, personal details, identity documents, visa
+// dates, academic placement and status" without enumerating every field, so
+// this reuses ApplicationListItem's already-confirmed shape (same underlying
+// application entity, the admin "all applications" list) as the base and
+// adds only what the doc explicitly calls out beyond that: `actionLabel`.
+// NOT independently confirmed field-by-field against a real completed-
+// application response — if a real call comes back missing/renaming
+// something here, trust the live response over this interface.
+export interface ApplicationDetailDto extends ApplicationListItem {
+  actionLabel: string | null
+}
+
+// Only ever returns data for an application whose Action == Submitted — a
+// narrower window than "completed" might suggest. Confirmed by the backend
+// team (2026-09-10): an application still being filled in 400s here, AND so
+// does one that has already moved past Submitted (vetted/rejected/
+// registered) — both come back as the same "not found or not completed."
+// message (see get-application-by-guid.md), indistinguishable from each
+// other or from a bad guid. Callers should treat any rejection here as
+// "nothing to enrich with", not a hard failure — this is a best-effort
+// prefill source usable only in that narrow submitted-but-not-yet-vetted
+// window, never a general "fetch this application" lookup.
+//
+// 2026-09-11: moved from GET /application-filling/{applicationGuid} to GET
+// /application-filling/by-payment/{paymentGuid} — the Filing page's own
+// search source (application-payments, see mapApplicationPaymentToSearchResult)
+// only ever has a paymentGuid to offer, not a real application-filling guid;
+// that value was previously sent to the {applicationGuid} route disguised
+// as one (via FilingApplicationSearchResult.applicationGuid), which "worked"
+// only in the sense that a mismatched guid and a not-yet-submitted
+// application both 400 identically here — this dedicated by-payment route
+// removes that guesswork instead of relying on the coincidence.
+export function getApplicationByPaymentGuid(paymentGuid: string): Promise<ApplicationDetailDto> {
+  if (MOCK_AUTH) {
+    // Nothing in this UI-only prototype's mock data represents a genuinely
+    // completed application (mockApplications is empty, mockSearchResults'
+    // entries are mid-filing) — reject the same way the real endpoint does
+    // for an incomplete/unknown guid, so callers exercise the same
+    // best-effort fallback path in mock mode as they will for real.
+    return Promise.reject(new Error('Application not found or not completed.'))
+  }
+  return apiGet<ApplicationDetailDto>(`/api/v1/admissions/application-filling/by-payment/${paymentGuid}`)
+}
+
+// GET /api/v1/admissions/application-filling/{applicationGuid} — the full
+// record behind All Applicants' View modal (get-application-by-guid.md).
+// Completed applications only: one still being filled in is a 400 "Application
+// not found or not completed.", so the modal falls back to the list row it
+// already has rather than treating that as a hard failure.
+export function getApplicationByGuid(applicationGuid: string): Promise<ApplicationDetailDto> {
+  if (MOCK_AUTH) return Promise.reject(new Error('Application not found or not completed.'))
+  return apiGet<ApplicationDetailDto>(`/api/v1/admissions/application-filling/${applicationGuid}`)
+}
 
 // Confirmed via Application-Filling/SaveGeneral.bru — countryGuid/
 // spCountryGuid ARE real fields ("countryGuid replaces old intCountry +
@@ -268,9 +355,11 @@ const mockCountries: CountryDropdownDto[] = [
   { intCountry: 4, countryName: 'Tanzania', dialCode: 'TZ', isDefault: false },
 ]
 
-export function getFilingCountries(): Promise<CountryDropdownDto[]> {
-  if (MOCK_AUTH) return Promise.resolve(mockCountries)
-  return apiGet<CountryDropdownDto[] | null>('/api/v1/admissions/application-filling/countries').then((data: any) => Array.isArray(data) ? data : (data && typeof data === 'object' ? (data.items || Object.values(data).find(Array.isArray) || []) : []))
+// Optional ?search= on country name (case-insensitive contains, 2026-10).
+export function getFilingCountries(search?: string): Promise<CountryDropdownDto[]> {
+  const term = search?.trim()
+  if (MOCK_AUTH) return Promise.resolve(term ? mockCountries.filter(c => c.countryName.toLowerCase().includes(term.toLowerCase())) : mockCountries)
+  return apiGet<CountryDropdownDto[] | null>(`/api/v1/admissions/application-filling/countries${term ? `?search=${encodeURIComponent(term)}` : ''}`).then((data: any) => Array.isArray(data) ? data : (data && typeof data === 'object' ? (data.items || Object.values(data).find(Array.isArray) || []) : []))
 }
 
 // Backs /admission/applicants — confirmed via a real GET response (see
@@ -280,11 +369,9 @@ export function getFilingCountries(): Promise<CountryDropdownDto[]> {
 // which silently dropped anything past row 1000 once the real table grew
 // past that (same "confirmed live" gap enquiry-list and course-units hit
 // with the identical pattern). Switched to real per-page fetches, same fix
-// as enquiry-list's getEnquiries. `search` is NOT confirmed against a real
-// backend sample the way page/pageSize are — appended as `&search=` on the
-// same "match the convention already used elsewhere, degrade to today's
-// unfiltered-page behavior if the backend ignores it" assumption enquiry-
-// list's own getEnquiries used.
+// as enquiry-list's getEnquiries. `search` is CONFIRMED (2026-10 backend
+// handoff): exact match on reference number, phone or email, or a
+// case-insensitive "contains" on the applicant name.
 export function getApplications(page = 1, pageSize = 10, search = ''): Promise<ApplicationListResponse> {
   if (MOCK_AUTH) {
     return Promise.resolve({ items: mockApplications, totalCount: mockApplications.length, pageNumber: page, pageSize })
@@ -293,6 +380,58 @@ export function getApplications(page = 1, pageSize = 10, search = ''): Promise<A
   if (search.trim()) params.set('search', search.trim())
   return apiGet<ApplicationListResponse | null>(`/api/v1/admissions/application-filling/?${params.toString()}`)
     .then(data => data ?? { items: [], totalCount: 0, pageNumber: page, pageSize })
+}
+
+// Backs /admission/applicants since ADM-027 (get-applicants.md, 2026-10-16).
+// Unlike getApplications above (Submitted only), this returns every
+// application whatever its status, so vetted and registered applicants stay
+// in the list. Newest first. status is null while an application is still
+// being filled in; studentGuid is null until the applicant is registered.
+export type ApplicantStatus = 'Waiting' | 'Submitted' | 'Vetted' | 'Rejected' | 'Registered'
+
+export interface ApplicantListItem {
+  applicationGuid: string
+  studentGuid: string | null
+  appRefNo: string
+  name: string | null
+  phone: string | null
+  email: string | null
+  programName: string | null
+  intakeCode: string | null
+  status: ApplicantStatus | null
+  applicationDate: string
+}
+
+export interface ApplicantListResponse {
+  items: ApplicantListItem[]
+  totalCount: number
+  pageNumber: number
+  pageSize: number
+}
+
+// pageSize is capped at 100 server-side (400 above that). search matches
+// ref no / phone / email (exact), name (contains), and student reg no or
+// student number.
+export function getApplicants(page = 1, pageSize = 10, search = ''): Promise<ApplicantListResponse> {
+  if (MOCK_AUTH) {
+    const items: ApplicantListItem[] = mockApplications.map(a => ({
+      applicationGuid: a.applicationGuid,
+      studentGuid: null,
+      appRefNo: a.appRefNo,
+      name: `${a.firstName ?? ''} ${a.lastName ?? ''}`.trim() || null,
+      phone: a.phone,
+      email: a.emailId,
+      programName: a.programName ?? null,
+      intakeCode: a.intakeCode,
+      status: 'Submitted',
+      applicationDate: a.createdDate ?? new Date().toISOString(),
+    }))
+    return Promise.resolve({ items, totalCount: items.length, pageNumber: page, pageSize })
+  }
+  const params = new URLSearchParams({ page: String(page), pageSize: String(Math.min(pageSize, 100)) })
+  if (search.trim()) params.set('search', search.trim())
+  return apiGet<ApplicantListResponse | null>(`/api/v1/admissions/application-filling/applicants?${params.toString()}`)
+    .then(data => ({ items: data?.items ?? [], totalCount: data?.totalCount ?? 0, pageNumber: data?.pageNumber ?? page, pageSize: data?.pageSize ?? pageSize }))
 }
 
 // Confirmed via a real GET /api/v1/admissions/application-payments response
@@ -376,7 +515,7 @@ interface ApplicationPaymentListResponse {
 // combining it with intakeCode in the same request isn't independently
 // verified, only each param on its own, but both are standard query filters
 // on the same list endpoint so they're assumed combinable here.
-function getApplicationPayments(page = 1, pageSize = 10, intakeCode?: number | string, searchTerm?: string): Promise<ApplicationPaymentListResponse> {
+function getApplicationPayments(page = 1, pageSize = 20, intakeCode?: number | string, searchTerm?: string): Promise<ApplicationPaymentListResponse> {
   const intakeParam = intakeCode != null ? `&intakeCode=${intakeCode}` : ''
   const searchParam = searchTerm?.trim() ? `&searchTerm=${encodeURIComponent(searchTerm.trim())}` : ''
   return apiGet<ApplicationPaymentListResponse | null>(`/api/v1/admissions/application-payments?page=${page}&pageSize=${pageSize}${intakeParam}${searchParam}`)
@@ -402,7 +541,7 @@ function mapApplicationPaymentToSearchResult(r: ApplicationPaymentRecord): Filin
     intakeCode: r.intakeCode != null ? String(r.intakeCode) : null,
     yearCode: null,
     intakeGuid: null,
-    enquiryGuid: null,
+    enquiryGuid: (r as any).enquiryGuid ?? (r as any).guidEnquiry ?? null,
     campusGuid: r.campusGuid,
     programGuid: r.programGuid,
     programName: r.programName ?? (r as any).programmeName ?? (r as any).program ?? null,
@@ -424,7 +563,7 @@ function mapApplicationPaymentToSearchResult(r: ApplicationPaymentRecord): Filin
     studUserFileName: null,
     countryGuid: r.countryGuid,
     universityEmail: null,
-    dob: null,
+    dob: (r as any).dob ?? (r as any).dateOfBirth ?? null,
     justificationReg: null,
     approveDateReg: null,
     intRegistrar: null,
@@ -435,65 +574,147 @@ function mapApplicationPaymentToSearchResult(r: ApplicationPaymentRecord): Filin
     provLetterSend: null,
     accLetterSend: null,
     createdDate: r.createdDate,
+    receiptNo: r.receiptNo ?? null,
+    exemptionType: r.exemptionType ?? null,
   }
 }
 
-// Was payment-search (see the note above for why this changed) — kept
-// commented rather than deleted in case the new source's missing fields
-// (personal details, applicationGuid, enquiryGuid) turn out to matter more
-// than the guid fields it gains.
-// export function searchApplicationsForFiling(searchTerm: string, pageNumber = 1, pageSize = 20): Promise<FilingApplicationSearchResponse> {
-//   if (MOCK_AUTH) {
-//     const items = searchTerm.trim()
-//       ? mockSearchResults.filter(r => `${r.appRefNo} ${r.firstName} ${r.emailId} ${r.phone}`.toLowerCase().includes(searchTerm.toLowerCase()))
-//       : mockSearchResults
-//     return Promise.resolve({ items, totalCount: items.length, pageNumber, pageSize })
-//   }
-//   return apiGet<FilingApplicationSearchResponse | null>(
-//     `/api/v1/admissions/application-filling/payment-search?searchTerm=${encodeURIComponent(searchTerm)}&pageNumber=${pageNumber}&pageSize=${pageSize}`,
-//   ).then(data => data ?? { items: [], totalCount: 0, pageNumber, pageSize })
-// }
+// Dedicated "current intake" search endpoint — the backend scopes to the
+// current academic intake itself, so no intakeCode param is sent (or
+// needed) here. Backs only the Filing page's interactive applicant-search
+// dropdown (via getFilingApplicationsPage below), which was already meant
+// to be current-intake-scoped client-side via effectiveIntakeCode before
+// this endpoint existed. Deliberately NOT used for the appRefNo-prefill
+// lookup (searchApplicationsForFiling/getApplicationPayments) — that path
+// intentionally searches across every intake (see its own comment on why
+// scoping it broke prefill for an older-intake application), and this
+// endpoint's auto-scoping would reintroduce exactly that bug. searchTerm
+// param name/shape assumed to match the sibling /application-payments
+// endpoint's own CONFIRMED searchTerm convention — not independently
+// confirmed against a real response yet.
+function getApplicationPaymentsCurrentIntake(page = 1, pageSize = 20, searchTerm?: string): Promise<ApplicationPaymentListResponse> {
+  const searchParam = searchTerm?.trim() ? `&searchTerm=${encodeURIComponent(searchTerm.trim())}` : ''
+  return apiGet<ApplicationPaymentListResponse | null>(`/api/v1/admissions/application-payments/current-intake?page=${page}&pageSize=${pageSize}${searchParam}`)
+    .then(data => data ?? { items: [], totalCount: 0, pageNumber: page, pageSize })
+}
 
-// intakeCode scopes the fetch to one intake (CONFIRMED real filter — see the
-// note on getApplicationPayments) — the caller passes the current academic
-// intake's code so this only ever pulls that one intake's payments (~hundreds
-// of rows per the live sample) instead of every intake ever recorded.
-// searchTerm is now CONFIRMED real server-side too (see getApplicationPayments)
-// — passed straight through rather than re-filtered client-side, since the
-// server is the source of truth for what matches.
-export function searchApplicationsForFiling(searchTerm: string, pageNumber = 1, pageSize = 20, intakeCode?: number | string): Promise<FilingApplicationSearchResponse> {
+// Reinstated payment-search for the appRefNo-prefill lookup only (per the
+// user, 2026-09-10) — this endpoint doesn't carry the academic guids
+// (campusGuid/programGuid/semesterGuid/batchTimeGuid/batchGuid/feeHdGuid)
+// that /application-payments has, so Academic Details no longer locks for
+// an applicant sourced through this path; those fields simply come back
+// null/editable instead. Traded deliberately for payment-search's richer
+// personal-detail fields (dob/gender/nationalId/passportNo/refugee, split
+// firstName/lastName) and native FilingApplicationSearchResult shape — no
+// mapping step needed, unlike the /application-payments-backed path below.
+// Deliberately NOT switched for the interactive dropdown search
+// (getFilingApplicationsPage/getApplicationPaymentsCurrentIntake) — that one
+// still needs the academic guids to lock Academic Details on selection.
+// intakeCode is intentionally NOT passed here — this lookup searches across
+// every intake (see the comment on its caller for the bug this fixed when
+// it was scoped to one intake).
+export function searchApplicationsForFiling(searchTerm: string, pageNumber = 1, pageSize = 20): Promise<FilingApplicationSearchResponse> {
   if (MOCK_AUTH) {
     const items = searchTerm.trim()
       ? mockSearchResults.filter(r => `${r.appRefNo} ${r.firstName} ${r.emailId} ${r.phone}`.toLowerCase().includes(searchTerm.toLowerCase()))
       : mockSearchResults
     return Promise.resolve({ items, totalCount: items.length, pageNumber, pageSize })
   }
-  return getApplicationPayments(pageNumber, pageSize, intakeCode, searchTerm).then(res => ({
-    items: res.items.map(mapApplicationPaymentToSearchResult),
-    totalCount: res.totalCount,
-    pageNumber,
-    pageSize,
-  }))
+  return apiGet<FilingApplicationSearchResponse | null>(
+    `/api/v1/admissions/application-filling/payment-search?searchTerm=${encodeURIComponent(searchTerm)}&pageNumber=${pageNumber}&pageSize=${pageSize}`,
+  ).then(data => data ?? { items: [], totalCount: 0, pageNumber, pageSize })
 }
 
-// Real server page of application-payments, filtered server-side by
-// searchTerm (CONFIRMED — see getApplicationPayments) and mapped onto the
-// Filing search shape — backs the Filing page's applicant-search dropdown's
-// scroll-to-load-more (useSearchApplicationsForFilingInfinite), same
-// convention as useSearchCourseUnitsInfinite/useSearchStudentsInfinite
-// elsewhere in the app. This function's job is real pagination (page/
-// pageSize, CONFIRMED) plus the real searchTerm filter, fetched in small
-// pages instead of the old single pageSize=12000 "fetch nearly everything up
-// front, filter client-side" workaround that predates searchTerm being
-// confirmed.
-export function getFilingApplicationsPage(pageNumber = 1, pageSize = 20, intakeCode?: number | string, searchTerm?: string): Promise<FilingApplicationSearchResponse> {
+// GET /admissions/application-filling/vetted-registered-search
+// (get-vetted-registered-search.md) — applications already vetted or
+// registered. Backs the Transaction Report's one-student picker, which keeps
+// the chosen applicationGuid. searchTerm must be ≥ 2 chars when non-blank;
+// pageSize ≤ 100. Items are application summaries, the same shape as
+// payment-search's.
+export function searchVettedRegisteredApplications(searchTerm: string, pageNumber = 1, pageSize = 20): Promise<FilingApplicationSearchResponse> {
+  if (MOCK_AUTH) return searchApplicationsForFiling(searchTerm, pageNumber, pageSize)
+  const params = new URLSearchParams({ pageNumber: String(pageNumber), pageSize: String(pageSize) })
+  if (searchTerm.trim()) params.set('searchTerm', searchTerm.trim())
+  return apiGet<FilingApplicationSearchResponse | null>(`/api/v1/admissions/application-filling/vetted-registered-search?${params.toString()}`)
+    .then(data => data ?? { items: [], totalCount: 0, pageNumber, pageSize })
+}
+
+// What Payment hands to Filing after "Proceed to Filing": the just-created
+// payment, straight from the POST response plus the form values it came
+// from. No lookup on the Filing side: a just-paid applicant exists only as a
+// payment record (no application row until General Details is saved), and
+// searching for it by appRefNo proved unreliable.
+export interface NewPaymentHandoff {
+  paymentGuid: string
+  appRefNo: string
+  studentName: string
+  mobile: string | null
+  email: string | null
+  intakeCode: number | null
+  intakeGuid: string | null
+  enquiryGuid: string | null
+  countryGuid: string | null
+  campusGuid: string
+  programGuid: string
+  programName: string | null
+  semesterGuid: string
+  batchTimeGuid: string
+  batchGuid: string
+  feeHdGuid: string
+  // For the receipt print after submitting; null/undefined when exempt or
+  // no receipt was issued.
+  receiptNo?: number | null
+  isExemption?: boolean
+}
+
+// Same shape a dropdown pick produces (mapApplicationPaymentToSearchResult),
+// so selecting it behaves identically. applicationGuid is the paymentGuid,
+// which is what the by-payment detail lookup takes.
+export function filingResultFromNewPayment(p: NewPaymentHandoff): FilingApplicationSearchResult {
+  return {
+    ...mapApplicationPaymentToSearchResult({
+      paymentGuid: p.paymentGuid,
+      appRefNo: p.appRefNo,
+      studentName: p.studentName,
+      mobile: p.mobile ? Number(p.mobile) : null,
+      email: p.email,
+      intakeCode: p.intakeCode,
+      enquiryGuid: p.enquiryGuid,
+      countryGuid: p.countryGuid,
+      campusGuid: p.campusGuid,
+      programGuid: p.programGuid,
+      programName: p.programName,
+      semesterGuid: p.semesterGuid,
+      batchTimeGuid: p.batchTimeGuid,
+      batchGuid: p.batchGuid,
+      feeHdGuid: p.feeHdGuid,
+      receiptNo: p.receiptNo ?? null,
+      // Any non-null value marks an exemption; the exact type isn't needed.
+      exemptionType: p.isExemption ? 1 : null,
+      createdDate: new Date().toISOString(),
+    } as unknown as ApplicationPaymentRecord),
+    intakeGuid: p.intakeGuid,
+  }
+}
+
+// Real server page of application-payments/current-intake, filtered
+// server-side by searchTerm (name and AppRefNo both match, per the backend
+// team) and mapped onto the Filing search shape — backs the Filing page's
+// applicant-search dropdown's scroll-to-load-more
+// (useSearchApplicationsForFilingInfinite), same convention as
+// useSearchCourseUnitsInfinite/useSearchStudentsInfinite elsewhere in the
+// app. No intakeCode param — the /current-intake endpoint scopes to the
+// current academic intake itself now, replacing the old client-computed
+// effectiveIntakeCode fallback (see getApplicationPaymentsCurrentIntake's
+// own comment).
+export function getFilingApplicationsPage(pageNumber = 1, pageSize = 20, searchTerm?: string): Promise<FilingApplicationSearchResponse> {
   if (MOCK_AUTH) {
     const items = searchTerm?.trim()
       ? mockSearchResults.filter(r => `${r.appRefNo} ${r.firstName} ${r.emailId} ${r.phone}`.toLowerCase().includes(searchTerm.trim().toLowerCase()))
       : mockSearchResults
     return Promise.resolve({ items, totalCount: items.length, pageNumber, pageSize })
   }
-  return getApplicationPayments(pageNumber, pageSize, intakeCode, searchTerm).then(res => ({
+  return getApplicationPaymentsCurrentIntake(pageNumber, pageSize, searchTerm).then(res => ({
     items: res.items.map(mapApplicationPaymentToSearchResult),
     totalCount: res.totalCount,
     pageNumber,

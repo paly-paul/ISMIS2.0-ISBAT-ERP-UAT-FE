@@ -83,7 +83,7 @@ export default function Page() {
       </div>
 
       {serviceCatModal && (
-        <div className="modal-overlay open" onClick={() => setServiceCatModal(null)}>
+        <div className="modal-overlay open">
           <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
             <div className="modal-hdr"><div className="modal-title">{serviceCatModal.mode === 'add' ? 'Add' : 'Edit'} Category</div><button className="modal-close" onClick={() => setServiceCatModal(null)}>✕</button></div>
             <div>

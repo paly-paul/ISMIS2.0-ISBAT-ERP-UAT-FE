@@ -1,16 +1,30 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Campus, CampusInput, createCampus, deleteCampus, getCampusDropdown, getCampuses, updateCampus } from '@/lib/api/academic/campus'
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Campus, CampusInput, createCampus, deleteCampus, getCampusDropdown, getCampuses, getCampusesPaged, updateCampus } from '@/lib/api/academic/campus'
+import { getNextPageParam } from '@/lib/pagination'
 
 const CAMPUSES_KEY = ['campuses']
 
 // Load enough rows to cover the full campus list in one request.
 const CAMPUSES_PAGE_SIZE = 1000
 
-export function useCampuses() {
+export function useCampuses(enabled = true) {
   return useQuery({
     queryKey: CAMPUSES_KEY,
     queryFn: () => getCampuses(1, CAMPUSES_PAGE_SIZE),
     // Keep the list cached until a mutation invalidates it.
+    staleTime: Infinity,
+    gcTime: Infinity,
+    enabled,
+  })
+}
+
+export function useSearchCampusesInfinite(search: string, pageSize: number, enabled: boolean) {
+  return useInfiniteQuery({
+    queryKey: [...CAMPUSES_KEY, 'search-infinite', search, pageSize],
+    queryFn: ({ pageParam }) => getCampusesPaged(pageParam, pageSize, search),
+    initialPageParam: 1,
+    getNextPageParam,
+    enabled,
     staleTime: Infinity,
     gcTime: Infinity,
   })
@@ -58,3 +72,4 @@ export function useDeleteCampus() {
 }
 
 export type { Campus, CampusInput, CampusDropdownItem } from '@/lib/api/academic/campus'
+export { getCampusId } from '@/lib/api/academic/campus'

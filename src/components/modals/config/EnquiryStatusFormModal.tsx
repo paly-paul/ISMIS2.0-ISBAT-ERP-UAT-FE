@@ -6,6 +6,7 @@ import { FailurePopup } from '../shared/FailurePopup'
 import { EnquiryStatusInput } from '@/lib/api/academic/enquiryStatus'
 import { useEnquiryStatus } from '@/hooks/config/useEnquiryStatuses'
 import { AuthError } from '@/lib/api/client'
+import { scrollToFirstError } from '@/lib/scrollToFirstError'
 
 interface EnquiryStatusFormModalProps extends ModalProps {
   mode: 'new' | 'edit'
@@ -55,6 +56,7 @@ export function EnquiryStatusFormModal({ isOpen, onClose, showToast, mode, enqui
     if (!enquiryStatusCode.trim()) e.enquiryStatusCode = 'Status Code is required'
     if (!enquiryStatusName.trim()) e.enquiryStatusName = 'Status Name is required'
     setErrors(e)
+    scrollToFirstError(e)
     return Object.keys(e).length === 0
   }
 
@@ -146,7 +148,7 @@ export function EnquiryStatusFormModal({ isOpen, onClose, showToast, mode, enqui
               onChange={e => { setEnquiryStatusCode(e.target.value); clearError('enquiryStatusCode') }}
               style={errors.enquiryStatusCode ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.enquiryStatusCode && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.enquiryStatusCode}</p>}
+            {errors.enquiryStatusCode && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.enquiryStatusCode}</p>}
           </div>
           <div className="fg">
             <div className="lbl">Status Name <span className="req">*</span></div>
@@ -158,7 +160,7 @@ export function EnquiryStatusFormModal({ isOpen, onClose, showToast, mode, enqui
               onChange={e => { setEnquiryStatusName(e.target.value); clearError('enquiryStatusName') }}
               style={errors.enquiryStatusName ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.enquiryStatusName && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.enquiryStatusName}</p>}
+            {errors.enquiryStatusName && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.enquiryStatusName}</p>}
           </div>
         </div>
         <div className="modal-footer">

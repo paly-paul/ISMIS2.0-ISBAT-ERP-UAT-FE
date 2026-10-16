@@ -1,5 +1,6 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { createProgramLevel, deleteProgramLevel, getProgramLevelById, getProgramLevels, ProgramLevel, ProgramLevelInput, updateProgramLevel } from '@/lib/api/academic/programLevel'
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient, useQueries, keepPreviousData } from '@tanstack/react-query'
+import { createProgramLevel, deleteProgramLevel, getProgramLevelById, getProgramLevels, getProgramLevelsDropdown, getProgramLevelsPaged, ProgramLevel, ProgramLevelInput, updateProgramLevel } from '@/lib/api/academic/programLevel'
+import { getNextPageParam } from '@/lib/pagination'
 
 const PROGRAM_LEVELS_KEY = ['programLevels']
 
@@ -34,6 +35,59 @@ export function useProgramLevelSearch(search: string) {
     enabled: q.length > 0,
     staleTime: Infinity,
     gcTime: Infinity,
+  })
+}
+
+export function useProgramLevelsPaged(page: number, pageSize: number, search = '') {
+  return useQuery({
+    queryKey: [...PROGRAM_LEVELS_KEY, 'paged', page, pageSize, search],
+    queryFn: () => getProgramLevelsPaged(page, pageSize, search),
+    placeholderData: keepPreviousData,
+    staleTime: Infinity,
+    gcTime: Infinity,
+  })
+}
+
+export function useSearchProgramLevelsInfinite(search: string, pageSize: number, enabled: boolean) {
+  return useInfiniteQuery({
+    queryKey: [...PROGRAM_LEVELS_KEY, 'search-infinite', search, pageSize],
+    queryFn: ({ pageParam }) => getProgramLevelsPaged(pageParam, pageSize, search),
+    initialPageParam: 1,
+    getNextPageParam,
+    enabled,
+    staleTime: Infinity,
+    gcTime: Infinity,
+  })
+}
+
+// Batched-by-guid lookup — same convention as useCourseUnitsByGuids/
+// useIntakesByGuids/useFacultiesByGuids, used to resolve display labels for
+// a bounded set of specific programLevelGuids (e.g. just the ones referenced
+// by the current page of Programme Master's own table, or a single record's
+// programLevelGuid in a View modal) without holding the whole programme
+// level list in memory.
+export function useProgramLevelsByGuids(guids: string[]) {
+  const unique = Array.from(new Set(guids.filter(Boolean)))
+  const results = useQueries({
+    queries: unique.map(guid => ({
+      queryKey: [...PROGRAM_LEVELS_KEY, guid],
+      queryFn: () => getProgramLevelById(guid),
+      staleTime: Infinity,
+      gcTime: Infinity,
+    })),
+  })
+  const byGuid = new Map<string, ProgramLevel>()
+  results.forEach((r, i) => { if (r.data) byGuid.set(unique[i], r.data) })
+  return byGuid
+}
+
+// Picker list (get-program-levels-dropdown.md) — guid/name only, in the
+// levels' own sequence. Backs filter dropdowns like Programme Master's.
+export function useProgramLevelsDropdown(enabled = true) {
+  return useQuery({
+    queryKey: [...PROGRAM_LEVELS_KEY, 'dropdown'],
+    queryFn: () => getProgramLevelsDropdown(),
+    enabled,
   })
 }
 

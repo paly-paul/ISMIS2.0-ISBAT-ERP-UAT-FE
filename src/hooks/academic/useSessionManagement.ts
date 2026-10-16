@@ -58,7 +58,8 @@ export function useMoveAllSessions() {
 // has no SignalR client), and the only way to get a result at all now that
 // move-all's own changelog says it dropped RabbitMQ/SignalR in favour of a
 // synchronous response — by the time that POST resolves the run is usually
-// already Completed, but polling briefly covers it if not.
+// already Completed, but polling briefly covers it if not. Any failed poll
+// stops it — state.data still says InProgress after an error.
 export function useBulkMovementStatus(bulkMovementGuid: string | null, enabled: boolean) {
   return useQuery({
     queryKey: [...SESSION_MGMT_KEY, 'bulk-status', bulkMovementGuid],
@@ -66,7 +67,7 @@ export function useBulkMovementStatus(bulkMovementGuid: string | null, enabled: 
     enabled: enabled && !!bulkMovementGuid,
     refetchInterval: (query) => {
       const data = query.state.data as BulkMovementStatusDto | undefined
-      return data?.status === 'InProgress' ? 1500 : false
+      return query.state.status !== 'error' && data?.status === 'InProgress' ? 1500 : false
     },
   })
 }

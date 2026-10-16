@@ -63,7 +63,7 @@ export default function Page() {
   const { page, setPage, totalPages, totalCount, pageItems } = usePagination(filteredRows, PAGE_SIZE)
 
   function confirmDeleteGenSet() {
-    if (!deleteTarget) return
+    if (!permissions.delete || !deleteTarget) return
     deleteGenSet.mutate(deleteTarget.genSetGuid, {
       onSuccess: () => { setDeleteTarget(null); showToast('General setting deleted successfully') },
       onError: (error: Error) => showToast(error.message || 'Failed to delete general setting', 'error'),
