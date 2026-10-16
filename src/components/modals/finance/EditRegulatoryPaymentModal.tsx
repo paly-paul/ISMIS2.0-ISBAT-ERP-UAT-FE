@@ -1,5 +1,6 @@
 'use client'
 import { useEffect, useState } from 'react'
+import { stripLeadingZeros } from '@/lib/errorMessages'
 import { ModalProps } from '../types'
 import DatePicker from '@/components/DatePicker'
 import { useUpdateRegulatoryPayment, PaymentCategory, RegulatoryPaymentHistoryEntry } from '@/hooks/finance/useNcheGuildPayment'
@@ -78,7 +79,7 @@ export function EditRegulatoryPaymentModal({ isOpen, onClose, showToast, target,
   }
 
   return (
-    <div className="modal-overlay open" onClick={handleClose}>
+    <div className="modal-overlay open">
       <div className="modal modal-md" onClick={e => e.stopPropagation()}>
         <div className="modal-hdr modal-hdr-blue">
           <div className="modal-title"><i className="lni lni-pencil-alt"></i> Edit {CATEGORY_LABEL[category]} Payment</div>
@@ -88,7 +89,7 @@ export function EditRegulatoryPaymentModal({ isOpen, onClose, showToast, target,
           <div className="g2 mb-[14px]">
             <div className="fg">
               <div className="lbl">Amount <span className="req">*</span></div>
-              <input className="ctrl" type="number" value={amount} onChange={e => setAmount(e.target.value)} />
+              <input className="ctrl" type="number" value={amount} onChange={e => setAmount(stripLeadingZeros(e.target.value))} />
               <div className="text-g400 mt-1" style={{ fontSize: 11 }}>Must be a multiple of the configured {CATEGORY_LABEL[category]} rate — enforced server-side.</div>
             </div>
             <div className="fg">

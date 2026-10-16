@@ -13,6 +13,13 @@ export interface StudentDto {
   programName: string
   semesterName: string
   batchCode: string
+  // Intake code (e.g. 20241) — on /students/filter list items since
+  // 2026-09-30; absent on older responses.
+  academicIntake?: number | null
+  // Registration status as text ("Registered", "YetToRegister", "DropOut",
+  // "YetToClear", "Passout") from the active history row — on
+  // /students/filter list items (get-students-filter.md, 2026-09-29).
+  regStatusName?: string | null
 }
 
 // Confirmed via a real GET /api/v1/students/:guid response. Everything past
@@ -62,6 +69,9 @@ export interface StudentDetailDto extends StudentDto {
   gender?: string | null
   sponsor?: string | null
   learningMode?: string | null
+  // Intake code the student joined in (e.g. "20222") — added to
+  // GET /students/{guid} 2026-09-29.
+  joinedIntake?: string | null
   // A third live shape, confirmed against students/students/get-student-by-guid.md
   // (2026-08-17 doc) — that response has no top-level nationalityGuid at all;
   // the actual country identifier lives here instead, nested under the
@@ -133,7 +143,21 @@ export interface StudentListFilters {
 export interface StudentColumnFilters {
   programGuid?: string
   semesterGuid?: string
+  // Matches every programme's semester with this code in one request
+  // (e.g. 1 → each programme's "Year One - Semester One"). Requested from
+  // backend 2026-09-29 — not live yet; until it is, the param is ignored.
+  semCode?: string
   batchGuid?: string
+  // Joined intake (T_STUDENT.INTAKEGUID) — Student Master's header intake
+  // dropdown. Not the same as academicIntake below.
+  intakeGuid?: string
+  // Intake code (e.g. "20241") from the student's active history row,
+  // matching the list items' own academicIntake field — Student Master's
+  // Academic Intake column filter.
+  academicIntake?: string
+  // Registration status code (get-students-filter.md): 1 Registered,
+  // 2 YetToRegister, 3 DropOut, 4 YetToClear, 5 Passout.
+  regStatus?: string
   searchTerm?: string
 }
 
@@ -178,7 +202,11 @@ export function getStudentsFilter(page: number, pageSize: number, filters: Stude
   const params = new URLSearchParams()
   if (filters.programGuid) params.set('programGuid', filters.programGuid)
   if (filters.semesterGuid) params.set('semesterGuid', filters.semesterGuid)
+  if (filters.semCode) params.set('semCode', filters.semCode)
   if (filters.batchGuid) params.set('batchGuid', filters.batchGuid)
+  if (filters.intakeGuid) params.set('intakeGuid', filters.intakeGuid)
+  if (filters.academicIntake) params.set('academicIntake', filters.academicIntake)
+  if (filters.regStatus) params.set('regStatus', filters.regStatus)
   if (filters.searchTerm?.trim()) params.set('searchTerm', filters.searchTerm.trim())
   params.set('page', String(page))
   params.set('pageSize', String(pageSize))
@@ -199,7 +227,7 @@ export function getStudentByGuid(guid: string): Promise<StudentDetailDto> {
       regNo: found.studentRegNo, batch: found.batchCode, semester: found.semesterName, programme: found.programName,
       faculty: 'Faculty of Computing', campus: 'ISBAT University - Main Campus',
       email: 'student@example.com', phone: '+256700000000',
-      nationalityGuid: null, nationality: 'Ugandan', nationalityCode: 'UG', gender: 'Female', sponsor: null, learningMode: 'Campus Mode',
+      nationalityGuid: null, nationality: 'Ugandan', nationalityCode: 'UG', gender: 'Female', sponsor: null, learningMode: 'Campus Mode', joinedIntake: '20241',
     })
   }
   return apiGet<StudentDetailDto>(`/api/v1/students/${guid}`)

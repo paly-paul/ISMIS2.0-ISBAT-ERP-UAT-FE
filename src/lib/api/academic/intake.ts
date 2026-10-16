@@ -81,7 +81,7 @@ export interface Intake {
   academicCalendar?: AcademicCalendarEntry[]
 }
 
-interface IntakeListResponse {
+export interface IntakeListResponse {
   items: Intake[]
   totalCount: number
   pageNumber: number
@@ -236,6 +236,50 @@ export function getIntakes(page = 1, pageSize = 10, search = ''): Promise<Intake
   const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) })
   if (q) params.set('search', q)
   return apiGet<IntakeListResponse | null>(`/api/v1/academic/intakes?${params.toString()}`).then(data => data?.items ?? [])
+}
+
+// Real server-side pagination variant (2026-09-09) — for Intake Master's own
+// table, which used to call getIntakes() above at INTAKES_PAGE_SIZE (1000)
+// and paginate/search client-side. The plain function above stays as-is:
+// useIntakes()/useCurrentAcademicIntake()/useCurrentAdmissionIntake() all
+// rely on it returning the FULL unfiltered list (to scan for the row
+// flagged currentIntake/currentAdmissionIntake), and other pages/modals
+// depend on those. This one keeps the real totalCount/pageNumber/pageSize
+// the endpoint already returns (IntakeListResponse) instead of discarding
+// it down to just items.
+export function getIntakesPaged(page = 1, pageSize = 10, search = ''): Promise<IntakeListResponse> {
+  const q = search.trim()
+  if (MOCK_AUTH) {
+    const filtered = q
+      ? mockIntakes.filter(i =>
+          i.description.toLowerCase().includes(q.toLowerCase()) ||
+          i.month.toLowerCase().includes(q.toLowerCase()) ||
+          String(i.intakeCode).toLowerCase().includes(q.toLowerCase()))
+      : mockIntakes
+    const start = (page - 1) * pageSize
+    return Promise.resolve({ items: filtered.slice(start, start + pageSize), totalCount: filtered.length, pageNumber: page, pageSize })
+  }
+  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) })
+  if (q) params.set('search', q)
+  return apiGet<IntakeListResponse | null>(`/api/v1/academic/intakes?${params.toString()}`)
+    .then(data => data ?? { items: [], totalCount: 0, pageNumber: page, pageSize })
+}
+
+// Confirmed live (2026-09-10) that GET /api/v1/academic/intakes genuinely
+// filters server-side via ?currentIntake=true / ?currentAdmissionIntake=true
+// — returns just the one flagged row instead of requiring the full
+// pageSize=1000 list to be fetched and scanned client-side (see the history
+// on useCurrentAcademicIntake/useCurrentAdmissionIntake in useIntakes.ts, and
+// the note in PROJECT_STRUCTURE.md this supersedes). pageSize=1 since at most
+// one intake can ever be flagged current for either.
+export function getCurrentIntake(flag: 'currentIntake' | 'currentAdmissionIntake'): Promise<Intake | null> {
+  if (MOCK_AUTH) {
+    const match = mockIntakes.find(i => i[flag])
+    return Promise.resolve(match ?? null)
+  }
+  const params = new URLSearchParams({ page: '1', pageSize: '1', [flag]: 'true' })
+  return apiGet<IntakeListResponse | null>(`/api/v1/academic/intakes?${params.toString()}`)
+    .then(data => data?.items?.[0] ?? null)
 }
 
 // Confirmed via GET /api/v1/academic/intakes/:intakeGuid — returns the same
@@ -434,4 +478,25 @@ export function bulkUpdateCalendarBatch(entries: AcademicCalendarBatchEntryDto[]
     return Promise.resolve(mockCalendarBatch)
   }
   return apiPatch<AcademicCalendarBatchEntryDto[]>('/api/v1/academic/intakes/calendar-batch', entries)
+}
+
+export interface IntakeDropdownItem {
+  intakeGuid: string
+  intakeCode: number
+  description: string
+  currentIntake: boolean
+  currentAdmissionIntake: boolean
+}
+
+export function getIntakesDropdown(): Promise<IntakeDropdownItem[]> {
+  if (MOCK_AUTH) {
+    return Promise.resolve(mockIntakes.map(i => ({
+      intakeGuid: i.intakeGuid,
+      intakeCode: i.intakeCode,
+      description: i.description,
+      currentIntake: i.currentIntake,
+      currentAdmissionIntake: i.currentAdmissionIntake
+    })))
+  }
+  return apiGet<IntakeDropdownItem[] | null>('/api/v1/academic/intakes/dropdown').then(data => data || [])
 }

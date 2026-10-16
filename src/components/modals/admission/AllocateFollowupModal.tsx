@@ -4,6 +4,7 @@ import { ModalProps } from '../types'
 import { SuccessPopup } from '../shared/SuccessPopup'
 import { SearchSelect } from '@/components/SearchSelect'
 import DatePicker from '@/components/DatePicker'
+import { scrollToFirstError } from '@/lib/scrollToFirstError'
 
 export interface FollowupEnquiry {
   ref: string; name: string; programme: string; assignedTo: string; followupDate: string; priority: string
@@ -42,6 +43,7 @@ export function AllocateFollowupModal({ isOpen, onClose, enquiry, onAllocate }: 
     if (!assignedTo)    e.assignedTo   = 'Please assign a staff member'
     if (!followupDate)  e.followupDate = 'Follow-up date is required'
     setErrors(e)
+    scrollToFirstError(e)
     return Object.keys(e).length === 0
   }
 
@@ -72,14 +74,14 @@ export function AllocateFollowupModal({ isOpen, onClose, enquiry, onAllocate }: 
               value={assignedTo}
               onChange={v => { setAssignedTo(v); if (errors.assignedTo) setErrors(p => ({ ...p, assignedTo: '' })) }}
             />
-            {errors.assignedTo && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.assignedTo}</p>}
+            {errors.assignedTo && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.assignedTo}</p>}
           </div>
           <div className="fg">
             <label className="lbl">Follow-up Date <span className="req">*</span></label>
             <DatePicker value={followupDate}
               onChange={v => { setFollowupDate(v); if (errors.followupDate) setErrors(p => ({ ...p, followupDate: '' })) }}
               hasError={!!errors.followupDate} />
-            {errors.followupDate && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.followupDate}</p>}
+            {errors.followupDate && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.followupDate}</p>}
           </div>
           <div className="fg" style={{ gridColumn: 'span 2' }}>
             <label className="lbl">Priority</label>

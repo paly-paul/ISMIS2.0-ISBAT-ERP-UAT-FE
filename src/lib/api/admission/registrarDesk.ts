@@ -61,12 +61,18 @@ export interface RegistrationFeeLine {
 
 // Confirmed via registrar-desk-api-docs.html — GET
 // /registrar-desk/applications/{guid}/registration-detail. admissionTypes
-// is returned but deliberately unused: the frontend notes explicitly say to
-// drop Admission Type from both the Personal Information and Application
-// Detail cards on this screen. Everything under "Registration payment &
-// readiness" (regPaymentTypeName..academicDocumentsVerified) is a read-out
-// of what already happened in Payment Console — render as plain labels,
-// never as editable inputs; same for semesterName/batchName.
+// is already present on the detail payload and is enough to populate the
+// registration-type selector here, so there is no need for a separate
+// /api/v1/admissions/registration-types fetch on this screen. Everything
+// under "Registration payment & readiness" (regPaymentTypeName..academicDocumentsVerified)
+// is a read-out of what already happened in Payment Console — render as
+// plain labels, never as editable inputs; same for semesterName/batchName.
+export interface RegistrarDeskAdmissionType {
+  intType: number
+  registrationTypeGuid: string
+  registrationType: string
+}
+
 export interface RegistrationDetail {
   appRefNo: string
   studentName: string
@@ -88,7 +94,7 @@ export interface RegistrationDetail {
   batchName: string | null
   refugee: boolean
   refugeeId: string | null
-  admissionTypes: unknown[]
+  admissionTypes: RegistrarDeskAdmissionType[]
   admissionFee: number | null
   regFee: number | null
   feeLines: RegistrationFeeLine[]

@@ -28,6 +28,13 @@ export interface BatchSummaryItem {
   headCount: number
 }
 
+export interface BatchSummaryListResult {
+  items: BatchSummaryItem[]
+  totalCount: number
+  pageNumber: number
+  pageSize: number
+}
+
 const mockBatchSummary: BatchSummaryItem[] = [
   { slNo: 1,  batchCode: 'BSC.IT-2024A', programCode: 'BSC.IT22', programName: 'BSc. Information Technology',           semCode: 5, facultyName: 'Faculty of Computing',       headCount: 52 },
   { slNo: 2,  batchCode: 'BBA-2024A',     programCode: 'BBA22',    programName: 'Bachelor of Business Admin.',           semCode: 5, facultyName: 'Faculty of Business',        headCount: 48 },
@@ -53,12 +60,49 @@ const mockBatchCampusGuids: Record<string, string> = {
   'BSC.CS-2024A': '4', 'DIP.ED-2024A': '4', 'BSC.IT-2023B': '1', 'BBA-2023B': '2', 'NUR-2024B': '3', 'DIP.ED-2025A': '4',
 }
 
-export function getBatchSummary(campusGuid?: string | null): Promise<BatchSummaryItem[]> {
+// intakeGuid (ACD-015, 2026-10-16): omit for the current admission intake.
+// A batch is in an intake if it was created for it or is in one of its
+// sessions, so a new batch shows before it's added to a session. Mock mode
+// ignores it (the mock rows carry no intake).
+export function getBatchSummary(campusGuid?: string | null, pageNumber = 1, pageSize = 10, intakeGuid?: string | null): Promise<BatchSummaryListResult> {
   if (MOCK_AUTH) {
-    const items = campusGuid ? mockBatchSummary.filter(b => mockBatchCampusGuids[b.batchCode] === campusGuid) : mockBatchSummary
-    return Promise.resolve(items)
+    const filtered = campusGuid
+      ? mockBatchSummary.filter(b => mockBatchCampusGuids[b.batchCode] === campusGuid)
+      : mockBatchSummary
+    const start = (pageNumber - 1) * pageSize
+    return Promise.resolve({
+      items: filtered.slice(start, start + pageSize),
+      totalCount: filtered.length,
+      pageNumber,
+      pageSize,
+    })
   }
-  const qs = campusGuid ? `?campusGuid=${encodeURIComponent(campusGuid)}` : ''
-  return apiGet<BatchSummaryItem[] | { items: BatchSummaryItem[] } | null>(`/api/v1/academic/batch-summary${qs}`)
-    .then(data => (Array.isArray(data) ? data : data?.items) ?? [])
+
+  const params = new URLSearchParams({
+    page: String(pageNumber),
+    pageNumber: String(pageNumber),
+    pageSize: String(pageSize),
+  })
+  if (campusGuid) params.set('campusGuid', campusGuid)
+  if (intakeGuid) params.set('intakeGuid', intakeGuid)
+
+  return apiGet<BatchSummaryListResult | BatchSummaryItem[] | { items: BatchSummaryItem[] } | null>(`/api/v1/academic/batch-summary?${params.toString()}`)
+    .then(data => {
+      const items = Array.isArray(data)
+        ? data
+        : data && typeof data === 'object' && Array.isArray((data as { items?: BatchSummaryItem[] }).items)
+          ? (data as { items: BatchSummaryItem[] }).items
+          : []
+
+      const envelope = data && typeof data === 'object' && !Array.isArray(data)
+        ? (data as Partial<BatchSummaryListResult>)
+        : null
+
+      return {
+        items,
+        totalCount: typeof envelope?.totalCount === 'number' ? envelope.totalCount : items.length,
+        pageNumber: typeof envelope?.pageNumber === 'number' ? envelope.pageNumber : pageNumber,
+        pageSize: typeof envelope?.pageSize === 'number' ? envelope.pageSize : pageSize,
+      }
+    })
 }

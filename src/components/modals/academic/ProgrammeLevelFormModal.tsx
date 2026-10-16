@@ -9,6 +9,7 @@ import { ProgramLevelInput } from '@/lib/api/academic/programLevel'
 import { useProgramLevel } from '@/hooks/academic/useProgramLevels'
 import { useFinanceCurrencies } from '@/hooks/finance/useFinanceCurrencies'
 import { AuthError } from '@/lib/api/client'
+import { scrollToFirstError } from '@/lib/scrollToFirstError'
 
 // Add and Edit share this form — differ in prefill, the post-save redirect
 // (Add only), and which mutation runs.
@@ -84,26 +85,50 @@ export function ProgrammeLevelFormModal({ isOpen, onClose, showToast, mode, prog
     setErrors(prev => (prev[field] ? { ...prev, [field]: '' } : prev))
   }
 
+  // Mirrors Create/UpdateProgramLevelCommandValidator: code ≤ 10, name ≤ 50,
+  // yearCount and minCreditLoad > 0, fees whole numbers ≥ 0, currency required.
   function validate() {
     const e: Record<string, string> = {}
     if (!levelCode.trim()) e.levelCode = 'Level Code is required'
+    else if (levelCode.trim().length > 10) e.levelCode = 'Level Code must be 10 characters or fewer'
     if (!levelName.trim()) e.levelName = 'Level Name is required'
-    if (!yearCount || +yearCount <= 0) e.yearCount = 'Year Count must be greater than 0'
-    if (!minCreditLoad || +minCreditLoad < 0) e.minCreditLoad = 'Minimum Credit Load is required'
-    if (!appFee || +appFee < 0) e.appFee = 'Application Fee is required'
-    if (!lateFee || +lateFee < 0) e.lateFee = 'Late Fee is required'
+    else if (levelName.trim().length > 50) e.levelName = 'Level Name must be 50 characters or fewer'
+    // Backend rule (2026-10-15, POST/PUT): at least one letter — "123" fails,
+    // "Level 1" is fine. Same message the API returns.
+    else if (!/\p{L}/u.test(levelName)) e.levelName = 'Level name must contain at least one letter.'
+    if (!yearCount) e.yearCount = 'Year Count is required'
+    else if (!Number.isInteger(+yearCount) || +yearCount <= 0) e.yearCount = 'Year Count must be a whole number greater than 0'
+    if (!minCreditLoad) e.minCreditLoad = 'Minimum Credit Load is required'
+    else if (!Number.isInteger(+minCreditLoad) || +minCreditLoad <= 0) e.minCreditLoad = 'Minimum Credit Load must be a whole number greater than 0'
+    if (!appFee) e.appFee = 'Application Fee is required'
+    else if (!Number.isInteger(+appFee) || +appFee < 0) e.appFee = 'Application Fee must be a whole number, 0 or more'
+    if (!lateFee) e.lateFee = 'Late Fee is required'
+    else if (!Number.isInteger(+lateFee) || +lateFee < 0) e.lateFee = 'Late Fee must be a whole number, 0 or more'
     if (!currency) e.currency = 'Select a currency before proceeding'
     setErrors(e)
+    scrollToFirstError(e)
     return Object.keys(e).length === 0
   }
 
-  // Map known backend failures to a field error where the cause is
-  // actionable right there (duplicate levelCode); anything else shows the
-  // failure popup instead.
+  // Map the documented backend failures to the field they're about; anything
+  // else shows the failure popup.
   function handleSaveError(error: Error) {
     const code = error instanceof AuthError ? error.code : undefined
-    if (code === 'bad_request') {
+    if (code === 'duplicate_level_code') {
       setErrors(prev => ({ ...prev, levelCode: error.message || 'A programme level with this code already exists.' }))
+      scrollToFirstError({ levelCode: 'x' })
+      return
+    }
+    if (code === 'validation_error' && /level name/i.test(error.message)) {
+      setErrors(prev => ({ ...prev, levelName: error.message }))
+      scrollToFirstError({ levelName: 'x' })
+      return
+    }
+    // 404 on save is either the level itself (edit) or the currency failing
+    // to resolve in Finance; the message tells them apart.
+    if (code === 'not_found' && /currency/i.test(error.message)) {
+      setErrors(prev => ({ ...prev, currency: 'This currency could not be found in Finance. Pick another one.' }))
+      scrollToFirstError({ currency: 'x' })
       return
     }
     setFailure(error.message || `Failed to ${isEdit ? 'update' : 'add'} programme level. Please try again.`)
@@ -111,9 +136,10 @@ export function ProgrammeLevelFormModal({ isOpen, onClose, showToast, mode, prog
 
   function handleSubmit() {
     if (!validate()) return
+    // Backend stores code/name untrimmed, so trim here.
     const input: ProgramLevelInput = {
-      levelCode,
-      levelName,
+      levelCode: levelCode.trim(),
+      levelName: levelName.trim(),
       yearCount: +yearCount,
       minCreditLoad: +minCreditLoad,
       appFee: +appFee,
@@ -205,22 +231,24 @@ export function ProgrammeLevelFormModal({ isOpen, onClose, showToast, mode, prog
             <input
               className="ctrl"
               placeholder="e.g. DIP"
+              maxLength={10}
               value={levelCode}
               onChange={e => { setLevelCode(e.target.value); clearError('levelCode') }}
               style={errors.levelCode ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.levelCode && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.levelCode}</p>}
+            {errors.levelCode && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.levelCode}</p>}
           </div>
           <div className="fg">
             <div className="lbl">Level Name <span className="req">*</span></div>
             <input
               className="ctrl"
               placeholder="e.g. Diploma"
+              maxLength={50}
               value={levelName}
               onChange={e => { setLevelName(e.target.value); clearError('levelName') }}
               style={errors.levelName ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.levelName && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.levelName}</p>}
+            {errors.levelName && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.levelName}</p>}
           </div>
           <div className="fg">
             <div className="lbl">Year Count <span className="req">*</span></div>
@@ -234,7 +262,7 @@ export function ProgrammeLevelFormModal({ isOpen, onClose, showToast, mode, prog
               onChange={e => { setYearCount(e.target.value); clearError('yearCount') }}
               style={errors.yearCount ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.yearCount && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.yearCount}</p>}
+            {errors.yearCount && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.yearCount}</p>}
           </div>
           <div className="fg">
             <div className="lbl">Minimum Credit Load <span className="req">*</span></div>
@@ -242,12 +270,12 @@ export function ProgrammeLevelFormModal({ isOpen, onClose, showToast, mode, prog
               className="ctrl"
               type="number"
               placeholder="e.g. 15"
-              min={0}
+              min={1}
               value={minCreditLoad}
               onChange={e => { setMinCreditLoad(e.target.value); clearError('minCreditLoad') }}
               style={errors.minCreditLoad ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.minCreditLoad && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.minCreditLoad}</p>}
+            {errors.minCreditLoad && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.minCreditLoad}</p>}
           </div>
           <div className="fg">
             <div className="lbl">Application Fee <span className="req">*</span></div>
@@ -260,7 +288,7 @@ export function ProgrammeLevelFormModal({ isOpen, onClose, showToast, mode, prog
               onChange={e => { setAppFee(e.target.value); clearError('appFee') }}
               style={errors.appFee ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.appFee && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.appFee}</p>}
+            {errors.appFee && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.appFee}</p>}
           </div>
           <div className="fg">
             <div className="lbl">Late Fee <span className="req">*</span></div>
@@ -273,7 +301,7 @@ export function ProgrammeLevelFormModal({ isOpen, onClose, showToast, mode, prog
               onChange={e => { setLateFee(e.target.value); clearError('lateFee') }}
               style={errors.lateFee ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.lateFee && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.lateFee}</p>}
+            {errors.lateFee && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.lateFee}</p>}
           </div>
           <div className="fg">
             <div className="lbl">Currency <span className="req">*</span></div>
@@ -283,7 +311,7 @@ export function ProgrammeLevelFormModal({ isOpen, onClose, showToast, mode, prog
               value={currency}
               onChange={v => { setCurrency(v); clearError('currency') }}
             />
-            {errors.currency && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.currency}</p>}
+            {errors.currency && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.currency}</p>}
           </div>
         </div>
         <div className="modal-footer">

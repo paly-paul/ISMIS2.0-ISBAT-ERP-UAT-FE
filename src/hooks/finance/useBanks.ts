@@ -30,6 +30,7 @@ export function useBank(guid: string | null, enabled: boolean) {
   return useQuery({
     queryKey: [...BANKS_KEY, guid],
     queryFn: () => getBankById(guid as string),
+    staleTime: 5 * 60 * 1000,
     enabled: enabled && !!guid,
   })
 }

@@ -1,108 +1,107 @@
 'use client'
-import { useState } from 'react'
+import { Suspense, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { Toast } from '@/components/Toast'
-import { SearchSelect } from '@/components/SearchSelect'
+// import { usePagePermissions } from '@/hooks/users/usePagePermissions'
+import { BulkEmailJobStatus, JOB_STATUSES } from '@/hooks/student/useBulkEmail'
+import { EMPTY_LIST_FILTERS, ListFilters, MailList } from './_components/MailList'
+import { MailDetail } from './_components/MailDetail'
+import { Compose } from './_components/Compose'
 
-// Ported from isbat_student_module.html's Send Communication page. No
-// backend contract exists for bulk messaging — the "recipients matching
-// filters" count and templates are illustrative mock data.
-const TEMPLATES: Record<string, string> = {
-  'Fee Payment Reminder': 'Dear {student_name},\n\nThis is a reminder that you have an outstanding balance of {balance} for {semester}. Please clear this before the deadline of {deadline}.\n\nRegards,\nISBAT Finance Office',
-  'Registration Deadline': 'Dear {student_name},\n\nRegistration for {semester} closes on {deadline}. Please complete your registration to avoid late fees.\n\nRegards,\nISBAT Registrar',
-  'Academic Warning': 'Dear {student_name},\n\nYour academic performance in {semester} requires attention. Please contact your programme coordinator.\n\nRegards,\nISBAT Academic Office',
-  'Welcome New Student': 'Dear {student_name},\n\nWelcome to ISBAT University! We look forward to supporting you through {semester} and beyond.\n\nRegards,\nISBAT Student Services',
+// Student bulk email — per student-bulk-email-page.md. Three views on one
+// route, chosen by the query string so browser Back works and the list keeps
+// its filters/page when returning from a job:
+//   (none)              mail list
+//   ?job={jobGuid}      mail detail
+//   ?view=compose       compose
+// The list filters (status, q, from, to, page) ride along in the query too.
+
+function readListFilters(params: URLSearchParams): ListFilters {
+  const status = params.get('status') ?? ''
+  return {
+    status: (JOB_STATUSES as readonly string[]).includes(status) ? status as BulkEmailJobStatus : '',
+    search: params.get('q') ?? '',
+    from: params.get('from') ?? '',
+    to: params.get('to') ?? '',
+    page: Math.max(1, Number(params.get('page')) || 1),
+  }
 }
 
-export default function Page() {
-  const [channel, setChannel] = useState<'Email' | 'WhatsApp' | 'Both'>('Email')
-  const [statusFilter, setStatusFilter] = useState('All Students')
-  const [progFilter, setProgFilter] = useState('All Programmes')
-  const [batchFilter, setBatchFilter] = useState('All Batches')
-  const [sponsorFilter, setSponsorFilter] = useState('All')
-  const [subject, setSubject] = useState('')
-  const [template, setTemplate] = useState('— Custom message —')
-  const [body, setBody] = useState('')
+function listQuery(f: ListFilters): URLSearchParams {
+  const q = new URLSearchParams()
+  if (f.status) q.set('status', f.status)
+  if (f.search) q.set('q', f.search)
+  if (f.from) q.set('from', f.from)
+  if (f.to) q.set('to', f.to)
+  if (f.page > 1) q.set('page', String(f.page))
+  return q
+}
+
+function CommunicationsContent() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  // Permission checks disabled for now — every action is allowed. Restore the
+  // line below (and the import above) to gate actions by the menu permissions again.
+  // const permissions = usePagePermissions()
+  const permissions = { add: true, edit: true, delete: true }
   const [toast, setToast] = useState<{ msg: string; type: string } | null>(null)
 
   function showToast(msg: string, type = '') { setToast({ msg, type }); setTimeout(() => setToast(null), 3500) }
 
-  // Illustrative recipient count — narrows a bit per active filter, purely
-  // for demo purposes (no backend to actually count against).
-  const activeFilters = [statusFilter, progFilter, batchFilter, sponsorFilter].filter(f => !f.startsWith('All')).length
-  const recipientCount = Math.max(3, 28 - activeFilters * 6)
+  const jobGuid = searchParams.get('job')
+  const composing = searchParams.get('view') === 'compose'
+  const listFilters = readListFilters(searchParams)
+  const canCompose = !!permissions.add
 
-  function handleTemplateChange(name: string) {
-    setTemplate(name)
-    if (TEMPLATES[name]) { setBody(TEMPLATES[name]); showToast('Template loaded', 'ok') }
+  function go(q: URLSearchParams, replace = false) {
+    const url = q.toString() ? `/student/communications?${q.toString()}` : '/student/communications'
+    if (replace) router.replace(url, { scroll: false })
+    else router.push(url, { scroll: false })
+  }
+
+  function openJob(guid: string) { const q = listQuery(listFilters); q.set('job', guid); go(q) }
+  function openCompose() { const q = listQuery(listFilters); q.set('view', 'compose'); go(q) }
+  function backToList() { go(listQuery(listFilters)) }
+
+  function handleSent(selectedRecipients: number) {
+    showToast(`Email queued for ${selectedRecipients.toLocaleString()} students. Sending in the background.`, 'ok')
+    // Back to the first page of the list, where the new job appears on top.
+    go(listQuery({ ...listFilters, page: 1 }))
   }
 
   return (
     <>
       <div className="page active">
-        <div className="pg-hdr"><div><div className="pg-title">Send Communication</div><div className="pg-sub">Bulk email or WhatsApp to filtered student groups</div></div></div>
-        <div className="g2">
-          <div className="card">
-            <div className="card-hdr"><div className="card-title"><i className="lni lni-target-customer"></i> Recipient Targeting</div></div>
-            <div className="fg"><label className="lbl">Channel</label>
-              <div className="tgl-group">
-                {(['Email', 'WhatsApp', 'Both'] as const).map(c => (
-                  <button key={c} className={`tgl-btn${channel === c ? ' tgl-active' : ''}`} onClick={() => setChannel(c)}>{c}</button>
-                ))}
-              </div>
-            </div>
-            <div className="fg"><label className="lbl">Filter by Status</label>
-              <SearchSelect
-                options={['All Students', 'Yet to Register', 'Yet to Clear', 'Dropout', 'Active']}
-                value={statusFilter}
-                onChange={setStatusFilter}
-              />
-            </div>
-            <div className="fg"><label className="lbl">Filter by Programme</label>
-              <SearchSelect
-                options={['All Programmes', 'BSc. IT', 'BBA', 'BSc. Accounting', 'MBA']}
-                value={progFilter}
-                onChange={setProgFilter}
-              />
-            </div>
-            <div className="fg"><label className="lbl">Filter by Batch</label>
-              <SearchSelect
-                options={['All Batches', 'BSc.IT-2024A', 'BBA-2024A', 'BSc.IT-2025A']}
-                value={batchFilter}
-                onChange={setBatchFilter}
-              />
-            </div>
-            <div className="fg"><label className="lbl">Filter by Sponsorship</label>
-              <SearchSelect
-                options={['All', 'HESFB', 'Watoto', 'Self-Sponsored']}
-                value={sponsorFilter}
-                onChange={setSponsorFilter}
-              />
-            </div>
-            <div style={{ padding: '12px 14px', background: 'var(--b50)', borderRadius: 'var(--rxs)', border: '1.5px solid var(--b200)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--b700)' }}>Recipients matching filters:</span>
-              <span style={{ fontSize: 18, fontWeight: 800, color: 'var(--b700)' }}>{recipientCount} students</span>
-            </div>
-          </div>
-          <div className="card">
-            <div className="card-hdr"><div className="card-title"><i className="lni lni-envelope"></i> Message Composition</div></div>
-            <div className="fg"><label className="lbl">Subject <span className="req">*</span></label><input className="ctrl" placeholder="e.g. Reminder: Outstanding Fee Balance — Spring 2026" value={subject} onChange={e => setSubject(e.target.value)} /></div>
-            <div className="fg"><label className="lbl">Template</label>
-              <SearchSelect
-                options={['— Custom message —', ...Object.keys(TEMPLATES)]}
-                value={template}
-                onChange={handleTemplateChange}
-              />
-            </div>
-            <div className="fg"><label className="lbl">Message Body <span className="req">*</span></label><textarea className="ctrl" rows={7} placeholder={'Dear {student_name},\n\nVariables: {student_name}, {balance}, {semester}, {deadline}'} value={body} onChange={e => setBody(e.target.value)} /></div>
-            <div className="info-box" style={{ marginBottom: 14 }}><i className="lni lni-information" style={{ color: 'var(--b700)', fontSize: 15, flexShrink: 0 }}></i><div style={{ fontSize: 12 }}>Use <code>{'{student_name}'}</code>, <code>{'{balance}'}</code>, <code>{'{semester}'}</code> for personalised messages.</div></div>
-            <div className="flex gap-2" style={{ justifyContent: 'flex-end' }}>
-              <button className="btn btn-neu">Preview</button>
-              <button className="btn btn-primary" onClick={() => showToast(`Message sent to ${recipientCount} students`, 'ok')}><i className="lni lni-envelope"></i> Send to {recipientCount} Students</button>
-            </div>
-          </div>
+        <div className="pg-hdr">
+          <div><div className="pg-title">Communications</div><div className="pg-sub">Email a filtered group of students and track delivery</div></div>
+          {!composing && !jobGuid && canCompose && (
+            <button className="cm-compose-btn cm-compose-btn-hdr" onClick={openCompose}><i className="lni lni-pencil"></i> Compose</button>
+          )}
         </div>
+
+        {composing && canCompose ? (
+          <Compose onCancel={backToList} onSent={handleSent} showToast={showToast} />
+        ) : jobGuid ? (
+          <MailDetail jobGuid={jobGuid} onBack={backToList} />
+        ) : (
+          <MailList
+            filters={listFilters}
+            onFiltersChange={f => go(listQuery(f), true)}
+            onOpen={openJob}
+            onCompose={openCompose}
+            canCompose={canCompose}
+          />
+        )}
       </div>
       <Toast toast={toast} />
     </>
+  )
+}
+
+export default function Page() {
+  return (
+    <Suspense>
+      <CommunicationsContent />
+    </Suspense>
   )
 }

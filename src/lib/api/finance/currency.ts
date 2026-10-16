@@ -27,9 +27,14 @@ const mockFinanceCurrencies: FinanceCurrency[] = [
   { intCurrency: 1, currencyGuid: 'cc6cfbae-d66a-46d3-8f31-95eacd0cdbf6', currencyCode: 'IND', currencyName: 'IND', isDefault: 1 },
 ]
 
+// GET /currencies is paged (get-currencies.md: pageSize defaults to 10, no
+// upper bound). Every currency dropdown wants the full list, so ask for it
+// in one page — otherwise any currency past the 10th can't be picked.
+const ALL_CURRENCIES_PAGE_SIZE = 1000
+
 export function getFinanceCurrencies(): Promise<FinanceCurrency[]> {
   if (MOCK_AUTH) return Promise.resolve(mockFinanceCurrencies)
-  return apiGet<FinanceCurrencyListResponse | null>('/api/v1/finance/currencies').then(data => data?.items ?? [])
+  return apiGet<FinanceCurrencyListResponse | null>(`/api/v1/finance/currencies?page=1&pageSize=${ALL_CURRENCIES_PAGE_SIZE}`).then(data => data?.items ?? [])
 }
 
 // Shared "what should a blank currency picker start on" default across

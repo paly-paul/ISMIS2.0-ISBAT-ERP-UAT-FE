@@ -6,6 +6,7 @@ import { FailurePopup } from '../shared/FailurePopup'
 import { UnitCategoryInput } from '@/lib/api/academic/unitCategory'
 import { useUnitCategory } from '@/hooks/config/useUnitCategories'
 import { AuthError } from '@/lib/api/client'
+import { scrollToFirstError } from '@/lib/scrollToFirstError'
 
 interface UnitCategoryFormModalProps extends ModalProps {
   mode: 'new' | 'edit'
@@ -52,6 +53,7 @@ export function UnitCategoryFormModal({ isOpen, onClose, showToast, mode, unitCa
     const e: Record<string, string> = {}
     if (!unitCatName.trim()) e.unitCatName = 'Unit Category Name is required'
     setErrors(e)
+    scrollToFirstError(e)
     return Object.keys(e).length === 0
   }
 
@@ -141,7 +143,7 @@ export function UnitCategoryFormModal({ isOpen, onClose, showToast, mode, unitCa
             onChange={e => { setUnitCatName(e.target.value); clearError('unitCatName') }}
             style={errors.unitCatName ? { borderColor: 'var(--red)' } : undefined}
           />
-          {errors.unitCatName && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.unitCatName}</p>}
+          {errors.unitCatName && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.unitCatName}</p>}
         </div>
         <div className="modal-footer">
           <button className="btn btn-neu" onClick={handleClose}>Cancel</button>

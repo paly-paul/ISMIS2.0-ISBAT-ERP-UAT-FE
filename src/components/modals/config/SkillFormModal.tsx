@@ -4,6 +4,7 @@ import { ModalProps } from '../types'
 import { SuccessPopup } from '../shared/SuccessPopup'
 import { FailurePopup } from '../shared/FailurePopup'
 import { SkillMaster, SkillMasterInput } from '@/lib/api/academic/skillMaster'
+import { scrollToFirstError } from '@/lib/scrollToFirstError'
 
 interface SkillFormModalProps extends ModalProps {
   mode: 'new' | 'edit'
@@ -46,6 +47,7 @@ export function SkillFormModal({ isOpen, onClose, showToast, mode, skill, create
     const e: Record<string, string> = {}
     if (!skillName.trim()) e.skillName = 'Skill Name is required'
     setErrors(e)
+    scrollToFirstError(e)
     return Object.keys(e).length === 0
   }
 
@@ -89,7 +91,7 @@ export function SkillFormModal({ isOpen, onClose, showToast, mode, skill, create
   }
 
   return (
-    <div className="modal-overlay open" id={isEdit ? 'edit-skill-modal' : 'new-skill-modal'} onClick={handleClose}>
+    <div className="modal-overlay open" id={isEdit ? 'edit-skill-modal' : 'new-skill-modal'}>
       <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
         <div className="modal-hdr modal-hdr-blue">
           <div className="modal-title"><i className={`lni ${isEdit ? 'lni-pencil' : 'lni-bulb'}`}></i> {isEdit ? 'Edit Skill' : 'Add Skill'}</div>
@@ -105,7 +107,7 @@ export function SkillFormModal({ isOpen, onClose, showToast, mode, skill, create
             onChange={e => { setSkillName(e.target.value); if (errors.skillName) setErrors(p => ({ ...p, skillName: '' })) }}
             style={errors.skillName ? { borderColor: 'var(--red)' } : undefined}
           />
-          {errors.skillName && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.skillName}</p>}
+          {errors.skillName && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.skillName}</p>}
         </div>
         <div className="modal-footer">
           <button className="btn btn-neu" onClick={handleClose}>Cancel</button>

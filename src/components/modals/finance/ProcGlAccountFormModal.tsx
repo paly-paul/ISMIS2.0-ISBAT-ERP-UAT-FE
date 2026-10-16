@@ -7,6 +7,7 @@ import { SearchSelect } from '@/components/SearchSelect'
 import { ProcGlAccountInput, ProcGlAccountStatus, ProcGlAccountType, STATUS_LABELS, STATUS_VALUES, TYPE_LABELS, TYPE_VALUES } from '@/lib/api/finance/procGlAccount'
 import { useProcGlAccount } from '@/hooks/finance/useProcGlAccounts'
 import { AuthError } from '@/lib/api/client'
+import { scrollToFirstError } from '@/lib/scrollToFirstError'
 
 // Add and Edit share this form — differ in prefill and which mutation runs.
 interface ProcGlAccountFormModalProps extends ModalProps {
@@ -63,6 +64,7 @@ export function ProcGlAccountFormModal({ isOpen, onClose, showToast, mode, procG
     if (!accName.trim()) e.accName = 'Account Name is required'
     if (!type) e.type = 'Account Type is required'
     setErrors(e)
+    scrollToFirstError(e)
     return Object.keys(e).length === 0
   }
 
@@ -161,7 +163,7 @@ export function ProcGlAccountFormModal({ isOpen, onClose, showToast, mode, procG
               onChange={e => { setShortCode(e.target.value); clearError('shortCode') }}
               style={errors.shortCode ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.shortCode && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.shortCode}</p>}
+            {errors.shortCode && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.shortCode}</p>}
           </div>
           <div className="fg">
             <div className="lbl">Account Name <span className="req">*</span></div>
@@ -173,7 +175,7 @@ export function ProcGlAccountFormModal({ isOpen, onClose, showToast, mode, procG
               onChange={e => { setAccName(e.target.value); clearError('accName') }}
               style={errors.accName ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.accName && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.accName}</p>}
+            {errors.accName && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.accName}</p>}
           </div>
           <div className="fg">
             <div className="lbl">Account Type <span className="req">*</span></div>
@@ -183,7 +185,7 @@ export function ProcGlAccountFormModal({ isOpen, onClose, showToast, mode, procG
               onChange={val => { setType(val as ProcGlAccountType); clearError('type') }}
               placeholder="Select type"
             />
-            {errors.type && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.type}</p>}
+            {errors.type && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.type}</p>}
           </div>
           <div className="fg">
             <div className="lbl">Status</div>

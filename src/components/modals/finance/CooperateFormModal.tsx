@@ -6,6 +6,11 @@ import { FailurePopup } from '../shared/FailurePopup'
 import { CooperateInput } from '@/lib/api/finance/cooperate'
 import { useCooperate } from '@/hooks/finance/useCooperates'
 import { AuthError } from '@/lib/api/client'
+import { scrollToFirstError } from '@/lib/scrollToFirstError'
+
+// Create/UpdateCooperateCommandValidator (post-cooperate.md, put-cooperate.md).
+const CODE_MAX = 10
+const NAME_MAX = 100
 
 // Add and Edit share this form — differ in prefill and which mutation runs.
 interface CooperateFormModalProps extends ModalProps {
@@ -52,18 +57,34 @@ export function CooperateFormModal({ isOpen, onClose, showToast, mode, cooperate
 
   function validate() {
     const e: Record<string, string> = {}
-    if (!cooperateCode.trim()) e.cooperateCode = 'Cooperate Code is required'
-    if (!cooperateName.trim()) e.cooperateName = 'Cooperate Name is required'
+    const code = cooperateCode.trim()
+    const name = cooperateName.trim()
+    if (!code) e.cooperateCode = 'Cooperate Code is required'
+    else if (code.length > CODE_MAX) e.cooperateCode = `Cooperate Code must be ${CODE_MAX} characters or fewer`
+    if (!name) e.cooperateName = 'Cooperate Name is required'
+    else if (name.length > NAME_MAX) e.cooperateName = `Cooperate Name must be ${NAME_MAX} characters or fewer`
     setErrors(e)
+    scrollToFirstError(e)
     return Object.keys(e).length === 0
   }
 
   function handleSubmit() {
     if (isEdit && !cooperateGuid) return
     if (!validate()) return
-    const input: CooperateInput = { cooperateCode, cooperateName }
+    // Sent trimmed: the server's uniqueness check runs on the untrimmed value
+    // but saves it trimmed, so "MTN " would otherwise slip past it.
+    const input: CooperateInput = { cooperateCode: cooperateCode.trim(), cooperateName: cooperateName.trim() }
     const onSuccess = () => { setSaved(true); showToast(isEdit ? 'Cooperate updated successfully' : 'Cooperate added successfully') }
-    const onError = (error: Error) => setFailure(error.message || `Failed to ${isEdit ? 'update' : 'add'} cooperate. Please try again.`)
+    const onError = (error: Error) => {
+      // "Cooperate already exists." — a duplicate code, fixable in the form.
+      if (/already exists/i.test(error.message || '')) {
+        const e = { cooperateCode: error.message }
+        setErrors(prev => ({ ...prev, ...e }))
+        scrollToFirstError(e)
+        return
+      }
+      setFailure(error.message || `Failed to ${isEdit ? 'update' : 'add'} cooperate. Please try again.`)
+    }
 
     if (isEdit && cooperateGuid) {
       updateCooperate.mutate({ guid: cooperateGuid, input }, { onSuccess, onError })
@@ -142,11 +163,12 @@ export function CooperateFormModal({ isOpen, onClose, showToast, mode, cooperate
               className="ctrl font-mono uppercase"
               type="text"
               placeholder={isEdit ? undefined : 'e.g. CO-001'}
+              maxLength={CODE_MAX}
               value={cooperateCode}
               onChange={e => { setCooperateCode(e.target.value.toUpperCase()); clearError('cooperateCode') }}
               style={errors.cooperateCode ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.cooperateCode && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.cooperateCode}</p>}
+            {errors.cooperateCode && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.cooperateCode}</p>}
           </div>
           <div className="fg">
             <div className="lbl">Cooperate Name <span className="req">*</span></div>
@@ -154,11 +176,12 @@ export function CooperateFormModal({ isOpen, onClose, showToast, mode, cooperate
               className="ctrl"
               type="text"
               placeholder={isEdit ? undefined : 'e.g. SYBYL'}
+              maxLength={NAME_MAX}
               value={cooperateName}
               onChange={e => { setCooperateName(e.target.value); clearError('cooperateName') }}
               style={errors.cooperateName ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.cooperateName && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.cooperateName}</p>}
+            {errors.cooperateName && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.cooperateName}</p>}
           </div>
         </div>
         <div className="modal-footer">

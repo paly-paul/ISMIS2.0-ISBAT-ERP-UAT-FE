@@ -8,13 +8,23 @@ interface MultiSelectProps {
   options: (string | Opt)[]
   value: string[]
   onChange: (vals: string[]) => void
+  onSearch?: (search: string) => void
   placeholder?: string
   className?: string
   style?: React.CSSProperties
+  isLoading?: boolean
+  hasNextPage?: boolean
+  isFetchingNextPage?: boolean
+  onLoadMore?: () => void
 }
 
 function normalise(raw: (string | Opt)[]): Opt[] {
-  return raw.map(o => (typeof o === 'string' ? { value: o, label: o } : o))
+  const unique = new Map<string, Opt>()
+  raw.forEach(o => {
+    const option = typeof o === 'string' ? { value: o, label: o } : o
+    if (!unique.has(option.value)) unique.set(option.value, option)
+  })
+  return [...unique.values()]
 }
 
 // Checkbox-driven sibling of SearchSelect — same trigger/portal-dropdown
@@ -22,7 +32,7 @@ function normalise(raw: (string | Opt)[]): Opt[] {
 // list is the checkbox pattern already used by FilterTh's column filters
 // (.col-filter-select-all/.col-filter-opt-row), since that's the only
 // multi-pick UI this app already has a shared, correct behavior for.
-export function MultiSelect({ options, value, onChange, placeholder, className, style }: MultiSelectProps) {
+export function MultiSelect({ options, value, onChange, onSearch, placeholder, className, style, isLoading = false, hasNextPage = false, isFetchingNextPage = false, onLoadMore }: MultiSelectProps) {
   const normalised = normalise(options)
 
   const [open, setOpen]     = useState(false)
@@ -33,13 +43,24 @@ export function MultiSelect({ options, value, onChange, placeholder, className, 
   const dropRef    = useRef<HTMLDivElement>(null)
   const inputRef   = useRef<HTMLInputElement>(null)
 
-  const selected = normalised.filter(o => value.includes(o.value))
+  // With server-side search (onSearch) the options are only the current
+  // search's results — remember every option seen so values picked from an
+  // earlier search keep their label once they drop out of `options`.
+  const seenRef = useRef(new Map<string, Opt>())
+  normalised.forEach(o => seenRef.current.set(o.value, o))
+  const selected = value.map(v => seenRef.current.get(v)).filter((o): o is Opt => !!o)
 
   const visible = search.trim()
     ? normalised.filter(o => o.label.toLowerCase().includes(search.toLowerCase()))
     : normalised
 
   const allVisibleChecked = visible.length > 0 && visible.every(o => value.includes(o.value))
+
+  function handleOptionsScroll(e: React.UIEvent<HTMLDivElement>) {
+    if (!hasNextPage || isFetchingNextPage || !onLoadMore) return
+    const el = e.currentTarget
+    if (el.scrollTop > 0 && el.scrollHeight - el.scrollTop - el.clientHeight < 48) onLoadMore()
+  }
 
   function openDrop() {
     if (triggerRef.current) {
@@ -51,8 +72,8 @@ export function MultiSelect({ options, value, onChange, placeholder, className, 
 
   useEffect(() => {
     if (open) inputRef.current?.focus()
-    else setSearch('')
-  }, [open])
+    else { setSearch(''); onSearch?.('') }
+  }, [open, onSearch])
 
   useEffect(() => {
     if (!open) return
@@ -140,19 +161,21 @@ export function MultiSelect({ options, value, onChange, placeholder, className, 
               style={{ fontSize: 12, height: 28, padding: '4px 8px' }}
               placeholder="Search…"
               value={search}
-              onChange={e => setSearch(e.target.value)}
+              onChange={e => { setSearch(e.target.value); onSearch?.(e.target.value) }}
               onKeyDown={e => { if (e.key === 'Escape') setOpen(false) }}
               onClick={e => e.stopPropagation()}
             />
           </div>
-          {visible.length > 0 && (
+          {!isLoading && visible.length > 0 && (
             <label className="col-filter-select-all">
               <input type="checkbox" checked={allVisibleChecked} onChange={toggleAll} />
               Select All
             </label>
           )}
-          <div className="ss-opts">
-            {visible.length === 0
+          <div className="ss-opts" onScroll={handleOptionsScroll}>
+            {isLoading
+              ? <div className="ss-no-match"><i className="lni lni-spinner-arrow" /> Loading results…</div>
+              : visible.length === 0
               ? <div className="ss-no-match">No matches</div>
               : visible.map(o => (
                   <label
@@ -165,6 +188,11 @@ export function MultiSelect({ options, value, onChange, placeholder, className, 
                 ))
             }
           </div>
+          {isFetchingNextPage && (
+            <div className="ss-no-match" style={{ borderTop: '1px solid var(--g100)', background: 'var(--g50)' }}>
+              Loading more…
+            </div>
+          )}
         </div>,
         document.body
       )}

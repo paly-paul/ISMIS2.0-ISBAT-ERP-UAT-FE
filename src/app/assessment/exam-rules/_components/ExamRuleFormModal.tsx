@@ -160,7 +160,7 @@ export function ExamRuleFormModal({ isOpen, onClose, showToast, editingGuid }: E
   }
 
   return (
-    <div className="modal-overlay open" onClick={onClose}>
+    <div className="modal-overlay open">
       <div className="modal modal-lg flex flex-col" onClick={e => e.stopPropagation()} style={{ height: '80vh', maxHeight: '600px' }}>
         <div className="modal-hdr modal-hdr-blue shrink-0">
           <div className="modal-title">{isEdit ? 'Edit Exam Rule' : 'New Exam Rule'}</div>

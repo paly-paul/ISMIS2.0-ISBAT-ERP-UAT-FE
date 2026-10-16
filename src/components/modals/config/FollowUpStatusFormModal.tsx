@@ -6,6 +6,7 @@ import { FailurePopup } from '../shared/FailurePopup'
 import { FollowUpStatusInput } from '@/lib/api/academic/followUpStatus'
 import { useFollowUpStatus } from '@/hooks/config/useFollowUpStatuses'
 import { AuthError } from '@/lib/api/client'
+import { scrollToFirstError } from '@/lib/scrollToFirstError'
 
 interface FollowUpStatusFormModalProps extends ModalProps {
   mode: 'new' | 'edit'
@@ -57,6 +58,7 @@ export function FollowUpStatusFormModal({ isOpen, onClose, showToast, mode, foll
     if (!followUpStatusCode.trim()) e.followUpStatusCode = 'Status Code is required'
     if (!followUpStatusName.trim()) e.followUpStatusName = 'Status Name is required'
     setErrors(e)
+    scrollToFirstError(e)
     return Object.keys(e).length === 0
   }
 
@@ -148,7 +150,7 @@ export function FollowUpStatusFormModal({ isOpen, onClose, showToast, mode, foll
               onChange={e => { setFollowUpStatusCode(e.target.value); clearError('followUpStatusCode') }}
               style={errors.followUpStatusCode ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.followUpStatusCode && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.followUpStatusCode}</p>}
+            {errors.followUpStatusCode && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.followUpStatusCode}</p>}
           </div>
           <div className="fg">
             <div className="lbl">Status Name <span className="req">*</span></div>
@@ -160,7 +162,7 @@ export function FollowUpStatusFormModal({ isOpen, onClose, showToast, mode, foll
               onChange={e => { setFollowUpStatusName(e.target.value); clearError('followUpStatusName') }}
               style={errors.followUpStatusName ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.followUpStatusName && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.followUpStatusName}</p>}
+            {errors.followUpStatusName && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.followUpStatusName}</p>}
           </div>
           <div className="fg span2">
             <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', marginTop: 4 }}>

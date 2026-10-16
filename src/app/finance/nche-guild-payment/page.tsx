@@ -1,6 +1,5 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
-import { useRouter } from 'next/navigation'
 import { Toast } from '@/components/Toast'
 import { ScrollTable } from '@/components/ScrollTable'
 import { ActionMenu } from '@/components/ActionMenu'
@@ -25,6 +24,11 @@ import {
   RegulatoryPaymentHistoryEntry,
   RegulatorySemesterStatus,
 } from '@/hooks/finance/useNcheGuildPayment'
+import { refugeeLabel, studCategoryLabel } from '@/lib/api/finance/paymentConsole'
+import { SearchSelect } from '@/components/SearchSelect'
+import { useFinanceCurrencies, getDefaultFinanceCurrencyGuid } from '@/hooks/finance/useFinanceCurrencies'
+import { scrollToFirstError } from '@/lib/scrollToFirstError'
+import { stripLeadingZeros } from '@/lib/errorMessages'
 
 // Merged NCHE + Guild Payment page — combines the two previously separate
 // nche-payment/guild-payment pages behind a single tab switcher, per
@@ -156,7 +160,6 @@ function RegulatoryOutstandingTable({ items, isLoading, isError, category }: { i
 
 export default function NcheGuildPaymentPage() {
   const permissions = usePagePermissions()
-  const router = useRouter()
   const [toast, setToast] = useState<{ msg: string; type: string } | null>(null)
   function showToast(msg: string, type = '') { setToast({ msg, type }); setTimeout(() => setToast(null), 3500) }
   const [successModal, setSuccessModal] = useState<{ title: string; rows: [string, string][] } | null>(null)
@@ -175,6 +178,11 @@ export default function NcheGuildPaymentPage() {
   const [editTarget, setEditTarget] = useState<RegulatoryPaymentHistoryEntry | null>(null)
 
   const [category, setCategory] = useState<PaymentCategory>('nche')
+
+  // Payment History as a popup (2026-09-15) — same move Payment Console's
+  // own Semester/Other Payment tabs made: off a permanent card merged into
+  // the hero, onto a pc-hero-action button that opens it instead.
+  const [showHistory, setShowHistory] = useState(false)
 
   const [search, setSearch] = useState('')
   const [committedSearch, setCommittedSearch] = useState('')
@@ -275,6 +283,23 @@ export default function NcheGuildPaymentPage() {
   const [pnrNumber, setPnrNumber] = useState('')
   const [remarks, setRemarks] = useState('')
   const [bankDeposit, setBankDeposit] = useState('')
+  // Required on create (post-payment-nche.md / post-payment-guild.md).
+  // Recorded only — the rate and balance checks assume the base currency —
+  // so it defaults to the default finance currency once the list loads.
+  const { data: currencies = [] } = useFinanceCurrencies()
+  const [currencyGuid, setCurrencyGuid] = useState('')
+  const defaultCurrencyGuid = getDefaultFinanceCurrencyGuid(currencies)
+  useEffect(() => {
+    if (!currencyGuid && defaultCurrencyGuid) setCurrencyGuid(defaultCurrencyGuid)
+  }, [currencyGuid, defaultCurrencyGuid])
+  // Inline field errors: amount, currencyGuid, payDate.
+  const [errors, setErrors] = useState<Record<string, string>>({})
+  function clearError(field: string) {
+    setErrors(prev => (prev[field] ? { ...prev, [field]: '' } : prev))
+  }
+  function fieldErr(field: string) {
+    return errors[field] ? <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors[field]}</p> : null
+  }
 
   const createPayment = useCreateRegulatoryPayment(category)
   const deletePayment = useDeleteRegulatoryPayment(category)
@@ -282,9 +307,11 @@ export default function NcheGuildPaymentPage() {
   function resetForm() {
     setAmount('')
     setPayDate(todayYmd())
+    setCurrencyGuid(defaultCurrencyGuid)
     setPnrNumber('')
     setRemarks('')
     setBankDeposit('')
+    setErrors({})
   }
 
   function switchCategory(next: PaymentCategory) {
@@ -343,18 +370,34 @@ export default function NcheGuildPaymentPage() {
     setSuccessInfo(null)
   }
 
+  // The create validator (post-payment-nche.md / post-payment-guild.md ›
+  // Validation), checked all at once and shown inline. "Multiple of the
+  // configured rate" and "not more than the outstanding balance" can't be
+  // checked here — semester-status carries no amounts — so those come back
+  // from the server and land under Amount (see onError below).
+  function validate(): Record<string, string> {
+    const e: Record<string, string> = {}
+    const amt = parseFloat(amount)
+    if (!amount.trim()) e.amount = 'Amount is required.'
+    else if (isNaN(amt) || amt <= 0) e.amount = 'Amount must be greater than 0.'
+    if (!currencyGuid) e.currencyGuid = 'Please select the currency received.'
+    if (!payDate) e.payDate = 'Payment date is required.'
+    return e
+  }
+
   function handleSave() {
     if (!profile || !selectedApplicationGuid) { showToast('Please select a student first.', 'warn'); return }
+    const errs = validate()
+    setErrors(errs)
+    if (Object.keys(errs).length) { scrollToFirstError(errs); return }
     const amt = parseFloat(amount)
-    if (!amount.trim() || isNaN(amt) || amt <= 0) { showToast('Amount must be greater than 0.', 'warn'); return }
-    if (!payDate) { showToast('Please select a payment date.', 'warn'); return }
 
     const categoryFields = category === 'nche'
       ? { pnrNumber: pnrNumber.trim() || null, remarks: remarks.trim() || null }
       : { bankDeposit: bankDeposit.trim() || null }
 
     createPayment.mutate(
-      { applicationGuid: selectedApplicationGuid, studentGuid, amount: amt, payDate, ...categoryFields },
+      { applicationGuid: selectedApplicationGuid, studentGuid, amount: amt, currencyGuid, payDate, ...categoryFields },
       {
         onSuccess: result => {
           setSuccessModal({
@@ -367,11 +410,22 @@ export default function NcheGuildPaymentPage() {
           resetForm()
         },
         onError: (error: Error) => {
-          // Same 400 "not a multiple of the configured rate"/"exceeds
-          // outstanding balance" business errors each doc describes —
-          // surfaced as-is rather than guessed at, since the rate isn't
-          // known here.
-          showToast(error.message || `Failed to save ${CATEGORY_LABEL[category]} payment. Please try again.`, 'error')
+          // The 400 "not a multiple of the configured rate" / "exceeds
+          // outstanding balance" business errors and the 404 for an unknown
+          // currency go under their field, in the server's own words; any
+          // other failure (application not found, etc.) stays a toast.
+          const msg = error.message || ''
+          const field = /currency/i.test(msg) ? 'currencyGuid'
+            : /multiple|exceed|outstanding|balance|amount/i.test(msg) ? 'amount'
+            : /pay ?date/i.test(msg) ? 'payDate'
+            : null
+          if (field) {
+            const e = { [field]: msg }
+            setErrors(prev => ({ ...prev, ...e }))
+            scrollToFirstError(e)
+            return
+          }
+          showToast(msg || `Failed to save ${CATEGORY_LABEL[category]} payment. Please try again.`, 'error')
         },
       },
     )
@@ -381,13 +435,11 @@ export default function NcheGuildPaymentPage() {
 
   return (
     <>
-      {/* id scopes the .pc-body 2-column override in globals.css to just
-          this page — same convention #page-payment-console's own id uses,
-          per request (2026-09-01) to bring this page's layout in line with
-          Payment Console's: a left column (Profile Details + Payment
-          History, merged) beside a wider right column (Outstanding
-          Balance + Payment Detail, merged), instead of everything stacked
-          full-width in a single column. */}
+      {/* id no longer scopes a .pc-body override (2026-09-15 — this page's
+          body moved to the same full-width-hero + .pc-tuition-split layout
+          Payment Console's own Semester Payment tab uses, see below); kept
+          on the wrapper regardless, same as #page-payment-console's own id,
+          in case a future page-specific override is ever needed here. */}
       <div className="page active" id="page-nche-guild-payment">
         <div className="pg-hdr">
           <div>
@@ -395,9 +447,7 @@ export default function NcheGuildPaymentPage() {
             <div className="pg-sub">Search student → view outstanding balance → record payment</div>
           </div>
           <div className="flex gap-2">
-            {selectedApplicationGuid && <button className="btn btn-neu" onClick={handleClear}><i className="lni lni-reload"></i> New Search</button>}
-            <button className="btn btn-neu" onClick={() => router.push('/finance/dashboard')}><i className="lni lni-arrow-left"></i> Back</button>
-          </div>
+            {selectedApplicationGuid && <button className="btn btn-neu" onClick={handleClear}><i className="lni lni-reload"></i> New Search</button>}          </div>
         </div>
 
         <div className="card">
@@ -497,113 +547,148 @@ export default function NcheGuildPaymentPage() {
               </button>
             </div>
 
-            <div className="pc-body">
-            {/* LEFT column: Profile Details + Payment History, merged into
-                one card — same layout Payment Console's own left column
-                uses (see its own "merged into this same card as a second
-                section" comment). */}
-            <div className="flex flex-col gap-5 min-w-0">
-              {/* Same pc-hero banner + pc-hero-facts grid as Payment
-                  Console's/Payment Refund's own Profile Details, in place
-                  of this page's previous plain avatar-circle + pc-fact-grid
-                  layout — per request, to bring this page's look in line
-                  with the rest of Finance. Campus still has no client-side
-                  name resolver on this page (Payment Console falls back to
-                  useCampuses() for it; not pulled in here), so it stays
-                  '—' rather than a guessed value. Every other field is
-                  already pre-resolved on StudentProfile itself, same as
-                  there. */}
-              <div className="card p-0 overflow-hidden">
-                <div className="pc-hero">
-                  <div className="pc-hero-top">
-                    <div className="pc-hero-avatar">{initialsFor(applicantName(profile))}</div>
-                    <div className="flex-1 min-w-0">
-                      <div className="pc-hero-name truncate">{applicantName(profile)}</div>
-                      <div className="pc-hero-sub truncate">{profile.programName ?? '—'}</div>
-                      <span className="pc-hero-badge"><i className="lni lni-bookmark"></i> {profile.appRefNo}</span>
-                    </div>
+            {/* Full-width hero card, promoted out of a 2-column split
+                (2026-09-15) — same move Payment Console's own Semester
+                Payment tab made: Payment History is now a popup opened from
+                a pc-hero-action button here instead of a permanent section
+                merged into this card. */}
+            <div className="card p-0 overflow-hidden">
+              <div className="pc-hero">
+                <div className="pc-hero-top">
+                  <div className="pc-hero-avatar">{initialsFor(applicantName(profile))}</div>
+                  <div className="flex-1 min-w-0">
+                    <div className="pc-hero-name truncate">{applicantName(profile)}</div>
+                    <div className="pc-hero-sub truncate">{profile.programName ?? '—'}</div>
+                    <span className="pc-hero-badge"><i className="lni lni-bookmark"></i> {profile.appRefNo}</span>
                   </div>
-                  <div className="pc-hero-facts">
-                    <div className="pc-hero-fact"><span className="pc-hero-fact-lbl">Campus</span><span className="pc-hero-fact-val">—</span></div>
-                    <div className="pc-hero-fact"><span className="pc-hero-fact-lbl">Semester</span><span className="pc-hero-fact-val" title={profile.semesterName ?? '—'}>{profile.semesterName ?? '—'}</span></div>
-                    {/* Guards against the literal string "null" — same live
-                        quirk Payment Console's own Intake tile guards against. */}
-                    <div className="pc-hero-fact"><span className="pc-hero-fact-lbl">Intake</span><span className="pc-hero-fact-val" title={profile.intakeCode && profile.intakeCode !== 'null' ? profile.intakeCode : '—'}>{profile.intakeCode && profile.intakeCode !== 'null' ? profile.intakeCode : '—'}</span></div>
-                    <div className="pc-hero-fact"><span className="pc-hero-fact-lbl">Batch</span><span className="pc-hero-fact-val" title={profile.batchCode ?? '—'}>{profile.batchCode ?? '—'}</span></div>
-                    <div className="pc-hero-fact"><span className="pc-hero-fact-lbl">Year</span><span className="pc-hero-fact-val" title={profile.yearCode ?? '—'}>{profile.yearCode ?? '—'}</span></div>
-                    <div className="pc-hero-fact"><span className="pc-hero-fact-lbl">Phone</span><span className="pc-hero-fact-val" title={profile.phone ?? '—'}>{profile.phone ?? '—'}</span></div>
-                    <div className="pc-hero-fact pc-hero-fact-span2">
-                      <span className="pc-hero-fact-lbl">Email</span>
-                      <span className="pc-hero-fact-val truncate" title={profile.emailId ?? profile.universityEmail ?? '—'}>{profile.emailId ?? profile.universityEmail ?? '—'}</span>
-                    </div>
+                  <div className="pc-hero-actions pc-hero-actions-top">
+                    <button type="button" className="pc-hero-action" onClick={() => setShowHistory(true)}>
+                      <i className="lni lni-folder"></i>
+                      <span>Payment History</span>
+                      {history.length > 0 && <strong>{history.length}</strong>}
+                    </button>
                   </div>
                 </div>
-
-                <div className="px-5 pb-5">
-                <div className="sec-divider"><i className="lni lni-files"></i> Payment History</div>
-                {isHistoryLoading ? (
-                  <div className="text-g400 text-center" style={{ padding: 16, fontSize: 12.5 }}>Loading payment history…</div>
-                ) : history.length === 0 ? (
-                  <div className="text-g400 text-center" style={{ padding: 16, fontSize: 12.5 }}>No {CATEGORY_LABEL[category]} payments recorded yet.</div>
-                ) : (
-                  <>
-                  <ScrollTable className="no-sticky-col">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th style={{ width: 40 }}></th>
-                          <th>Payment Date</th>
-                          {category === 'nche' ? <th>PNR Number</th> : <th>Bank Deposit</th>}
-                          <th>Amount</th>
-                          {category === 'nche' && <th>Remarks</th>}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {pagedHistory.map(h => (
-                          <tr key={h.paymentGuid}>
-                            <td>
-                              <ActionMenu>
-                                <button className="btn btn-neu btn-sm" onClick={() => setViewEntry(h)}>
-                                  <i className="lni lni-eye"></i> View
-                                </button>
-                                {/* permissions.edit && ( */}
-                                  <button className="btn btn-neu btn-sm" onClick={() => setEditTarget(h)}>
-                                    <i className="lni lni-pencil-alt"></i> Edit
-                                  </button>
-                                {/* )} */}
-                                {permissions.delete && (
-                                  <button className="btn btn-neu btn-sm" onClick={() => handleDelete(h)}>
-                                    <i className="lni lni-trash-can"></i> Delete
-                                  </button>
-                                )}
-                              </ActionMenu>
-                            </td>
-                            <td>{h.payDate.slice(0, 10)}</td>
-                            {category === 'nche' ? (
-                              <td className="font-mono text-blue">{h.pnrNumber ?? '—'}</td>
-                            ) : (
-                              <td className="text-muted">{h.bankDeposit ?? '—'}</td>
-                            )}
-                            <td className="text-green font-bold">{h.amount.toLocaleString()}</td>
-                            {category === 'nche' && <td className="text-muted">{h.remarks ?? '—'}</td>}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </ScrollTable>
-                  <Pagination page={historyPage} totalPages={historyTotalPages} totalCount={history.length} itemLabel="payments" onPageChange={setHistoryPage} />
-                  </>
-                )}
+                <div className="pc-hero-facts">
+                  <div className="pc-hero-fact"><span className="pc-hero-fact-lbl">Campus</span><span className="pc-hero-fact-val">—</span></div>
+                  <div className="pc-hero-fact"><span className="pc-hero-fact-lbl">Semester</span><span className="pc-hero-fact-val" title={profile.semesterName ?? '—'}>{profile.semesterName ?? '—'}</span></div>
+                  {/* Guards against the literal string "null" — same live
+                      quirk Payment Console's own Intake tile guards against. */}
+                  <div className="pc-hero-fact"><span className="pc-hero-fact-lbl">Intake</span><span className="pc-hero-fact-val" title={profile.intakeCode && profile.intakeCode !== 'null' ? profile.intakeCode : '—'}>{profile.intakeCode && profile.intakeCode !== 'null' ? profile.intakeCode : '—'}</span></div>
+                  <div className="pc-hero-fact"><span className="pc-hero-fact-lbl">Batch</span><span className="pc-hero-fact-val" title={profile.batchCode ?? '—'}>{profile.batchCode ?? '—'}</span></div>
+                  <div className="pc-hero-fact"><span className="pc-hero-fact-lbl">Year</span><span className="pc-hero-fact-val" title={profile.yearCode ?? '—'}>{profile.yearCode ?? '—'}</span></div>
+                  <div className="pc-hero-fact"><span className="pc-hero-fact-lbl">Phone</span><span className="pc-hero-fact-val" title={profile.phone ?? '—'}>{profile.phone ?? '—'}</span></div>
+                  <div className="pc-hero-fact pc-hero-fact-span2">
+                    <span className="pc-hero-fact-lbl">Email</span>
+                    <span className="pc-hero-fact-val truncate" title={profile.emailId ?? profile.universityEmail ?? '—'}>{profile.emailId ?? profile.universityEmail ?? '—'}</span>
+                  </div>
+                  <div className="pc-hero-fact"><span className="pc-hero-fact-lbl">Reg Status</span><span className="pc-hero-fact-val" title={profile.regStatusName ?? '—'}>{profile.regStatusName ?? '—'}</span></div>
+                  <div className="pc-hero-fact"><span className="pc-hero-fact-lbl">Refugee</span><span className="pc-hero-fact-val">{refugeeLabel(profile.refugee)}</span></div>
+                  <div className="pc-hero-fact"><span className="pc-hero-fact-lbl">Category</span><span className="pc-hero-fact-val">{studCategoryLabel(profile.studCategory)}</span></div>
                 </div>
               </div>
             </div>
 
-            {/* RIGHT column: Outstanding Balance + Payment Detail, merged
-                into one card — same "single card, not two" treatment
-                Payment Console's own Tuition tab uses for its outstanding-
-                balance-plus-form section. */}
-            <div className="flex flex-col gap-5 min-w-0">
-              <div className="card">
+            {/* Payment History — popup (2026-09-15), same modal-overlay/
+                modal-lg shell as Payment Console's own showPaymentHistory. */}
+            {showHistory && (
+              <div className="modal-overlay open">
+                <div className="modal modal-lg" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', maxHeight: '85vh' }} onClick={e => e.stopPropagation()}>
+                  <div className="modal-hdr modal-hdr-blue" style={{ flexShrink: 0 }}>
+                    <div className="modal-title"><i className="lni lni-folder"></i> Payment History</div>
+                    <button className="modal-close" onClick={() => setShowHistory(false)}><i className="lni lni-close"></i></button>
+                  </div>
+                  <div style={{ padding: 20, overflowY: 'auto', flex: '1 1 auto', minHeight: 0 }}>
+                    {isHistoryLoading ? (
+                      <div className="text-g400 text-center" style={{ padding: 16, fontSize: 12.5 }}>Loading payment history…</div>
+                    ) : history.length === 0 ? (
+                      <div className="text-g400 text-center" style={{ padding: 16, fontSize: 12.5 }}>No {CATEGORY_LABEL[category]} payments recorded yet.</div>
+                    ) : (
+                      <>
+                      <ScrollTable className="no-sticky-col">
+                        <table>
+                          <thead>
+                            <tr>
+                              <th style={{ width: 40 }}></th>
+                              <th>Payment Date</th>
+                              {category === 'nche' ? <th>PNR Number</th> : <th>Bank Deposit</th>}
+                              <th>Amount</th>
+                              {category === 'nche' && <th>Remarks</th>}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {pagedHistory.map(h => (
+                              <tr key={h.paymentGuid}>
+                                <td>
+                                  <ActionMenu>
+                                    <button className="btn btn-neu btn-sm" onClick={() => setViewEntry(h)}>
+                                      <i className="lni lni-eye"></i> View
+                                    </button>
+                                    {/* permissions.edit && ( */}
+                                      <button className="btn btn-neu btn-sm" onClick={() => setEditTarget(h)}>
+                                        <i className="lni lni-pencil-alt"></i> Edit
+                                      </button>
+                                    {/* )} */}
+                                    {permissions.delete && (
+                                      <button className="btn btn-neu btn-sm" onClick={() => handleDelete(h)}>
+                                        <i className="lni lni-trash-can"></i> Delete
+                                      </button>
+                                    )}
+                                  </ActionMenu>
+                                </td>
+                                <td>{h.payDate.slice(0, 10)}</td>
+                                {category === 'nche' ? (
+                                  <td className="font-mono text-blue">{h.pnrNumber ?? '—'}</td>
+                                ) : (
+                                  <td className="text-muted">{h.bankDeposit ?? '—'}</td>
+                                )}
+                                <td className="text-green font-bold">{h.amount.toLocaleString()}</td>
+                                {category === 'nche' && <td className="text-muted">{h.remarks ?? '—'}</td>}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </ScrollTable>
+                      <Pagination page={historyPage} totalPages={historyTotalPages} totalCount={history.length} itemLabel="payments" onPageChange={setHistoryPage} />
+                      </>
+                    )}
+                  </div>
+                  <div className="modal-footer" style={{ flexShrink: 0 }}>
+                    <button className="btn btn-neu flex-1 justify-center" onClick={() => setShowHistory(false)}>Close</button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Loading / no schedule / fully paid — one full-width card each,
+                with no payment form, same as Payment Console's tuition tab:
+                with nothing to bill, any amount would only be rejected. */}
+            {isOutstandingLoading && (
+              <div className="card text-g400 text-center" style={{ padding: 16, fontSize: 12.5 }}>Checking outstanding balance…</div>
+            )}
+            {!isOutstandingLoading && !isOutstandingError && !semesterStatusList?.length && (
+              <div className="card text-center" style={{ padding: 24 }}>
+                <div className="text-g400" style={{ fontSize: 22 }}><i className="lni lni-calendar"></i></div>
+                <div className="font-bold text-g700" style={{ fontSize: 13.5 }}>No {CATEGORY_LABEL[category]} schedule</div>
+                <div className="text-g400 mt-1" style={{ fontSize: 12.5 }}>This application has no {CATEGORY_LABEL[category]} semester schedule — there is nothing to bill right now.</div>
+              </div>
+            )}
+            {!isOutstandingLoading && !isOutstandingError && allSemestersPaid && (
+              <div className="card text-center" style={{ padding: 24 }}>
+                <div className="pc-receipt-check" style={{ fontSize: 22 }}><i className="lni lni-checkmark-circle"></i></div>
+                <div className="font-bold text-g700" style={{ fontSize: 13.5 }}>Fully settled</div>
+                <div className="text-g400 mt-1" style={{ fontSize: 12.5 }}>Every semester&apos;s {CATEGORY_LABEL[category]} fee is paid — there is nothing to bill right now.</div>
+              </div>
+            )}
+
+            {/* .pc-tuition-split — Outstanding Balance (left) / Payment
+                Detail (right), same two-card split as Payment Console's own
+                Semester Payment tab. Only once there's something to bill (or
+                the status failed to load — the table shows that error and
+                the cashier can still record a payment). */}
+            {!isOutstandingLoading && (isOutstandingError || (!!semesterStatusList?.length && !allSemestersPaid)) && (
+            <div className="pc-tuition-split">
+              <div className="card flex flex-col gap-4 min-w-0">
                 <div className="card-hdr">
                   <div className="card-title"><span className="ctitle-icon"><i className="lni lni-dollar"></i></span> Outstanding Balance ({CATEGORY_LABEL[category]})</div>
                   {dueSemester ? (
@@ -613,38 +698,60 @@ export default function NcheGuildPaymentPage() {
                   ) : null}
                 </div>
                 <RegulatoryOutstandingTable items={semesterStatusList} isLoading={isOutstandingLoading} isError={isOutstandingError} category={category} />
+              </div>
 
-                <div className="sec-divider">
+              <div className="card flex flex-col gap-4 min-w-0">
+                <div className="sec-divider" style={{ marginTop: 0 }}>
                   <i className="lni lni-wallet"></i> Payment Detail
                 </div>
+                {/* Currency + Amount paired, then Date + the category's
+                    reference field — same arrangement as Payment Console. */}
                 <div className="g2 mb-[14px]">
+                  <div className="fg">
+                    <div className="lbl">Currency Received <span className="req">*</span></div>
+                    <SearchSelect
+                      placeholder="— Select Currency —"
+                      options={currencies.map(c => ({ value: c.currencyGuid, label: `${c.currencyCode} — ${c.currencyName}` }))}
+                      value={currencyGuid}
+                      onChange={v => { setCurrencyGuid(v); clearError('currencyGuid') }}
+                    />
+                    {fieldErr('currencyGuid')}
+                  </div>
                   <div className="fg">
                     <div className="lbl">Amount <span className="req">*</span></div>
                     <input type="number" min={0} step={0.01} className="amt-val-input" placeholder="0.00"
-                      style={{ fontSize: 18, fontWeight: 700 }}
-                      value={amount} onChange={e => setAmount(e.target.value)} />
-                    <div style={{ fontSize: 11, color: 'var(--g500)', marginTop: 4 }}>Must be a multiple of the configured {CATEGORY_LABEL[category]} rate — enforced server-side.</div>
-                  </div>
-                  <div className="fg">
-                    <div className="lbl">Payment Date <span className="req">*</span></div>
-                    <DatePicker value={payDate} onChange={setPayDate} />
+                      style={{ fontSize: 18, fontWeight: 700, ...(errors.amount ? { borderColor: 'var(--red)' } : {}) }}
+                      aria-invalid={!!errors.amount}
+                      // Number inputs still accept e/E/+/-; none is a valid amount (> 0).
+                      onKeyDown={e => { if (['e', 'E', '+', '-'].includes(e.key)) e.preventDefault() }}
+                      value={amount} onChange={e => { setAmount(stripLeadingZeros(e.target.value)); clearError('amount') }} />
+                    {errors.amount
+                      ? fieldErr('amount')
+                      : <div style={{ fontSize: 11, color: 'var(--g500)', marginTop: 4 }}>Must be a multiple of the configured {CATEGORY_LABEL[category]} rate, and not more than the outstanding balance.</div>}
                   </div>
                 </div>
-                {category === 'nche' ? (
-                  <>
-                    <div className="fg mb-[14px]">
+                <div className="g2 mb-[14px]">
+                  <div className="fg">
+                    <div className="lbl">Payment Date <span className="req">*</span></div>
+                    <DatePicker value={payDate} onChange={v => { setPayDate(v); clearError('payDate') }} hasError={!!errors.payDate} />
+                    {fieldErr('payDate')}
+                  </div>
+                  {category === 'nche' ? (
+                    <div className="fg">
                       <div className="lbl">PNR Number</div>
                       <input className="ctrl" type="text" placeholder="Optional reference number" value={pnrNumber} onChange={e => setPnrNumber(e.target.value)} />
                     </div>
-                    <div className="fg mb-4">
-                      <div className="lbl">Remarks</div>
-                      <textarea className="ctrl" rows={2} placeholder="Optional notes" value={remarks} onChange={e => setRemarks(e.target.value)} />
+                  ) : (
+                    <div className="fg">
+                      <div className="lbl">Bank Deposit</div>
+                      <input className="ctrl" type="text" placeholder="Optional bank deposit reference" value={bankDeposit} onChange={e => setBankDeposit(e.target.value)} />
                     </div>
-                  </>
-                ) : (
+                  )}
+                </div>
+                {category === 'nche' && (
                   <div className="fg mb-4">
-                    <div className="lbl">Bank Deposit</div>
-                    <input className="ctrl" type="text" placeholder="Optional bank deposit reference" value={bankDeposit} onChange={e => setBankDeposit(e.target.value)} />
+                    <div className="lbl">Remarks</div>
+                    <textarea className="ctrl" rows={2} placeholder="Optional notes" value={remarks} onChange={e => setRemarks(e.target.value)} />
                   </div>
                 )}
                 <div className="flex gap-[10px] justify-end items-center">
@@ -654,7 +761,7 @@ export default function NcheGuildPaymentPage() {
                 </div>
               </div>
             </div>
-            </div>
+            )}
           </>
         )}
       </div>
@@ -686,7 +793,7 @@ export default function NcheGuildPaymentPage() {
           shared SuccessPopup once the mutation actually succeeds instead
           of closing outright. */}
       {confirmAction && (
-        <div className="modal-overlay open confirm-modal-overlay" onClick={successInfo ? undefined : closeConfirm}>
+        <div className="modal-overlay open confirm-modal-overlay">
           <div className="modal modal-sm confirm-modal-pop" onClick={e => e.stopPropagation()}>
             {successInfo ? (
               <SuccessPopup title={successInfo.title} subtitle={successInfo.subtitle} onClose={closeConfirm} />

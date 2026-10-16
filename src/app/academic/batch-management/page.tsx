@@ -1,6 +1,5 @@
 'use client'
-import { useState, useMemo, useEffect } from 'react'
-import { useQueries } from '@tanstack/react-query'
+import { useState, useMemo } from 'react'
 import { ScrollTable } from '@/components/ScrollTable'
 import { ActionMenu } from '@/components/ActionMenu'
 import { TableSearch } from '@/components/TableSearch'
@@ -10,32 +9,25 @@ import { Toast } from '@/components/Toast'
 import { EmptyState } from '@/components/EmptyState'
 import { TableLoadingState } from '@/components/TableLoadingState'
 import { Pagination } from '@/components/Pagination'
-import { usePagination } from '@/hooks/usePagination'
-import { useBatches, useBatchSearch, useCreateBatch, useUpdateBatch, useDeleteBatch, useBatchStudentCount, Batch } from '@/hooks/academic/useBatches'
-import { useProgramMasters } from '@/hooks/academic/useProgramMaster'
-import { useStreams } from '@/hooks/config/useStreams'
-import { useBatchTimes } from '@/hooks/config/useBatchTimes'
-import { useEmployees } from '@/hooks/employee/useEmployees'
+import { useBatches, useCreateBatch, useUpdateBatch, useDeleteBatch, useBatchStudentCount, Batch } from '@/hooks/academic/useBatches'
+import { useEmployeeDropdown } from '@/hooks/employee/useEmployees'
 import { usePagePermissions } from '@/hooks/users/usePagePermissions'
-import { getSemestersForProgram } from '@/lib/api/academic/semester'
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
 // bStartDate/bEndDate come back as "2024-02-12T00:00:00" — display as
 // "12 Feb 2024" rather than the raw ISO date.
-function formatDisplayDate(iso: string | null): string {
-  if (!iso) return '—'
-  const [y, m, d] = iso.slice(0, 10).split('-').map(Number)
-  if (!y || !m || !d) return '—'
-  return `${d} ${MONTHS[m - 1]} ${y}`
+function formatDisplayDate(dateStr?: string | null) {
+  if (!dateStr) return '—'
+  const d = new Date(dateStr)
+  if (isNaN(d.getTime())) return dateStr
+  return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`
 }
 
-const PAGE_SIZE = 20
-// Load enough rows to cover the full batch list (333+ seen in practice) in
-// one request, same "load it all, search/paginate client-side" convention
-// as useEmployees/useFaculties — a search box only makes sense against the
-// whole dataset, not whatever 20-row server page happens to be loaded.
-const BATCHES_LOAD_SIZE = 1000
+// 10 rows/page — same convention as the other master pages (Intake
+// Master, Programme Group, Repetition Tag), not the 20 this used while it
+// was still client-paginating a 1000-row full fetch.
+const PAGE_SIZE = 10
 // Don't narrow the table (or open the search dropdown) until the user's
 // typed at least this many characters — same convention as Intake Master /
 // Skill Master's search boxes.
@@ -46,96 +38,67 @@ export default function Page() {
   const [openModals, setOpenModals] = useState<Set<string>>(new Set())
   const [toast, setToast] = useState<{ msg: string; type: string } | null>(null)
   const [search, setSearch] = useState('')
+  const [page, setPage] = useState(1)
   const [editingBatchGuid, setEditingBatchGuid] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<Batch | null>(null)
 
-  const { data, isLoading } = useBatches(1, BATCHES_LOAD_SIZE)
-  const serverTotalCount = data?.totalCount ?? 0
-
-  // Debounced so the backend's ?search= isn't hit on every keystroke, and
-  // held at '' (falling back to the unfiltered list) until MIN_SEARCH_CHARS
-  // is met — same convention as Intake/Skill/Repetition Tag's search boxes.
-  const [debouncedSearch, setDebouncedSearch] = useState('')
-  useEffect(() => {
-    const trimmed = search.trim()
-    if (trimmed.length < MIN_SEARCH_CHARS) { setDebouncedSearch(''); return }
-    const t = setTimeout(() => setDebouncedSearch(trimmed), 400)
-    return () => clearTimeout(t)
-  }, [search])
-
-  const { data: searchData, isFetching: isSearching } = useBatchSearch(debouncedSearch, BATCHES_LOAD_SIZE)
+  // Real server-side pagination (2026-09-09) — only PAGE_SIZE rows are ever
+  // requested for the page on screen, not the whole 333+-row table fetched
+  // at once the way this page used to (useBatches(1, 1000)). Search is real
+  // server-side too (see useBatches), only
+  // actually queried once the term clears MIN_SEARCH_CHARS, same gate
+  // TableSearch's own dropdown uses. Trade-off: "newest to oldest" sorting
+  // (Batch has no createdAt, only bStartDate) can now only sort the rows
+  // already on the current page, not the full dataset — same "server
+  // search/paging, client work stays page-scoped" trade-off enquiry-list's
+  // own filters made.
   const searchTrimmed = search.trim()
-  const searchPending = searchTrimmed.length >= MIN_SEARCH_CHARS && (debouncedSearch !== searchTrimmed || isSearching)
+  const activeSearch = searchTrimmed.length >= MIN_SEARCH_CHARS ? searchTrimmed : ''
+  const { data, isLoading, isFetching } = useBatches(page, PAGE_SIZE, activeSearch)
+  const totalCount = data?.totalCount ?? 0
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE))
+  const searchPending = searchTrimmed.length >= MIN_SEARCH_CHARS && isFetching
 
-  // Batch has no createdAt field — bStartDate is the only temporal signal
-  // available, so "newest to oldest" sorts by that, descending.
   const sortedRows = useMemo(
     () => [...(data?.items ?? [])].sort((a, b) => (b.bStartDate ?? '').localeCompare(a.bStartDate ?? '')),
     [data],
   )
-  // Re-filter client-side is removed per ACA-012 — search box now operates
-  // completely independently of the table content below it.
   const filteredRows = sortedRows
-  const { page, setPage, totalPages, totalCount, pageItems } = usePagination(filteredRows, PAGE_SIZE)
+  const pageItems = filteredRows
+
   const createBatch = useCreateBatch()
   const updateBatch = useUpdateBatch()
   const deleteBatch = useDeleteBatch()
 
-  const { data: programs = [] } = useProgramMasters()
-  const { data: streams = [] } = useStreams()
-  const { data: batchTimes = [] } = useBatchTimes()
-  const { data: employees = [] } = useEmployees()
+  const needsEmployeeLookup = pageItems.some(r => r.bInCharge || r.pHead)
+  const { data: employees = [] } = useEmployeeDropdown(needsEmployeeLookup)
 
-  function programName(programGuid: string) {
-    return programs.find(p => p.programGuid === programGuid)?.programName ?? '—'
+  function programName(r: Batch) {
+    return r.programName ?? '—'
   }
-  function streamName(streamGuid: string) {
-    return streams.find(s => s.streamGuid === streamGuid)?.streamName ?? '—'
+  function streamName(r: Batch) {
+    return r.streamName ?? '—'
   }
-  function batchTimeName(batchTimeGuid: string) {
-    return batchTimes.find(b => b.batchTimeGuid === batchTimeGuid)?.batchTime ?? '—'
+  function batchTimeName(r: Batch) {
+    return r.batchTimeName ?? '—'
+  }
+  // No client-side fallback needed — semesterName is always present on the
+  // row (see the Batch type's own comment). This replaces what used to be a
+  // genuinely N+1 fetch (one GET .../semesters/dropdownforprogram request
+  // per distinct programme on the page, since there's no global semester
+  // list) with zero extra requests at all.
+  function semesterName(r: Batch) {
+    return r.semesterName ?? '—'
   }
   function employeeName(guid?: string | null) {
     if (!guid || guid === '00000000-0000-0000-0000-000000000000') return '—'
-    return employees.find(e => e.employeeGuid === guid)?.empName || '—'
+    return employees.find(e => e.employeeGuid === guid)?.displayName || '—'
   }
 
-  const searchMatches = useMemo(
-    () => {
-      if (searchTrimmed.length < MIN_SEARCH_CHARS) return []
-      const source = (debouncedSearch ? searchData?.items : data?.items) ?? []
-      return source.filter(r => r.batchCode.toLowerCase().includes(searchTrimmed.toLowerCase())).slice(0, 8)
-    },
-    [searchTrimmed, debouncedSearch, searchData, data],
-  )
-
-  // Semester is still scoped per-programme (no global semester list, only
-  // GET .../semesters/dropdownforprogram?programGuid=), so resolving a name
-  // means fetching each distinct programme's semester list and matching by
-  // the row's real semesterGuid — a real lookup now, not a position guess.
-  // Scoped to just the currently visible page (not the whole loaded
-  // dataset) to avoid firing one parallel request per distinct programme
-  // across all 300+ batches at once.
-  const programGuidsOnPage = useMemo(() => Array.from(new Set(pageItems.map(r => r.programGuid))), [pageItems])
-
-  const semesterQueries = useQueries({
-    queries: programGuidsOnPage.map(programGuid => ({
-      queryKey: ['semesters', 'forProgram', programGuid],
-      queryFn: () => getSemestersForProgram(programGuid),
-      staleTime: Infinity,
-      gcTime: Infinity,
-    })),
-  })
-
-  const semestersByProgram = useMemo(() => {
-    const map: Record<string, { semesterGuid: string; semName: string }[]> = {}
-    programGuidsOnPage.forEach((guid, i) => { map[guid] = semesterQueries[i]?.data ?? [] })
-    return map
-  }, [programGuidsOnPage, semesterQueries])
-
-  function semesterName(programGuid: string, semesterGuid: string) {
-    return (semestersByProgram[programGuid] ?? []).find(s => s.semesterGuid === semesterGuid)?.semName ?? '—'
-  }
+  // Rows are already server-filtered by activeSearch — this just previews
+  // up to 8 of what's already loaded (same convention as enquiry-list's own
+  // searchMatches).
+  const searchMatches = searchTrimmed.length >= MIN_SEARCH_CHARS ? filteredRows.slice(0, 8) : []
 
   function openModal(id: string) { setOpenModals(prev => new Set(prev).add(id)) }
   function closeModal(id: string) { setOpenModals(prev => { const s = new Set(prev); s.delete(id); return s }) }
@@ -187,8 +150,8 @@ export default function Page() {
               className="w-56"
               placeholder="Search by batch code…"
               value={search}
-              onChange={setSearch}
-              results={searchMatches.map(r => ({ id: r.batchGuid, primary: r.batchCode, secondary: programName(r.programGuid) }))}
+              onChange={v => { setSearch(v); setPage(1) }}
+              results={searchMatches.map(r => ({ id: r.batchGuid, primary: r.batchCode, secondary: programName(r) }))}
               loading={searchPending}
               minChars={MIN_SEARCH_CHARS}
               onSelect={(r) => openViewModal(r.id)}
@@ -214,8 +177,8 @@ export default function Page() {
               <tbody>
                 {isLoading
                   ? <TableLoadingState colSpan={999} />
-                  : filteredRows.length === 0
-                    ? <EmptyState colSpan={999} hasFilters={false} onClearFilters={() => {}} />
+                  : pageItems.length === 0
+                    ? <EmptyState colSpan={999} hasFilters={!!search.trim()} onClearFilters={() => setSearch('')} />
                     : null}
                 {!isLoading && pageItems.map(r => (
                   <tr key={r.batchGuid}>
@@ -229,10 +192,10 @@ export default function Page() {
                       )}
                     </td>
                     <td><span className="font-bold font-mono text-blue">{r.batchCode}</span></td>
-                    <td>{programName(r.programGuid)}</td>
-                    <td>{semesterName(r.programGuid, r.semesterGuid)}</td>
-                    <td>{streamName(r.streamGuid)}</td>
-                    <td>{batchTimeName(r.batchTimeGuid)}</td>
+                    <td>{programName(r)}</td>
+                    <td>{semesterName(r)}</td>
+                    <td>{streamName(r)}</td>
+                    <td>{batchTimeName(r)}</td>
                     <td>{employeeName(r.bInCharge)}</td>
                     <td>{employeeName(r.pHead)}</td>
                     <td className="text-sm text-g600">{formatDisplayDate(r.bStartDate)}</td>
@@ -247,30 +210,36 @@ export default function Page() {
           <Pagination page={page} totalPages={totalPages} totalCount={totalCount} itemLabel="batches" onPageChange={setPage} />
         </div>
       </div>
-      <BatchFormModal
-        mode="new"
-        isOpen={openModals.has('new-batch-modal')}
-        onClose={() => closeModal('new-batch-modal')}
-        showToast={showToast}
-        batchGuid={null}
-        createBatch={createBatch}
-        updateBatch={updateBatch}
-      />
-      <BatchFormModal
-        mode="edit"
-        isOpen={openModals.has('edit-batch-modal')}
-        onClose={() => closeModal('edit-batch-modal')}
-        showToast={showToast}
-        batchGuid={editingBatchGuid}
-        createBatch={createBatch}
-        updateBatch={updateBatch}
-      />
-      <ViewBatchModal canEdit={permissions.edit} onEdit={() => { closeModal('view-batch-modal'); openEditModal(editingBatchGuid || '') }}
-        isOpen={openModals.has('view-batch-modal')}
-        onClose={() => closeModal('view-batch-modal')}
-        showToast={showToast}
-        batchGuid={editingBatchGuid}
-      />
+      {openModals.has('new-batch-modal') && (
+        <BatchFormModal
+          mode="new"
+          isOpen
+          onClose={() => closeModal('new-batch-modal')}
+          showToast={showToast}
+          batchGuid={null}
+          createBatch={createBatch}
+          updateBatch={updateBatch}
+        />
+      )}
+      {openModals.has('edit-batch-modal') && (
+        <BatchFormModal
+          mode="edit"
+          isOpen
+          onClose={() => closeModal('edit-batch-modal')}
+          showToast={showToast}
+          batchGuid={editingBatchGuid}
+          createBatch={createBatch}
+          updateBatch={updateBatch}
+        />
+      )}
+      {openModals.has('view-batch-modal') && (
+        <ViewBatchModal canEdit={permissions.edit} onEdit={() => { closeModal('view-batch-modal'); openEditModal(editingBatchGuid || '') }}
+          isOpen
+          onClose={() => closeModal('view-batch-modal')}
+          showToast={showToast}
+          batchGuid={editingBatchGuid}
+        />
+      )}
       <Toast toast={toast} />
 
       {deleteTarget && (

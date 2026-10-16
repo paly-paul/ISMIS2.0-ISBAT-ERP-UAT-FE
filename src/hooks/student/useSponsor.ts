@@ -12,12 +12,13 @@ import {
 const SPONSOR_CATEGORIES_KEY = ['sponsor-categories']
 const SPONSOR_DETAILS_KEY = ['sponsor-details']
 
-export function useSponsorCategories() {
+export function useSponsorCategories(enabled = true) {
   return useQuery({
     queryKey: SPONSOR_CATEGORIES_KEY,
     queryFn: () => getSponsorCategories(),
     staleTime: Infinity,
     gcTime: Infinity,
+    enabled,
   })
 }
 
@@ -46,10 +47,10 @@ export function useDeleteSponsorCategory() {
 }
 
 // Only enabled once a student is actually loaded, same convention as
-// useStudent's profile-modal gating. retry: false — a real 401 here means
-// "this campus isn't authorized to view this student's sponsor" (confirmed
-// live 2026-08-25, despite the docs saying no fine-grained permission
-// exists), which retrying won't fix; callers should check `error` to tell
+// useStudent's profile-modal gating. A real 401 here means "this campus
+// isn't authorized to view this student's sponsor" (confirmed live
+// 2026-08-25, despite the docs saying no fine-grained permission exists);
+// callers should check `error` to tell
 // that apart from "no assignment yet" (which resolves to `data: null`, not
 // an error — see getSponsorDetails).
 export function useSponsorDetails(studentGuid: string | null, enabled: boolean) {
@@ -57,7 +58,6 @@ export function useSponsorDetails(studentGuid: string | null, enabled: boolean) 
     queryKey: [...SPONSOR_DETAILS_KEY, studentGuid],
     queryFn: () => getSponsorDetails(studentGuid as string),
     enabled: enabled && !!studentGuid,
-    retry: false,
   })
 }
 

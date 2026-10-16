@@ -7,6 +7,7 @@ import { SearchSelect } from '@/components/SearchSelect'
 import { Department, DepartmentInput } from '@/lib/api/academic/department'
 import { useEmployees } from '@/hooks/employee/useEmployees'
 import { AuthError } from '@/lib/api/client'
+import { scrollToFirstError } from '@/lib/scrollToFirstError'
 
 // Not part of the real GET /api/v1/users/departments response (which only
 // has shortCode/deptName/employeeGuid) — kept for reference until a
@@ -67,6 +68,7 @@ export function DepartmentFormModal({ isOpen, onClose, showToast, mode, departme
     if (!deptName.trim())  e.deptName  = 'Department Name is required'
     else if (deptName.trim().length > 100) e.deptName = 'Department Name must be 100 characters or fewer'
     setErrors(e)
+    scrollToFirstError(e)
     return Object.keys(e).length === 0
   }
 
@@ -137,7 +139,7 @@ export function DepartmentFormModal({ isOpen, onClose, showToast, mode, departme
               onChange={e => { setShortCode(e.target.value); if (errors.shortCode) setErrors(p => ({ ...p, shortCode: '' })) }}
               style={errors.shortCode ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.shortCode && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.shortCode}</p>}
+            {errors.shortCode && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.shortCode}</p>}
           </div>
           <div className="fg">
             <div className="lbl">Department Name <span className="req">*</span></div>
@@ -149,7 +151,7 @@ export function DepartmentFormModal({ isOpen, onClose, showToast, mode, departme
               onChange={e => { setDeptName(e.target.value); if (errors.deptName) setErrors(p => ({ ...p, deptName: '' })) }}
               style={errors.deptName ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.deptName && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.deptName}</p>}
+            {errors.deptName && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.deptName}</p>}
           </div>
           <div className="fg span2">
             <div className="lbl">Head of Department</div>

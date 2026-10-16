@@ -1,5 +1,6 @@
 'use client'
-import { useState } from 'react'
+import { Suspense, useEffect, useRef, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { Toast } from '@/components/Toast'
 import { SearchSelect } from '@/components/SearchSelect'
 import { ScrollTable } from '@/components/ScrollTable'
@@ -8,18 +9,49 @@ import { Pagination } from '@/components/Pagination'
 import { ActionMenu } from '@/components/ActionMenu'
 import { StudentLookup } from '@/components/student/StudentLookup'
 import { BaselinePanel } from '@/components/student/BaselinePanel'
-import { StudentDto } from '@/lib/api/student/student'
+import { StudentDto, normalizeStudentDetail } from '@/lib/api/student/student'
+import { useStudent } from '@/hooks/student/useStudents'
 import { SuccessPopup } from '@/components/modals/shared/SuccessPopup'
 import { useFeeTransferContext, useFeeTransferHistory, useExecuteFeeTransfer } from '@/hooks/student/useFeeTransfer'
 import { useProgramTransferFeeStructures } from '@/hooks/student/useProgramTransfer'
-import { usePagePermissions } from '@/hooks/users/usePagePermissions'
+// import { usePagePermissions } from '@/hooks/users/usePagePermissions'
 
-export default function Page() {
-  const permissions = usePagePermissions()
+// useSearchParams() requires a Suspense boundary above it (Next.js App
+// Router) — see the wrapping default export at the bottom of this file.
+function FeeStructureTransferContent() {
+  // Permission checks disabled for now — every action is allowed. Restore the
+  // line below (and the import above) to gate actions by the menu permissions again.
+  // const permissions = usePagePermissions()
+  const permissions = { add: true, edit: true, delete: true }
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  // The refugee flow redirects here as
+  // /student/fee-structure-transfer?studentGuid=<guid> after an approval
+  // (Refugee Status Approval) or a removal — same deep-link convention as
+  // Batch Transfer.
+  const studentGuidParam = searchParams.get('studentGuid')
   const [toast, setToast] = useState<{ msg: string; type: string } | null>(null)
   function showToast(msg: string, type = '') { setToast({ msg, type }); setTimeout(() => setToast(null), 3500) }
 
+  // Success message handed over by the refugee flow's redirect
+  // (?notice=refugee-approved|refugee-removed) — the previous page's own
+  // toast unmounts on navigation. Ref-guarded against Strict Mode's double
+  // effect.
+  const noticeShown = useRef(false)
+  useEffect(() => {
+    if (noticeShown.current) return
+    noticeShown.current = true
+    const notice = searchParams.get('notice')
+    if (notice === 'refugee-approved') showToast('Refugee status approved — review the fee structure below', 'ok')
+    else if (notice === 'refugee-removed') showToast('Refugee status removed — review the fee structure below', 'ok')
+  }, [searchParams])
+
   const [student, setStudent] = useState<StudentDto | null>(null)
+
+  const { data: guidLoadedStudent } = useStudent(studentGuidParam, !student && !!studentGuidParam)
+  useEffect(() => {
+    if (!student && studentGuidParam && guidLoadedStudent) setStudent(normalizeStudentDetail(guidLoadedStudent, studentGuidParam))
+  }, [student, studentGuidParam, guidLoadedStudent])
   const [targetFeeStructure, setTargetFeeStructure] = useState('')
   const [applyPrevious, setApplyPrevious] = useState(false)
   const [remarks, setRemarks] = useState('')
@@ -40,7 +72,7 @@ export default function Page() {
     .filter(f => f.feeHdGuid !== ctx?.currentFeeGuid)
     .map(f => ({
       value: f.feeHdGuid,
-      label: `${f.feeCode} (${f.feeDesc})`
+      label: f.feeCode
     }))
 
   function handleLoad(s: StudentDto) { setStudent(s); showToast(`${s.studentName} loaded`, 'ok') }
@@ -49,8 +81,10 @@ export default function Page() {
     setTargetFeeStructure('')
     setApplyPrevious(false)
     setRemarks('')
+    // Drop ?studentGuid= so the effect above doesn't reload the same student.
+    if (studentGuidParam) router.replace('/student/fee-structure-transfer')
   }
-  
+
   const totalCount = history.length
   const totalPages = Math.max(1, Math.ceil(totalCount / itemsPerPage))
   const paginatedHistory = history.slice((page - 1) * itemsPerPage, page * itemsPerPage)
@@ -58,7 +92,7 @@ export default function Page() {
   const canExecute = !!(student && targetFeeStructure && remarks.trim() && !executeTransfer.isPending)
 
   function handleSubmit() {
-    if (!canExecute || !student) return
+    if (!permissions.edit || !canExecute || !student) return
     executeTransfer.mutate({
       studentGuid: student.studentGuid,
       payload: {
@@ -141,7 +175,8 @@ export default function Page() {
                 </div>
                 <div className="fg" style={{ gridColumn: '1 / -1' }}>
                   <label className="lbl">Remarks <span className="req">*</span></label>
-                  <textarea className="ctrl" rows={3} placeholder="Provide details for this transfer..." value={remarks} onChange={e => setRemarks(e.target.value)} />
+                  {/* post-fee-transfer.md: remarks max 500 characters. */}
+                  <textarea className="ctrl" rows={3} maxLength={500} placeholder="Provide details for this transfer..." value={remarks} onChange={e => setRemarks(e.target.value)} />
                 </div>
               </div>
               <div className="flex gap-2" style={{ justifyContent: 'flex-start', marginTop: 8 }}>
@@ -215,5 +250,13 @@ export default function Page() {
       )}
       <Toast toast={toast} />
     </>
+  )
+}
+
+export default function Page() {
+  return (
+    <Suspense>
+      <FeeStructureTransferContent />
+    </Suspense>
   )
 }

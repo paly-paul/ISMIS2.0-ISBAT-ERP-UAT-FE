@@ -6,6 +6,7 @@ import { FailurePopup } from '../shared/FailurePopup'
 import { UnitTypeInput } from '@/lib/api/academic/unitType'
 import { useUnitType } from '@/hooks/config/useUnitTypes'
 import { AuthError } from '@/lib/api/client'
+import { scrollToFirstError } from '@/lib/scrollToFirstError'
 
 interface UnitTypeFormModalProps extends ModalProps {
   mode: 'new' | 'edit'
@@ -52,6 +53,7 @@ export function UnitTypeFormModal({ isOpen, onClose, showToast, mode, unitTypeGu
     const e: Record<string, string> = {}
     if (!unitTypeName.trim()) e.unitTypeName = 'Unit Type Name is required'
     setErrors(e)
+    scrollToFirstError(e)
     return Object.keys(e).length === 0
   }
 
@@ -141,7 +143,7 @@ export function UnitTypeFormModal({ isOpen, onClose, showToast, mode, unitTypeGu
             onChange={e => { setUnitTypeName(e.target.value); clearError('unitTypeName') }}
             style={errors.unitTypeName ? { borderColor: 'var(--red)' } : undefined}
           />
-          {errors.unitTypeName && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.unitTypeName}</p>}
+          {errors.unitTypeName && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.unitTypeName}</p>}
         </div>
         <div className="modal-footer">
           <button className="btn btn-neu" onClick={handleClose}>Cancel</button>

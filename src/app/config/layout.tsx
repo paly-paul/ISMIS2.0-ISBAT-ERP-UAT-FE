@@ -3,6 +3,7 @@ import { useState, useRef, useEffect } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { Header } from '@/components/Header'
 import { Sidebar, RailId } from '@/components/Sidebar'
+import { RouteGuard } from '@/components/RouteGuard'
 import { getSessionIdentity } from '@/lib/session'
 
 // The proactive keep-alive refresh timer lives in src/app/providers.tsx now
@@ -79,7 +80,7 @@ export default function ConfigLayout({ children }: { children: React.ReactNode }
           setActiveRail={setActiveRail}
         />
         <main className={`main${panelOpen ? ' panel-open' : ''}`}>
-          {children}
+          <RouteGuard>{children}</RouteGuard>
         </main>
       </div>
     </>

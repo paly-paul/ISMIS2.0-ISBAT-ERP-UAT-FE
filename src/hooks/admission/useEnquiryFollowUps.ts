@@ -1,4 +1,4 @@
-import { useInfiniteQuery, useMutation, useQuery, keepPreviousData } from '@tanstack/react-query'
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { createEnquiryFollowUp, EnquiryFollowUpInput, EnquiryFollowUpListItem, getEnquiryFollowUps, getEnquiryFollowUpsByAdvisor } from '@/lib/api/admission/enquiryFollowUp'
 
 const ENQUIRY_FOLLOW_UPS_KEY = ['enquiryFollowUps']
@@ -80,12 +80,21 @@ export function useEnquiryFollowUpsByAdvisor(page: number, pageSize: number) {
   })
 }
 
-// No onSuccess invalidation — the list endpoint doesn't echo back enough to
-// know for certain the create actually landed correctly (see the note on
-// EnquiryFollowUpInput), so let the page decide whether to refetch.
+// Every list above is cached with staleTime: Infinity, so without this a
+// successful save never showed up (the "unable to add a follow-up" bug,
+// 2026-10-09) until a full page reload. The create now posts a real
+// enquiryGuid and returns the saved follow-up, so refresh on success:
+// follow-up lists + count (partial key match), the advisor-scoped list, and
+// the enquiries (their follow-up / enquiry status changes with each log).
 export function useCreateEnquiryFollowUp() {
+  const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (input: EnquiryFollowUpInput) => createEnquiryFollowUp(input),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ENQUIRY_FOLLOW_UPS_KEY })
+      queryClient.invalidateQueries({ queryKey: ENQUIRY_FOLLOW_UPS_BY_ADVISOR_KEY })
+      queryClient.invalidateQueries({ queryKey: ['enquiries'] })
+    },
   })
 }
 

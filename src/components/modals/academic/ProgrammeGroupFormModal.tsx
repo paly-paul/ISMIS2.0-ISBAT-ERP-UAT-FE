@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { ModalProps } from '../types'
 import { SuccessPopup } from '../shared/SuccessPopup'
@@ -7,8 +7,10 @@ import { FailurePopup } from '../shared/FailurePopup'
 import { SearchSelect } from '@/components/SearchSelect'
 import { ProgramGroupInput } from '@/lib/api/academic/programGroup'
 import { useProgramGroup } from '@/hooks/academic/useProgramGroups'
-import { useProgramLevels } from '@/hooks/academic/useProgramLevels'
+import { useSearchProgramLevelsInfinite } from '@/hooks/academic/useProgramLevels'
 import { AuthError } from '@/lib/api/client'
+import { flattenUniquePages } from '@/lib/pagination'
+import { scrollToFirstError } from '@/lib/scrollToFirstError'
 
 // Add and Edit share this form — differ in prefill, the post-save redirect
 // (Add only), and which mutation runs.
@@ -38,10 +40,22 @@ export function ProgrammeGroupFormModal({ isOpen, onClose, showToast, mode, prog
   const [groupCode, setGroupCode]     = useState('')
   const [groupName, setGroupName]     = useState('')
   const [programLevel, setProgramLevel] = useState('')
+  const [levelSearch, setLevelSearch] = useState('')
+  const [committedLevelSearch, setCommittedLevelSearch] = useState('')
+  const [levelPickerOpen, setLevelPickerOpen] = useState(false)
   const [errors, setErrors]           = useState<Record<string, string>>({})
 
-  const { data: programLevels = [] } = useProgramLevels()
+  const levelQuery = useSearchProgramLevelsInfinite(committedLevelSearch, 20, isOpen && levelPickerOpen)
+  const programLevels = useMemo(
+    () => flattenUniquePages(levelQuery.data?.pages ?? [], level => level.programLevelGuid),
+    [levelQuery.data],
+  )
   const programLevelOptions = programLevels.map(l => ({ value: l.programLevelGuid, label: l.levelName }))
+
+  useEffect(() => {
+    const timer = setTimeout(() => setCommittedLevelSearch(levelSearch.trim()), 300)
+    return () => clearTimeout(timer)
+  }, [levelSearch])
 
   // Prefill on edit once the group loads; re-runs per guid since react-query resets `programGroup` to undefined between them.
   useEffect(() => {
@@ -58,6 +72,10 @@ export function ProgrammeGroupFormModal({ isOpen, onClose, showToast, mode, prog
 
   if (!isOpen) return null
 
+  if (isEdit && programGroup && programLevel && !programLevelOptions.some(option => option.value === programLevel)) {
+    programLevelOptions.unshift({ value: programLevel, label: programGroup.programLevelName || 'Selected programme level' })
+  }
+
   function handleClose() {
     setSaved(false); setFailure(null)
     setGroupCode(''); setGroupName(''); setProgramLevel(''); setErrors({})
@@ -72,22 +90,33 @@ export function ProgrammeGroupFormModal({ isOpen, onClose, showToast, mode, prog
     setErrors(prev => (prev[field] ? { ...prev, [field]: '' } : prev))
   }
 
+  // Mirrors SaveProgramGroupRequestValidator: code ≤ 10, name ≤ 200, level required.
   function validate() {
     const e: Record<string, string> = {}
     if (!groupCode.trim()) e.groupCode = 'Group Code is required'
+    else if (groupCode.trim().length > 10) e.groupCode = 'Group Code must be 10 characters or fewer'
     if (!groupName.trim()) e.groupName = 'Group Name is required'
+    else if (groupName.trim().length > 200) e.groupName = 'Group Name must be 200 characters or fewer'
     if (!programLevel)     e.programLevel = 'Select a programme level before proceeding'
     setErrors(e)
+    scrollToFirstError(e)
     return Object.keys(e).length === 0
   }
 
-  // Map known backend failures to a field error where the cause is
-  // actionable right there (duplicate groupCode); anything else shows the
-  // failure popup instead.
+  // Map the documented backend failures to the field they're about; anything
+  // else shows the failure popup.
   function handleSaveError(error: Error) {
     const code = error instanceof AuthError ? error.code : undefined
-    if (code === 'bad_request') {
+    // Duplicate code is a 409 `conflict`, not a 400.
+    if (code === 'conflict') {
       setErrors(prev => ({ ...prev, groupCode: error.message || 'A programme group with this code already exists.' }))
+      scrollToFirstError({ groupCode: 'x' })
+      return
+    }
+    // 404 is either the group itself (edit) or the level; the message tells them apart.
+    if (code === 'not_found' && /level/i.test(error.message)) {
+      setErrors(prev => ({ ...prev, programLevel: 'This programme level no longer exists. Pick another one.' }))
+      scrollToFirstError({ programLevel: 'x' })
       return
     }
     setFailure(error.message || `Failed to ${isEdit ? 'update' : 'add'} programme group. Please try again.`)
@@ -95,7 +124,8 @@ export function ProgrammeGroupFormModal({ isOpen, onClose, showToast, mode, prog
 
   function handleSubmit() {
     if (!validate()) return
-    const input: ProgramGroupInput = { groupCode, groupName, programLevelGuid: programLevel }
+    // Backend stores code/name untrimmed, so trim here.
+    const input: ProgramGroupInput = { groupCode: groupCode.trim(), groupName: groupName.trim(), programLevelGuid: programLevel }
 
     if (isEdit && programGroupGuid) {
       updateProgramGroup.mutate(
@@ -183,9 +213,15 @@ export function ProgrammeGroupFormModal({ isOpen, onClose, showToast, mode, prog
                 placeholder="Select programme level…"
                 options={programLevelOptions}
                 value={programLevel}
+                onSearch={setLevelSearch}
+                onOpenChange={setLevelPickerOpen}
+                isLoading={levelQuery.isLoading}
+                hasNextPage={levelQuery.hasNextPage}
+                isFetchingNextPage={levelQuery.isFetchingNextPage}
+                onLoadMore={() => levelQuery.fetchNextPage()}
                 onChange={v => { setProgramLevel(v); clearError('programLevel') }}
               />
-              {errors.programLevel && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.programLevel}</p>}
+              {errors.programLevel && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.programLevel}</p>}
             </div>
           )}
           <div className="fg">
@@ -193,22 +229,24 @@ export function ProgrammeGroupFormModal({ isOpen, onClose, showToast, mode, prog
             <input
               className="ctrl"
               placeholder="e.g. SCI"
+              maxLength={10}
               value={groupCode}
               onChange={e => { setGroupCode(e.target.value); clearError('groupCode') }}
               style={errors.groupCode ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.groupCode && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.groupCode}</p>}
+            {errors.groupCode && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.groupCode}</p>}
           </div>
           <div className="fg">
             <div className="lbl">Group Name <span className="req">*</span></div>
             <input
               className="ctrl"
               placeholder="e.g. Science Group"
+              maxLength={200}
               value={groupName}
               onChange={e => { setGroupName(e.target.value); clearError('groupName') }}
               style={errors.groupName ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.groupName && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.groupName}</p>}
+            {errors.groupName && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.groupName}</p>}
           </div>
           {isEdit && (
             <div className="fg span2">
@@ -217,9 +255,15 @@ export function ProgrammeGroupFormModal({ isOpen, onClose, showToast, mode, prog
                 placeholder="Select programme level…"
                 options={programLevelOptions}
                 value={programLevel}
+                onSearch={setLevelSearch}
+                onOpenChange={setLevelPickerOpen}
+                isLoading={levelQuery.isLoading}
+                hasNextPage={levelQuery.hasNextPage}
+                isFetchingNextPage={levelQuery.isFetchingNextPage}
+                onLoadMore={() => levelQuery.fetchNextPage()}
                 onChange={v => { setProgramLevel(v); clearError('programLevel') }}
               />
-              {errors.programLevel && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.programLevel}</p>}
+              {errors.programLevel && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.programLevel}</p>}
             </div>
           )}
         </div>

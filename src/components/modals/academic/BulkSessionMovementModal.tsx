@@ -51,7 +51,7 @@ export function BulkSessionMovementModal({ isOpen, onClose, showToast, intakeLab
   ]
 
   return (
-    <div className="modal-overlay open" onClick={phase === 'confirm' || !isRunning ? onClose : undefined}>
+    <div className="modal-overlay open">
       <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
         <div className="modal-hdr modal-hdr-blue">
           <div className="modal-title"><i className="lni lni-reload"></i> Bulk Session Movement — {intakeLabel}</div>

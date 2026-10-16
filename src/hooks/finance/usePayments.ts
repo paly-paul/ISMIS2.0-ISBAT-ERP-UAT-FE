@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import {
   getPayments,
+  getAllPaymentsForApplication,
   getPaymentAdvances,
   getPaymentGuilds,
   getPaymentLedgers,
@@ -30,11 +31,17 @@ export function usePayments(page: number, pageSize: number, enabled = true, appl
 // back Payment Console's and Payment History's own tables carry no
 // `advance` field at all (see get-payments.md's own note: those are
 // deliberately NOT the raw table), so this raw list is the only place that
-// flag lives. pageSize 200 covers realistic single-application payment
-// counts in one request — this is a lookup map, not a paged UI.
+// flag lives. This is a lookup map, not a paged UI, so it wants every
+// payment on the application regardless of how many pages that takes —
+// getAllPaymentsForApplication pages through properly (get-payments.md
+// confirms pageSize has no upper bound, but a hardcoded "big enough"
+// pageSize would still silently truncate a heavy payer past it).
 export function useAdvanceStatusByPayment(applicationGuid: string | null, enabled: boolean) {
-  const { data } = usePayments(1, 200, enabled && !!applicationGuid, applicationGuid)
-  const items = data?.items ?? []
+  const { data: items = [] } = useQuery({
+    queryKey: [...PAYMENTS_KEY, 'advance-status', applicationGuid],
+    queryFn: () => getAllPaymentsForApplication(applicationGuid as string),
+    enabled: enabled && !!applicationGuid,
+  })
   return new Map(items.map(p => [p.paymentGuid, p.advance === 1]))
 }
 
@@ -47,6 +54,7 @@ export function usePaymentAdvances(page: number, pageSize: number, enabled = tru
     queryKey: [...PAYMENTS_KEY, 'advances', page, pageSize, studentGuid ?? null],
     queryFn: () => getPaymentAdvances(page, pageSize, studentGuid),
     enabled,
+    staleTime: 60 * 1000,
   })
 }
 

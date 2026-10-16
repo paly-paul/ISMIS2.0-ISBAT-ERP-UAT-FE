@@ -6,6 +6,7 @@ import { FailurePopup } from '../shared/FailurePopup'
 import { EnquirySourceInput } from '@/lib/api/admission/enquirySource'
 import { useEnquirySource } from '@/hooks/admission/useEnquirySources'
 import { AuthError } from '@/lib/api/client'
+import { scrollToFirstError } from '@/lib/scrollToFirstError'
 
 interface EnquirySourceFormModalProps extends ModalProps {
   mode: 'new' | 'edit'
@@ -52,6 +53,7 @@ export function EnquirySourceFormModal({ isOpen, onClose, showToast, mode, isbat
     const e: Record<string, string> = {}
     if (!sourceName.trim()) e.sourceName = 'Source Name is required'
     setErrors(e)
+    scrollToFirstError(e)
     return Object.keys(e).length === 0
   }
 
@@ -141,7 +143,7 @@ export function EnquirySourceFormModal({ isOpen, onClose, showToast, mode, isbat
             onChange={e => { setSourceName(e.target.value); clearError('sourceName') }}
             style={errors.sourceName ? { borderColor: 'var(--red)' } : undefined}
           />
-          {errors.sourceName && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.sourceName}</p>}
+          {errors.sourceName && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.sourceName}</p>}
         </div>
         <div className="modal-footer">
           <button className="btn btn-neu" onClick={handleClose}>Cancel</button>

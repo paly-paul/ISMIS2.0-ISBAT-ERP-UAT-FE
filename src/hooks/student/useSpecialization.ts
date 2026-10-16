@@ -12,6 +12,8 @@ export function useSpecializationBatchesByIntake(intakeGuid: string | null, sear
     queryKey: ['specialization-batches', intakeGuid, search ?? ''],
     queryFn: () => getSpecializationBatchesByIntake(intakeGuid as string, search),
     enabled: !!intakeGuid,
+    staleTime: 5 * 60 * 1000,
+    gcTime: Infinity,
   })
 }
 
@@ -20,6 +22,8 @@ export function useSpecializationBatchContext(batchGuid: string | null) {
     queryKey: ['specialization-batch-context', batchGuid],
     queryFn: () => getSpecializationBatchContext(batchGuid as string),
     enabled: !!batchGuid,
+    staleTime: 5 * 60 * 1000,
+    gcTime: Infinity,
   })
 }
 
@@ -28,6 +32,8 @@ export function useSpecializationStudentsInBatch(batchGuid: string | null) {
     queryKey: ['specialization-students', batchGuid],
     queryFn: () => getSpecializationStudentsInBatch(batchGuid as string),
     enabled: !!batchGuid,
+    staleTime: 5 * 60 * 1000,
+    gcTime: Infinity,
   })
 }
 

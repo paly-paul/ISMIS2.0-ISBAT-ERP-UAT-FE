@@ -3,7 +3,7 @@ import { createProcBank, deleteProcBank, getProcBankById, getProcBanks, ProcBank
 
 const PROC_BANKS_KEY = ['proc-banks']
 
-export function useProcBanks() {
+export function useProcBanks(enabled = true) {
   return useQuery({
     queryKey: PROC_BANKS_KEY,
     queryFn: () => getProcBanks(),
@@ -12,6 +12,7 @@ export function useProcBanks() {
     // instead of on every remount/window focus.
     staleTime: Infinity,
     gcTime: Infinity,
+    enabled,
   })
 }
 
@@ -30,6 +31,7 @@ export function useProcBank(guid: string | null, enabled: boolean) {
   return useQuery({
     queryKey: [...PROC_BANKS_KEY, guid],
     queryFn: () => getProcBankById(guid as string),
+    staleTime: 5 * 60 * 1000,
     enabled: enabled && !!guid,
   })
 }

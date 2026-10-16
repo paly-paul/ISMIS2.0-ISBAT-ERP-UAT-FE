@@ -17,9 +17,7 @@ export default function EnquiryFormPage() {
         <div>
           <h1 className="text-xl font-semibold text-g900">New Enquiry</h1>
           <p className="text-sm text-g500 mt-0.5">Information Desk — capture walk-in, phone &amp; online enquiries</p>
-        </div>
-        <button className="btn btn-ghost" onClick={() => router.push('/admission/enquiry-list')}><i className="lni lni-arrow-left" /> Enquiry List</button>
-      </div>
+        </div>      </div>
 
       <div className="card max-w-3xl">
         <div className="g2">

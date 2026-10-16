@@ -3,7 +3,7 @@ import { createFollowUpMode, deleteFollowUpMode, FollowUpMode, FollowUpModeInput
 
 const FOLLOWUP_MODES_KEY = ['followup-modes']
 
-export function useFollowUpModes() {
+export function useFollowUpModes(enabled = true) {
   return useQuery({
     queryKey: FOLLOWUP_MODES_KEY,
     queryFn: () => getFollowUpModes(),
@@ -12,6 +12,7 @@ export function useFollowUpModes() {
     // instead of on every remount/window focus.
     staleTime: Infinity,
     gcTime: Infinity,
+    enabled,
   })
 }
 

@@ -8,6 +8,7 @@ import { LedgerOtherInput } from '@/lib/api/finance/ledgerOthersMaster'
 import { useLedgerOther } from '@/hooks/finance/useLedgerOthersMaster'
 import { useProcGlAccounts } from '@/hooks/finance/useProcGlAccounts'
 import { AuthError } from '@/lib/api/client'
+import { scrollToFirstError } from '@/lib/scrollToFirstError'
 
 // Add and Edit share this form — differ in prefill and which mutation runs.
 // Same structure as LedgerFormModal (tuition ledgers), adapted for
@@ -74,6 +75,7 @@ export function LedgerOtherFormModal({ isOpen, onClose, showToast, mode, ledgerO
     if (!ledgerName.trim()) e.ledgerName = 'Ledger Name is required'
     else if (ledgerName.trim().length > 100) e.ledgerName = 'Ledger Name must be 100 characters or fewer'
     setErrors(e)
+    scrollToFirstError(e)
     return Object.keys(e).length === 0
   }
 
@@ -166,7 +168,7 @@ export function LedgerOtherFormModal({ isOpen, onClose, showToast, mode, ledgerO
               onChange={e => { setLedgerCode(e.target.value.toUpperCase()); clearError('ledgerCode') }}
               style={errors.ledgerCode ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.ledgerCode && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.ledgerCode}</p>}
+            {errors.ledgerCode && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.ledgerCode}</p>}
           </div>
           <div className="fg">
             <div className="lbl">Ledger Name <span className="req">*</span></div>
@@ -179,7 +181,7 @@ export function LedgerOtherFormModal({ isOpen, onClose, showToast, mode, ledgerO
               onChange={e => { setLedgerName(e.target.value); clearError('ledgerName') }}
               style={errors.ledgerName ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.ledgerName && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.ledgerName}</p>}
+            {errors.ledgerName && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.ledgerName}</p>}
           </div>
           <div className="fg span2">
             <div className="lbl">GL Account</div>

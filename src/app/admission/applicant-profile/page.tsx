@@ -1,6 +1,6 @@
 'use client'
 import { Suspense, useLayoutEffect, useRef, useState } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useSearchParams } from 'next/navigation'
 
 type Tab = 'personal' | 'application' | 'qualification' | 'documents'
 const TABS: { id: Tab; label: string; icon: string }[] = [
@@ -31,7 +31,6 @@ function getParam(searchParams: URLSearchParams, key: string, fallback = '—') 
 }
 
 function ApplicantProfileContent() {
-  const router = useRouter()
   const searchParams = useSearchParams()
   const [activeTab, setActiveTab] = useState<Tab>('personal')
   const tabRefs = useRef<Partial<Record<Tab, HTMLButtonElement>>>({})
@@ -66,11 +65,7 @@ function ApplicantProfileContent() {
         <div>
           <div className="pg-title">Applicant Profile</div>
           <div className="pg-sub">Read-only view &middot; captured during Application Filing</div>
-        </div>
-        <button className="btn btn-neu" onClick={() => router.push('/admission/dashboard')}>
-          <i className="lni lni-arrow-left" /> Back to Admission
-        </button>
-      </div>
+        </div>      </div>
 
       <div className="card mb-6">
         <div className="flex items-center gap-4">

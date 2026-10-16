@@ -5,14 +5,13 @@ import { Toast } from '@/components/Toast'
 import { ScrollTable } from '@/components/ScrollTable'
 import { ActionMenu } from '@/components/ActionMenu'
 import { TableSearch } from '@/components/TableSearch'
-import { SearchSelect } from '@/components/SearchSelect'
 import { EmptyState } from '@/components/EmptyState'
 import { TableLoadingState } from '@/components/TableLoadingState'
 import { OnboardModal } from '@/components/modals/admission/OnboardModal'
 import { CompleteRegistrationModal } from '@/components/modals/admission/CompleteRegistrationModal'
 import { Pagination } from '@/components/Pagination'
 import { useRegistrarDeskApplications, useRegistrarDeskCounts, RegisterStudentResponse } from '@/hooks/admission/useRegistrarDesk'
-import { useIntakes } from '@/hooks/academic/useIntakes'
+import { useCurrentAdmissionIntake } from '@/hooks/academic/useIntakes'
 import { usePagePermissions } from '@/hooks/users/usePagePermissions'
 
 const PAGE_SIZE = 10
@@ -38,7 +37,6 @@ export default function RegistrationPage() {
   const [selectedApplicationGuid, setSelectedApplicationGuid] = useState<string | null>(null)
   const [registeredResult, setRegisteredResult] = useState<RegisterStudentResponse | null>(null)
   const [search, setSearch] = useState('')
-  const [filterIntake, setFilterIntake] = useState('all')
   const [page, setPage] = useState(1)
 
   function showToast(msg: string, type = '') { setToast({ msg, type }); setTimeout(() => setToast(null), 3500) }
@@ -46,10 +44,13 @@ export default function RegistrationPage() {
   function closeModal(id: string) { setOpenModals(prev => { const s = new Set(prev); s.delete(id); return s }) }
 
   function updateSearch(value: string) { setSearch(value); setPage(1) }
-  function updateIntakeFilter(value: string) { setFilterIntake(value); setPage(1) }
 
-  const { data: intakes = [] } = useIntakes()
-  const intakeOptions = [{ value: 'all', label: 'All Intakes' }, ...intakes.map(i => ({ value: i.intakeGuid, label: `${i.intakeCode} — ${i.description}` }))]
+  // The registrar desk is current-admission-intake only (2026-10 handoff):
+  // the list API returns nothing else, and detail/register reject other
+  // intakes. So the old intake filter is gone — this just labels which
+  // intake the desk is working on.
+  const currentIntake = useCurrentAdmissionIntake()
+  const noCurrentIntake = currentIntake.isSuccess && !currentIntake.data
 
   const searchTrimmed = search.trim()
   // An App Ref No starts with "APP", "ADM", contains "/", or is digits (e.g. APP20261/7117, ADM-26-0019, 7117).
@@ -61,7 +62,8 @@ export default function RegistrationPage() {
   const { data, isLoading } = useRegistrarDeskApplications(page, PAGE_SIZE, {
     appRefNo: looksLikeAppRefNo ? (searchTrimmed || undefined) : undefined,
     studentName: !looksLikeAppRefNo ? (searchTrimmed || undefined) : undefined,
-    intakeGuid: filterIntake !== 'all' ? filterIntake : undefined,
+    // No intakeGuid/intakeName — the server scopes to the current admission
+    // intake itself (and returns an empty list for any other).
   })
   const { data: counts } = useRegistrarDeskCounts()
 
@@ -129,34 +131,52 @@ export default function RegistrationPage() {
               onChange={updateSearch}
               results={searchMatches.map(r => ({ id: r.applicationGuid, primary: r.appRefNo, secondary: r.studentName }))}
             />
-            <SearchSelect options={intakeOptions} value={filterIntake} onChange={updateIntakeFilter} />
+            {currentIntake.data && (
+              <span
+                className="badge badge-blue"
+                style={{ padding: '6px 10px', gap: 6 }}
+                title="The registrar desk only works on the current admission intake"
+              >
+                <i className="lni lni-lock" aria-hidden="true" /> Intake: {currentIntake.data.intakeCode} — {currentIntake.data.description}
+              </span>
+            )}
           </div>
         </div>
+        {noCurrentIntake && (
+          <div className="warn-box mb-4" role="note">
+            <i className="lni lni-warning" aria-hidden="true" style={{ marginTop: 2 }} />
+            <span>No current admission intake is configured, so there&apos;s nothing to register. Set one in Academic › Intake Master.</span>
+          </div>
+        )}
         <ScrollTable>
           <table>
             <thead>
               <tr className="text-left text-g500 border-b border-g200">
                 <th style={{ width: 48 }}></th><th className="pb-2 font-medium">App. Ref</th><th className="pb-2 font-medium">Student Name</th>
-                <th className="pb-2 font-medium">Programme</th><th className="pb-2 font-medium">Intake</th><th className="pb-2 font-medium">Reg. Fee</th>
+                <th className="pb-2 font-medium">Programme</th><th className="pb-2 font-medium">Reg. Fee</th>
               </tr>
             </thead>
             <tbody>
               {isLoading
-                ? <TableLoadingState colSpan={6} />
+                ? <TableLoadingState colSpan={5} />
                 : items.length === 0
-                  ? <EmptyState colSpan={6} hasFilters={!!search.trim() || filterIntake !== 'all'} onClearFilters={() => { setSearch(''); setFilterIntake('all'); setPage(1) }} />
+                  ? <EmptyState colSpan={5} hasFilters={!!search.trim()} onClearFilters={() => { setSearch(''); setPage(1) }} />
                   : null}
               {items.map(r => (
                 <tr key={r.applicationGuid} className="border-b border-g100 hover:bg-g50">
                   <td>
                     <ActionMenu>
-                      {r.regPaid ? (
+                      {/* Register is no longer gated on r.regPaid (per
+                          request, 2026-09-10) — every application in this
+                          list can be registered regardless of Reg. Fee
+                          status. The Reg. Fee column below still shows
+                          Paid/Not Paid as information, just no longer
+                          blocks the action. */}
+                      {/* Register creates a student and can't be undone, so it
+                          needs the page's add permission. */}
+                      {permissions.add && (
                         <button className="btn btn-neu btn-sm" onClick={() => handleRegister(r.applicationGuid)}>
                           <i className="lni lni-graduation" /> Register
-                        </button>
-                      ) : (
-                        <button className="btn btn-neu btn-sm" disabled>
-                          Awaiting Payment
                         </button>
                       )}
                     </ActionMenu>
@@ -164,7 +184,6 @@ export default function RegistrationPage() {
                   <td className="py-2.5 font-mono text-xs text-b600">{r.appRefNo}</td>
                   <td className="py-2.5 text-g800">{r.studentName}</td>
                   <td className="py-2.5">{r.programName}</td>
-                  <td className="py-2.5">{r.intakeName}</td>
                   <td className="py-2.5"><span className={r.regPaid ? 'badge badge-green' : 'badge badge-red'}>{r.regPaid ? 'Paid' : 'Not Paid'}</span></td>
                 </tr>
               ))}

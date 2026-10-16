@@ -34,7 +34,7 @@ export default function SessionExpiredPage() {
 
     try {
       const result = await staffLogin(LAST_USER.staffId, password, false)
-      if (result.requiresOtp) {
+      if ('challengeId' in result) {
         setFlowState({
           challengeId: result.challengeId,
           otpChannel: result.otpChannel,

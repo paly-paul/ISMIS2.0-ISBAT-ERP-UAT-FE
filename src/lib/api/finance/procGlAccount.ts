@@ -39,9 +39,11 @@ const mockProcGlAccounts: ProcGlAccount[] = [
   { procGlAccountGuid: '26fc6e6d-ccdc-4664-82e3-f9ca6ce25d8c', shortCode: '11111', accName: 'Test GL Account', status: 2, type: 1, typeName: null, blocked: false },
 ]
 
+const PROC_GL_ACCOUNTS_LOAD_SIZE = 1000
+
 export function getProcGlAccounts(): Promise<ProcGlAccount[]> {
   if (MOCK_AUTH) return Promise.resolve(mockProcGlAccounts)
-  return apiGet<ProcGlAccountListResponse | null>('/api/v1/finance/proc-gl-accounts').then(data => data?.items ?? [])
+  return apiGet<ProcGlAccountListResponse | null>(`/api/v1/finance/proc-gl-accounts?page=1&pageSize=${PROC_GL_ACCOUNTS_LOAD_SIZE}`).then(data => data?.items ?? [])
 }
 
 export function createProcGlAccount(input: ProcGlAccountInput): Promise<ProcGlAccount> {

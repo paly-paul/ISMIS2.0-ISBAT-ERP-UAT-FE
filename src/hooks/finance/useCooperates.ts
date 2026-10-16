@@ -3,7 +3,7 @@ import { Cooperate, CooperateInput, createCooperate, deleteCooperate, getCoopera
 
 const COOPERATES_KEY = ['cooperates']
 
-export function useCooperates() {
+export function useCooperates(enabled = true) {
   return useQuery({
     queryKey: COOPERATES_KEY,
     queryFn: () => getCooperates(),
@@ -12,6 +12,7 @@ export function useCooperates() {
     // instead of on every remount/window focus.
     staleTime: Infinity,
     gcTime: Infinity,
+    enabled,
   })
 }
 
@@ -31,6 +32,8 @@ export function useCooperate(guid: string | null, enabled: boolean) {
     queryKey: [...COOPERATES_KEY, guid],
     queryFn: () => getCooperateById(guid as string),
     enabled: enabled && !!guid,
+    staleTime: 5 * 60 * 1000,
+    gcTime: Infinity,
   })
 }
 

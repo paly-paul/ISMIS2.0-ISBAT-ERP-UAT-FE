@@ -1,5 +1,5 @@
 'use client'
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useLayoutEffect } from 'react'
 import { createPortal } from 'react-dom'
 
 // Sibling to FilterTh, not a variant of it — same shell (funnel-triggered
@@ -25,28 +25,57 @@ interface GuidColumnFilterProps {
   disabledHint?: string
 }
 
+// Gap kept between the dropdown and the viewport edges.
+const EDGE = 8
+
 export function GuidColumnFilter({ label, options, isOpen, activeFilter, onToggle, onSelect, onClear, onClose, disabled, disabledHint }: GuidColumnFilterProps) {
   const [search, setSearch] = useState('')
   const [pending, setPending] = useState<string[]>([])
-  const [pos, setPos] = useState({ top: 0, left: 0, minWidth: 0 })
+  const [pos, setPos] = useState<{ top?: number; bottom?: number; left: number; minWidth: number; maxHeight?: number }>({ top: 0, left: 0, minWidth: 0 })
   const thRef = useRef<HTMLTableCellElement>(null)
+  const dropRef = useRef<HTMLDivElement>(null)
+
+  // Keeps the dropdown fully on screen. Measured after render (the width
+  // depends on the option labels), so a filter on the last column — e.g.
+  // Student Master's Intake — right-aligns to its header instead of
+  // spilling off the right edge, and one near the bottom opens upward or
+  // shrinks rather than hiding its OK button below the fold.
+  function updatePos() {
+    if (!thRef.current) return
+    const r = thRef.current.getBoundingClientRect()
+    const minWidth = Math.max(r.width, 220)
+    const dropW = Math.max(dropRef.current?.offsetWidth ?? minWidth, minWidth)
+    const dropH = dropRef.current?.scrollHeight ?? 0
+    const vw = window.innerWidth
+    const vh = window.innerHeight
+
+    let left = r.left
+    if (left + dropW > vw - EDGE) left = Math.max(EDGE, Math.min(r.right, vw - EDGE) - dropW)
+
+    const spaceBelow = vh - r.bottom - 4 - EDGE
+    const spaceAbove = r.top - 4 - EDGE
+    if (dropH > spaceBelow && spaceAbove > spaceBelow) {
+      setPos({ bottom: vh - r.top + 4, left, minWidth, maxHeight: spaceAbove })
+    } else {
+      setPos({ top: r.bottom + 4, left, minWidth, maxHeight: spaceBelow })
+    }
+  }
 
   useEffect(() => {
     if (isOpen && thRef.current) {
-      const r = thRef.current.getBoundingClientRect()
-      setPos({ top: r.bottom + 4, left: r.left, minWidth: Math.max(r.width, 220) })
+      updatePos()
       setPending([...activeFilter])
     }
     if (!isOpen) setSearch('')
   }, [isOpen])
 
+  // Second pass once the portal has rendered and dropRef can be measured.
+  useLayoutEffect(() => {
+    if (isOpen) updatePos()
+  }, [isOpen, options.length])
+
   useEffect(() => {
     if (!isOpen) return
-    function updatePos() {
-      if (!thRef.current) return
-      const r = thRef.current.getBoundingClientRect()
-      setPos({ top: r.bottom + 4, left: r.left, minWidth: Math.max(r.width, 220) })
-    }
     function onScroll() { requestAnimationFrame(updatePos) }
     const observer = new IntersectionObserver(
       ([entry]) => { if (!entry.isIntersecting) onClose() },
@@ -54,8 +83,10 @@ export function GuidColumnFilter({ label, options, isOpen, activeFilter, onToggl
     )
     if (thRef.current) observer.observe(thRef.current)
     document.addEventListener('scroll', onScroll, true)
+    window.addEventListener('resize', onScroll)
     return () => {
       document.removeEventListener('scroll', onScroll, true)
+      window.removeEventListener('resize', onScroll)
       observer.disconnect()
     }
   }, [isOpen, onClose])
@@ -101,8 +132,13 @@ export function GuidColumnFilter({ label, options, isOpen, activeFilter, onToggl
         <>
           <div style={{ position: 'fixed', inset: 0, zIndex: 9998 }} onClick={e => { e.stopPropagation(); onClose() }} />
           <div
+            ref={dropRef}
             className="col-filter-drop"
-            style={{ position: 'fixed', top: pos.top, left: pos.left, minWidth: pos.minWidth, zIndex: 9999, padding: 0 }}
+            style={{
+              position: 'fixed', top: pos.top, bottom: pos.bottom, left: pos.left, minWidth: pos.minWidth,
+              maxWidth: `calc(100vw - ${EDGE * 2}px)`, maxHeight: pos.maxHeight,
+              display: 'flex', flexDirection: 'column', zIndex: 9999, padding: 0,
+            }}
             onClick={e => e.stopPropagation()}
           >
             <div className="col-filter-search">
@@ -121,7 +157,9 @@ export function GuidColumnFilter({ label, options, isOpen, activeFilter, onToggl
               Select All
             </label>
 
-            <div className="col-filter-opts">
+            {/* Only the option list scrolls when height is capped — the
+                search box and Reset/Cancel/OK footer always stay visible. */}
+            <div className="col-filter-opts" style={{ flex: '1 1 auto', minHeight: 60, overflowY: 'auto' }}>
               {visible.map(o => (
                 <label key={o.value} className={`col-filter-opt-row${pending.includes(o.value) ? ' fil-active' : ''}`}>
                   <input type="checkbox" checked={pending.includes(o.value)} onChange={() => toggleOne(o.value)} />

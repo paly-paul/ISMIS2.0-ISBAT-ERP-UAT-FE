@@ -1,14 +1,16 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { createBatch, deleteBatch, getBatchById, getBatches, getStudentCountsByBatch, updateBatch, Batch, BatchCreateInput, BatchDetail, BatchUpdateInput } from '@/lib/api/academic/batch'
+import { useMutation, useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
+import { createBatch, deleteBatch, getBatchById, getBatchDropdown, getBatches, getStudentCountsByBatch, updateBatch, Batch, BatchCreateInput, BatchDetail, BatchUpdateInput } from '@/lib/api/academic/batch'
 
 const BATCHES_KEY = ['batches']
 
-export function useBatches(pageNumber: number, pageSize: number) {
+export function useBatches(pageNumber: number, pageSize: number, search = '', enabled = true) {
   return useQuery({
-    queryKey: [...BATCHES_KEY, pageNumber, pageSize],
-    queryFn: () => getBatches(pageNumber, pageSize),
+    queryKey: [...BATCHES_KEY, pageNumber, pageSize, search],
+    queryFn: () => getBatches(pageNumber, pageSize, search),
     staleTime: Infinity,
     gcTime: Infinity,
+    enabled,
+    placeholderData: keepPreviousData,
   })
 }
 
@@ -31,11 +33,33 @@ export function useBatchSearch(search: string, pageSize: number) {
   })
 }
 
+// Batches for one programme + semester — only enabled once both are picked.
+export function useBatchDropdown(programGuid: string | null, semesterGuid: string | null) {
+  return useQuery({
+    queryKey: [...BATCHES_KEY, 'dropdown', programGuid, semesterGuid],
+    queryFn: () => getBatchDropdown(programGuid as string, semesterGuid as string),
+    enabled: !!programGuid && !!semesterGuid,
+    staleTime: Infinity,
+    gcTime: Infinity,
+  })
+}
+
+// Batch codes in one intake — used to filter Batch Summary by intake, whose
+// own rows carry no intake field (rows are matched on batchCode).
+export function useBatchCodesForIntake(intakeGuid: string | null) {
+  return useQuery({
+    queryKey: [...BATCHES_KEY, 'dropdown', 'intake', intakeGuid],
+    queryFn: () => getBatchDropdown(undefined, undefined, intakeGuid as string)
+      .then(items => new Set(items.map(b => b.batchCode))),
+    enabled: !!intakeGuid,
+    staleTime: Infinity,
+    gcTime: Infinity,
+  })
+}
+
 export function useCreateBatch() {
-  const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (input: BatchCreateInput) => createBatch(input),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: BATCHES_KEY }),
   })
 }
 

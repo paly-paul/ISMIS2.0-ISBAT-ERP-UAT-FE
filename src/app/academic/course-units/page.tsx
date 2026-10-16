@@ -14,11 +14,13 @@ import { EmptyState } from '@/components/EmptyState'
 import { TableLoadingState } from '@/components/TableLoadingState'
 import { Pagination } from '@/components/Pagination'
 import { useCourseUnits, useAllCourseUnits, useCreateCourseUnit, useUpdateCourseUnit, useDeleteCourseUnit, CourseUnit } from '@/hooks/academic/useCourseUnits'
-import { useProgramMasters } from '@/hooks/academic/useProgramMaster'
 import { useProgramCourseUnits } from '@/hooks/academic/useProgramCourseUnits'
+import { useSearchProgramMastersInfinite } from '@/hooks/academic/useProgramMaster'
 import { getCourseUnitById } from '@/lib/api/academic/courseUnit'
-import { openDocumentForViewing, downloadDocument } from '@/lib/documentViewer'
+import { downloadDocument } from '@/lib/documentViewer'
+import { DocumentPreviewModal } from '@/components/modals/shared/DocumentPreviewModal'
 import { usePagePermissions } from '@/hooks/users/usePagePermissions'
+import { flattenUniquePages } from '@/lib/pagination'
 
 const PAGE_SIZE = 10
 // Don't hit the search endpoint (or open the results dropdown) until the
@@ -35,6 +37,12 @@ export default function Page() {
   // The filter state is kept for future table filtering, but the current view does not need it yet.
   const [search, setSearch] = useState('')
   const [programFilter, setProgramFilter] = useState('')
+  // Label for the currently-picked programme filter, preserved independently
+  // of the currently loaded server-search page.
+  const [programFilterLabel, setProgramFilterLabel] = useState<string | null>(null)
+  const [programPickerOpen, setProgramPickerOpen] = useState(false)
+  const [programSearch, setProgramSearch] = useState('')
+  const [committedProgramSearch, setCommittedProgramSearch] = useState('')
   const [page, setPage] = useState(1)
   const [editingCourseUnitGuid, setEditingCourseUnitGuid] = useState<string | null>(null)
   const [viewingCourseUnitGuid, setViewingCourseUnitGuid] = useState<string | null>(null)
@@ -57,6 +65,9 @@ export default function Page() {
   }
 
   const [syllabusLoadingGuid, setSyllabusLoadingGuid] = useState<string | null>(null)
+  // View opens the syllabus in an in-page preview (PDF/image inline, with a
+  // Download button) rather than a bare new tab.
+  const [syllabusPreview, setSyllabusPreview] = useState<{ url: string; title: string } | null>(null)
 
   // `syllabus` is a presigned S3 URL good for only 5 minutes (X-Amz-Expires=300
   // on a real response) — the table row's own copy comes from useCourseUnits,
@@ -70,8 +81,8 @@ export default function Page() {
     try {
       const fresh = await getCourseUnitById(guid)
       if (!fresh.syllabus) { showToast('Syllabus is no longer attached to this unit', 'error'); return }
-      if (mode === 'view') await openDocumentForViewing(fresh.syllabus)
-      else downloadDocument(fresh.syllabus)
+      if (mode === 'view') setSyllabusPreview({ url: fresh.syllabus, title: `Syllabus — ${fresh.courseUnitCode}` })
+      else await downloadDocument(fresh.syllabus)
     } catch {
       showToast('Failed to load the syllabus document. Please try again.', 'error')
     } finally {
@@ -99,6 +110,11 @@ export default function Page() {
     return () => clearTimeout(t)
   }, [search])
 
+  useEffect(() => {
+    const t = setTimeout(() => setCommittedProgramSearch(programSearch.trim()), 300)
+    return () => clearTimeout(t)
+  }, [programSearch])
+
   // Real server-side pagination AND search — fetches PAGE_SIZE (10) rows at
   // a time instead of the whole table up front, refetching the next 10 only
   // when the user actually pages forward, and `debouncedSearch` is a real
@@ -120,9 +136,16 @@ export default function Page() {
   // ProgrammeModal's Curriculum view uses — which lists exactly which
   // course-unit guids are actually assigned to that programme. Mock mode
   // always returns [] here (see programCourseUnits.ts), so the filter has
-  // no matches to show under NEXT_PUBLIC_AUTH_MOCK=true.
-  const { data: programs = [] } = useProgramMasters()
+  // no matches to show under NEXT_PUBLIC_AUTH_MOCK=true. The filter's own
+  // options now come from a lazy SearchSelect-backed server search with
+  // scroll-to-load-more, so no full programme list needs to be kept here.
   const { data: programCourseUnits = [], isLoading: isProgramCourseUnitsLoading } = useProgramCourseUnits(programFilter || null, !!programFilter)
+  const programQuery = useSearchProgramMastersInfinite(committedProgramSearch, 20, programPickerOpen)
+  const programOptions = flattenUniquePages(programQuery.data?.pages ?? [], p => p.programGuid)
+    .map(p => ({ value: p.programGuid, label: `${p.programCode} — ${p.programName}` }))
+  if (programFilter && programFilterLabel && !programOptions.some(p => p.value === programFilter)) {
+    programOptions.unshift({ value: programFilter, label: programFilterLabel })
+  }
   const programCourseUnitGuids = useMemo(() => new Set(programCourseUnits.map(u => u.courseUnitGuid)), [programCourseUnits])
 
   // Only the programme filter still needs the whole table in memory — course
@@ -133,14 +156,19 @@ export default function Page() {
   // matter how large the real table gets, without a client-side row cap.
   const usingFullList = !!programFilter
 
-  // Fetched eagerly on mount (no `enabled` gate) so picking a programme
-  // doesn't pay for a cold fetch on the first click — this list is still
-  // capped at 1000 rows (ALL_COURSE_UNITS_PAGE_SIZE), which is a real,
-  // known gap for programme filtering once the table exceeds that (same
-  // class of bug search just had) — not fixed here since there's no
-  // server-side "filter by programme" query param on this endpoint to
-  // switch to instead.
-  const { data: allCourseUnits = [], isLoading: isAllCourseUnitsLoading } = useAllCourseUnits()
+  // Gated on usingFullList (2026-09-09, per request — this endpoint was
+  // firing twice on every page load: this 1000-row fetch plus useCourseUnits'
+  // own 10-row page above, when the Programme filter is hit on the vast
+  // majority of visits) rather than fetched eagerly on mount. Trade-off:
+  // picking a programme for the first time now pays for a cold fetch instead
+  // of it already being warm — accepted in exchange for not paying that
+  // 1000-row cost on every single page load regardless of whether the filter
+  // is ever touched. Still capped at 1000 rows (ALL_COURSE_UNITS_PAGE_SIZE)
+  // once it does fire, which is a real, known gap for programme filtering
+  // once the table exceeds that (same class of bug search just had) — not
+  // fixed here since there's no server-side "filter by programme" query
+  // param on this endpoint to switch to instead.
+  const { data: allCourseUnits = [], isLoading: isAllCourseUnitsLoading } = useAllCourseUnits(usingFullList)
   const rows = data?.items ?? []
   const searchRows = usingFullList ? allCourseUnits : rows
   const createCourseUnit = useCreateCourseUnit()
@@ -224,13 +252,26 @@ export default function Page() {
         <div className="card">
           <div className="card-hdr">
             <div className="card-title"><span className="ctitle-icon"><i className="lni lni-book"></i></span> Course Unit Master</div>
+            {/* Programme / Semester / Type filters and Export hidden per request
+                (2026-10-15). The programme-filter logic above stays in place —
+                programFilter just stays empty, so no filtering is applied.
             <div className="flex gap-2">
               <SearchSelect
                 className="w-auto text-[var(--fs-sm)]"
                 placeholder="All Programmes"
+                options={programOptions}
                 value={programFilter}
-                onChange={setProgramFilter}
-                options={programs.map(p => ({ value: p.programGuid, label: p.programName }))}
+                onSearch={setProgramSearch}
+                onOpenChange={setProgramPickerOpen}
+                isLoading={programQuery.isLoading}
+                hasNextPage={programQuery.hasNextPage}
+                isFetchingNextPage={programQuery.isFetchingNextPage}
+                onLoadMore={() => programQuery.fetchNextPage()}
+                onChange={value => {
+                  const selected = programOptions.find(option => option.value === value)
+                  setProgramFilter(value)
+                  setProgramFilterLabel(selected?.label ?? null)
+                }}
               />
               <SearchSelect
                 className="w-auto text-[var(--fs-sm)]"
@@ -243,7 +284,7 @@ export default function Page() {
                 options={['Theory', 'Practical', 'Combined', 'Project']}
               />
               <button className="btn btn-neu btn-sm"><i className="lni lni-upload"></i> Export</button>
-            </div>
+            </div> */}
           </div>
           <ScrollTable filters={filters} onResetFilters={() => setFilters({})}>
             <table>
@@ -264,18 +305,22 @@ export default function Page() {
                 {loading
                   ? <TableLoadingState colSpan={999} />
                   : pageItems.length === 0
-                    ? <EmptyState colSpan={999} hasFilters={Object.values(filters).some(v => v.length > 0) || !!programFilter} onClearFilters={() => { setFilters({}); setProgramFilter('') }} />
+                    ? <EmptyState colSpan={999} hasFilters={Object.values(filters).some(v => v.length > 0) || !!programFilter} onClearFilters={() => { setFilters({}); setProgramFilter(''); setProgramFilterLabel(null) }} />
                     : null}
                 {!loading && pageItems.map((r) => (
                   <tr key={r.courseUnitGuid}>
                     <td>
-                      {(permissions.edit || permissions.delete) && (
-                        <ActionMenu>
-                          <button className="btn btn-neu btn-sm" onClick={() => openViewModal(r.courseUnitGuid)}><i className="lni lni-eye"></i> View</button>
-                          {permissions.edit && <button className="btn btn-neu btn-sm" onClick={() => openEditModal(r.courseUnitGuid)}><i className="lni lni-pencil"></i> Edit</button>}
-                          {permissions.delete && <button className="btn btn-neu btn-sm" onClick={() => setDeleteTarget(r)}><i className="lni lni-trash-can"></i> Delete</button>}
-                        </ActionMenu>
-                      )}
+                      <ActionMenu>
+                        <button className="btn btn-neu btn-sm" onClick={() => openViewModal(r.courseUnitGuid)}><i className="lni lni-eye"></i> View</button>
+                        {r.syllabus && (
+                          <>
+                            <button className="btn btn-neu btn-sm" disabled={syllabusLoadingGuid === r.courseUnitGuid} onClick={() => handleSyllabus(r.courseUnitGuid, 'view')}><i className="lni lni-files"></i> View Syllabus</button>
+                            <button className="btn btn-neu btn-sm" disabled={syllabusLoadingGuid === r.courseUnitGuid} onClick={() => handleSyllabus(r.courseUnitGuid, 'download')}><i className="lni lni-download"></i> Download Syllabus</button>
+                          </>
+                        )}
+                        {permissions.edit && <button className="btn btn-neu btn-sm" onClick={() => openEditModal(r.courseUnitGuid)}><i className="lni lni-pencil"></i> Edit</button>}
+                        {permissions.delete && <button className="btn btn-neu btn-sm" onClick={() => setDeleteTarget(r)}><i className="lni lni-trash-can"></i> Delete</button>}
+                      </ActionMenu>
                     </td>
                     <td className="font-mono text-b700" style={{ fontSize: 'var(--fs-xs)' }}>{r.courseUnitCode}</td>
                     <td><strong>{r.courseUnitName}</strong></td>
@@ -285,32 +330,12 @@ export default function Page() {
                     <td>{r.cw}</td>
                     <td>{r.ca}</td>
                     <td>
-                      {r.syllabus
-                        ? (
-                          <div className="flex items-center gap-1">
-                            <button
-                              type="button"
-                              onClick={() => handleSyllabus(r.courseUnitGuid, 'view')}
-                              disabled={syllabusLoadingGuid === r.courseUnitGuid}
-                              className="badge badge-green"
-                              style={{ border: 'none', cursor: 'pointer' }}
-                              title="View uploaded syllabus document"
-                            >
-                              <i className="lni lni-eye"></i> {syllabusLoadingGuid === r.courseUnitGuid ? 'Loading…' : 'Attached'}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleSyllabus(r.courseUnitGuid, 'download')}
-                              disabled={syllabusLoadingGuid === r.courseUnitGuid}
-                              className="btn btn-neu"
-                              style={{ width: 26, height: 26, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
-                              title="Download syllabus document"
-                            >
-                              <i className="lni lni-download" style={{ fontSize: 12 }}></i>
-                            </button>
-                          </div>
-                        )
-                        : <span className="badge badge-red"><i className="lni lni-warning"></i> Missing</span>}
+                      {/* Status only — View / Download Syllabus live in the row's action menu. */}
+                      {syllabusLoadingGuid === r.courseUnitGuid
+                        ? <span className="badge badge-blue"><i className="lni lni-reload spin"></i> Loading…</span>
+                        : r.syllabus
+                          ? <span className="badge badge-green"><i className="lni lni-checkmark"></i> Attached</span>
+                          : <span className="badge badge-red"><i className="lni lni-warning"></i> Missing</span>}
                     </td>
                   </tr>
                 ))}
@@ -347,6 +372,12 @@ export default function Page() {
         courseUnitGuid={viewingCourseUnitGuid}
       />
       <ElectiveSelectModal isOpen={openModals.has('elective-select-modal')} onClose={() => closeModal('elective-select-modal')} showToast={showToast} />
+      <DocumentPreviewModal
+        isOpen={!!syllabusPreview}
+        onClose={() => setSyllabusPreview(null)}
+        url={syllabusPreview?.url ?? null}
+        title={syllabusPreview?.title}
+      />
       <Toast toast={toast} />
 
       {deleteTarget && (

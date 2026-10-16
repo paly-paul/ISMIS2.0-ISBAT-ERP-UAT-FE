@@ -1,7 +1,6 @@
 'use client'
 import { ModalProps } from '../types'
 import { useProgramLevel } from '@/hooks/academic/useProgramLevels'
-import { useFinanceCurrencies } from '@/hooks/finance/useFinanceCurrencies'
 import { AuthError } from '@/lib/api/client'
 import { FailurePopup } from '../shared/FailurePopup'
 
@@ -31,8 +30,6 @@ function Field({ label, value, mono, wide }: { label: string; value: React.React
 
 export function ViewProgrammeLevelModal({ isOpen, onClose, programLevelGuid, onEdit, canEdit }: ViewProgrammeLevelModalProps) {
   const { data: programLevel, isLoading, isError, error } = useProgramLevel(programLevelGuid, isOpen)
-
-  const { data: currencies = [] } = useFinanceCurrencies(isOpen)
 
   if (!isOpen) return null
 
@@ -66,7 +63,11 @@ export function ViewProgrammeLevelModal({ isOpen, onClose, programLevelGuid, onE
     )
   }
 
-  const currencyName = currencies.find(c => c.currencyGuid === programLevel.currencyGuid)?.currencyCode || '—'
+  // The API resolves currency from Finance itself; '' means Finance couldn't
+  // resolve it, not that the level has no currency.
+  const currencyName = programLevel.currencyCode
+    ? `${programLevel.currencyCode} — ${programLevel.currencyName}`
+    : 'Not resolved by Finance'
 
   return (
     <div className="modal-overlay open" id="view-alevel-modal">

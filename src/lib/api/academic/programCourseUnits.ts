@@ -19,6 +19,8 @@ export interface ProgramCourseUnitDto {
   semesterGuid: string
   semName: string
   flag: number
+  unitTypeGuid?: string | null
+  unitTypeName?: string | null
 }
 
 export function getProgramCourseUnits(programGuid: string): Promise<ProgramCourseUnitDto[]> {

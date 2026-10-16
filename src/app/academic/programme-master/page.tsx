@@ -15,13 +15,9 @@ import { FilterTh } from '@/components/FilterTh'
 import { EmptyState } from '@/components/EmptyState'
 import { TableLoadingState } from '@/components/TableLoadingState'
 import { Pagination } from '@/components/Pagination'
-import { usePagination } from '@/hooks/usePagination'
 import { useCreateProgramMaster, useDeleteProgramMasterComplete, useProgramMasters, useProgramMasterSearch, useUpdateProgramMasterComplete } from '@/hooks/academic/useProgramMaster'
-import { useProgramGroups } from '@/hooks/academic/useProgramGroups'
-import { useProgramLevels } from '@/hooks/academic/useProgramLevels'
-import { useFaculties } from '@/hooks/config/useFaculties'
-import { useStreams } from '@/hooks/config/useStreams'
 import { usePagePermissions } from '@/hooks/users/usePagePermissions'
+import { useProgramLevelsDropdown } from '@/hooks/academic/useProgramLevels'
 import { formatDate } from '@/lib/date'
 
 const PAGE_SIZE = 10
@@ -93,44 +89,43 @@ export default function Page() {
   //   { progCode: 'PHD-CS-2023', progName: 'Doctor of Philosophy — CS 2023',       group: '—',   level: 'PhD · 3yr / 6sem',       faculty: 'FCT → Main Campus', accredDate: 'Jun 2023', expires: 'Jun 2028',         expiresBadge: 'badge-green', expiresIcon: '',                        noIA: 'Yes', specializations: '—',                    admissionStatus: 'Active',   admissionBadge: 'badge-green', rowClass: '', variant: 'edit' },
   // ]
 
-  // Real list + the lookups needed to resolve the guids it returns into
-  // display names (the list endpoint itself only echoes back guids).
-  const { data: programs = [], isLoading } = useProgramMasters()
-  const { data: programGroups = [] } = useProgramGroups()
-  const { data: programLevels = [] } = useProgramLevels()
-  const { data: faculties = [] } = useFaculties()
-  const { data: streams = [] } = useStreams()
-
-  // Debounced so the backend's ?search= isn't hit on every keystroke, and
-  // held at '' (falling back to the unfiltered list) until MIN_SEARCH_CHARS
-  // is met — same convention as the other academic master pages.
-  const [debouncedSearch, setDebouncedSearch] = useState('')
-  useEffect(() => {
-    const trimmed = search.trim()
-    if (trimmed.length < MIN_SEARCH_CHARS) { setDebouncedSearch(''); return }
-    const t = setTimeout(() => setDebouncedSearch(trimmed), 400)
-    return () => clearTimeout(t)
-  }, [search])
-
-  const { data: searchResults, isFetching: isSearching } = useProgramMasterSearch(debouncedSearch)
-  const basePrograms = debouncedSearch ? (searchResults ?? []) : programs
+  // Full list, filtered/sorted/paged in the browser (2026-10-15, per
+  // request). Server paging (2026-09-10) left the Level/Status dropdowns,
+  // the column filters and the newest-first sort working on just the 10
+  // rows of the current page — GET /program-master has no level/status/sort
+  // params — so they never found matches on other pages. Programme counts
+  // are small, so one fetch (getProgramMasters' pageSize=1000 cap) covers it.
+  // Search still goes to the server (?search=) via useProgramMasterSearch.
+  const [page, setPage] = useState(1)
+  // programGroups backs the table's own Group column (the list endpoint only
+  // echoes back a guid, no name) — gated on the Add/Edit modal being open
+  // (2026-09-10, per request) rather than fetched on every page load,
+  // accepting that column shows blank until the modal has been opened at
+  // least once. Once it has, the fetch lands in react-query's cache
+  // (staleTime: Infinity) and stays there — the table keeps showing resolved
+  // names after the modal closes, it just isn't the modal's own fetch's job
+  // to feed the table, both happen to read the same cached query.
+  // ProgrammeModal's own call to this same hook is gated on its own isOpen
+  // prop for the same reason — see that component. Not confirmed to support
+  // real server-side pagination (see the same note there), so stays a
+  // full-list fetch rather than a batched-by-guid lookup.
   const searchTrimmed = search.trim()
-  const searchPending = searchTrimmed.length >= MIN_SEARCH_CHARS && (debouncedSearch !== searchTrimmed || isSearching)
+  const activeSearch = searchTrimmed.length >= MIN_SEARCH_CHARS ? searchTrimmed : ''
+  const allQuery = useProgramMasters(!activeSearch)
+  const searchQuery = useProgramMasterSearch(activeSearch)
+  const { data: programs = [], isLoading } = activeSearch ? searchQuery : allQuery
+  const searchPending = !!activeSearch && searchQuery.isFetching
 
-  const rows = basePrograms.map(p => {
-    const group = programGroups.find(g => g.programGroupGuid === p.programGroupGuid)
-    const level = programLevels.find(l => l.programLevelGuid === p.programLevelGuid)
-    const faculty = faculties.find(f => f.facultyGuid === p.facultyGuid)
-    const specializationNames = (p.streamGuids || [])
-      .map(guid => streams.find(s => s.streamGuid === guid)?.streamName)
-      .filter((name): name is string => !!name)
+  const rows = programs.map(p => {
+    const specializationNames = (p.streams ?? []).map(stream => stream.streamName).filter(Boolean)
     return {
       programGuid: p.programGuid,
+      programLevelGuid: p.programLevelGuid,
       progCode: p.programCode,
       progName: p.programName,
-      group: group?.groupCode ?? '—',
-      level: level ? `${level.levelName} · ${p.yearCount}yr / ${p.semCount}sem` : `${p.yearCount}yr / ${p.semCount}sem`,
-      faculty: faculty ? `${faculty.facultyCode} → ${faculty.campusName}` : '—',
+      group: p.programGroupName ?? '—',
+      level: p.programLevelName ? `${p.programLevelName} · ${p.yearCount}yr / ${p.semCount}sem` : `${p.yearCount}yr / ${p.semCount}sem`,
+      faculty: p.facultyName ?? '—',
       // Kept alongside the display string below — dateAcc is the only real
       // date field the list endpoint returns (no created/updated timestamp),
       // so it's what "newest to oldest" sorts on.
@@ -140,11 +135,21 @@ export default function Page() {
       specializations: specializationNames.length > 0 ? specializationNames.join(', ') : '—',
       admissionStatus: p.pgmStatus ? 'Active' : 'Inactive',
     }
-  }).sort((a, b) => new Date(b.dateAccRaw).getTime() - new Date(a.dateAccRaw).getTime())
+  }).sort((a, b) => {
+    // Newest accreditation first; undated rows last; ties by code so the
+    // order is stable across refetches.
+    const aTime = a.dateAccRaw ? new Date(a.dateAccRaw).getTime() : 0
+    const bTime = b.dateAccRaw ? new Date(b.dateAccRaw).getTime() : 0
+    return bTime - aTime || a.progCode.localeCompare(b.progCode)
+  })
 
   const groupFilterOpts = Array.from(new Set(rows.map(r => r.group)))
   const levelFilterOpts = Array.from(new Set(rows.map(r => r.level)))
-  const levelDropdownOpts = Array.from(new Set(programLevels.map(l => l.levelName)))
+  // Options from GET /program-levels/dropdown (get-program-levels-dropdown.md,
+  // in the levels' own order), not from the rows — `guid` is the same
+  // programLevelGuid each programme row carries, which levelFilter matches on.
+  const { data: programLevels = [], isLoading: programLevelsLoading } = useProgramLevelsDropdown()
+  const levelDropdownOpts = programLevels.map(l => ({ value: l.guid, label: l.name }))
 
   // Live preview shown in the search dropdown as the user types — matches
   // the same code/name test as the table's own search filter below, just
@@ -157,19 +162,23 @@ export default function Page() {
     : []
 
   const filteredRows = rows.filter(r => {
-    // The dropdown only offers the bare level name (Bachelor/Master/…), while
-    // r.level is that name plus the "· Nyr / Nsem" suffix — match on prefix
-    // rather than exact equality so this stays in sync with the column filter.
-    if (levelFilter && !r.level.startsWith(levelFilter)) return false
+    // levelFilter is a programLevelGuid.
+    if (levelFilter && r.programLevelGuid !== levelFilter) return false
     if (statusFilter && r.admissionStatus !== statusFilter) return false
     // Re-filter client-side on top of whatever the server sent back — rows
-    // is already search-scoped via basePrograms, but this keeps results
-    // correct even if the backend doesn't actually honor ?search=.
+    // is already search-scoped (see useProgramMasterSearch above), but this
+    // keeps results correct even if the backend doesn't actually honor
+    // ?search=.
     if (searchTrimmed.length >= MIN_SEARCH_CHARS && !`${r.progCode} ${r.progName}`.toLowerCase().includes(searchTrimmed.toLowerCase())) return false
     return Object.entries(filters).every(([k, v]) => !v.length || v.includes(String((r as Record<string, unknown>)[k])))
   })
 
-  const { page, setPage, totalPages, totalCount, pageItems } = usePagination(filteredRows, PAGE_SIZE)
+  const totalCount = filteredRows.length
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE))
+  // Clamp rather than reset, so deleting the last row on the last page
+  // lands on the new last page instead of an empty one.
+  const currentPage = Math.min(page, totalPages)
+  const pageItems = filteredRows.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
 
   function fth(label: string, col: string, opts: string[]) {
     return (
@@ -179,8 +188,8 @@ export default function Page() {
         isOpen={openFilter === col}
         activeFilter={filters[col] ?? []}
         onToggle={(e) => { e.stopPropagation(); setOpenFilter(p => p === col ? null : col) }}
-        onSelect={(vals) => { setFilters(f => ({ ...f, [col]: vals })); setOpenFilter(null) }}
-        onClear={() => { setFilters(f => ({ ...f, [col]: [] })); setOpenFilter(null) }}
+        onSelect={(vals) => { setFilters(f => ({ ...f, [col]: vals })); setOpenFilter(null); setPage(1) }}
+        onClear={() => { setFilters(f => ({ ...f, [col]: [] })); setOpenFilter(null); setPage(1) }}
         onClose={() => setOpenFilter(null)}
       />
     )
@@ -210,7 +219,7 @@ export default function Page() {
                 className="w-56"
                 placeholder="Search by code or name…"
                 value={search}
-                onChange={setSearch}
+                onChange={v => { setSearch(v); setPage(1) }}
                 results={searchMatches.map(r => ({ id: r.programGuid, primary: r.progCode, secondary: r.progName }))}
                 loading={searchPending}
                 minChars={MIN_SEARCH_CHARS}
@@ -220,15 +229,16 @@ export default function Page() {
                 className="w-auto text-[var(--fs-sm)]"
                 placeholder="All Levels"
                 options={levelDropdownOpts}
+                isLoading={programLevelsLoading}
                 value={levelFilter}
-                onChange={setLevelFilter}
+                onChange={v => { setLevelFilter(v); setPage(1) }}
               />
               <SearchSelect
                 className="w-auto text-[var(--fs-sm)]"
                 placeholder="All Statuses"
                 options={['Active', 'Inactive']}
                 value={statusFilter}
-                onChange={setStatusFilter}
+                onChange={v => { setStatusFilter(v); setPage(1) }}
               />
               <button className="btn btn-neu btn-sm"><i className="lni lni-upload"></i> Export</button>
             </div>
@@ -239,12 +249,12 @@ export default function Page() {
                   has no backing field in the real response, so it's dropped rather than left blank.
               <thead><tr><th style={{ width: 48 }}></th><th>Prog. Code</th><th>Programme Name</th>{fth('Group', 'group', ['BCA', 'BBA', 'MBA', '—'])}{fth('Programme Level', 'level', ["Bachelor's · 3yr / 6sem", "Master's · 2yr / 4sem", 'PhD · 3yr / 6sem'])}<th>Faculty → Campus</th><th>Accreditation Date</th><th>Expires</th><th>No IA</th><th>Specializations</th>{fth('Admission Status', 'admissionStatus', ['Active', 'Inactive'])}</tr></thead>
               */}
-              <thead><tr><th style={{ width: 48 }}></th><th>Prog. Code</th><th>Programme Name</th>{fth('Group', 'group', groupFilterOpts)}{fth('Programme Level', 'level', levelFilterOpts)}<th>Faculty → Campus</th><th>Accreditation Date</th><th>No IA</th><th>Specializations</th>{fth('Admission Status', 'admissionStatus', ['Active', 'Inactive'])}</tr></thead>
+              <thead><tr><th style={{ width: 48 }}></th><th>Prog. Code</th><th>Programme Name</th>{fth('Group', 'group', groupFilterOpts)}{fth('Programme Level', 'level', levelFilterOpts)}<th>Faculty → Campus</th><th>Accreditation Date</th><th>No IA</th>{fth('Admission Status', 'admissionStatus', ['Active', 'Inactive'])}</tr></thead>
               <tbody>
                 {(isLoading || searchPending)
                   ? <TableLoadingState colSpan={999} />
                   : filteredRows.length === 0
-                    ? <EmptyState colSpan={999} hasFilters={Object.values(filters).some(v => v.length > 0)} onClearFilters={() => setFilters({})} />
+                    ? <EmptyState colSpan={999} hasFilters={Object.values(filters).some(v => v.length > 0)} onClearFilters={() => { setFilters({}); setPage(1) }} />
                     : null}
                 {!(isLoading || searchPending) && pageItems.map(r => (
                   <tr key={r.programGuid}>
@@ -305,9 +315,6 @@ export default function Page() {
                       }
                     </td>
                     <td>
-                      {r.specializations === '—' ? '—' : <span className="badge badge-blue">{r.specializations}</span>}
-                    </td>
-                    <td>
                       {/* Label text is just "Active"/"Inactive" — no "(New Admissions)"/
                           "(Existing Students Only)" qualifier, per the Program Master
                           requirements doc (req. 3). */}
@@ -321,7 +328,7 @@ export default function Page() {
               </tbody>
             </table>
           </ScrollTable>
-          <Pagination page={page} totalPages={totalPages} totalCount={totalCount} itemLabel="programmes" onPageChange={setPage} />
+          <Pagination page={currentPage} totalPages={totalPages} totalCount={totalCount} itemLabel="programmes" onPageChange={setPage} />
         </div>
       </div>
       <ProgrammeModal
@@ -368,7 +375,7 @@ export default function Page() {
             <div className="perm-delete-icon"><i className="lni lni-trash-can"></i></div>
             <div className="perm-delete-title">Delete {deleteTarget.progName}?</div>
             <div className="perm-delete-sub">
-              This will permanently delete this programme version and all its course units and fee structures. This can&apos;t be undone.
+              This will delete this programme version and all its course units and fee structures. Enrolled students and timetable entries are not checked first, so make sure nothing still uses it.
             </div>
             <div className="perm-delete-actions">
               <button className="btn btn-neu" onClick={() => setDeleteTarget(null)}>Cancel</button>

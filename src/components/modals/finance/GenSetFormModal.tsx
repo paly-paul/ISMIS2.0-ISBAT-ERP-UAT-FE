@@ -6,6 +6,7 @@ import { FailurePopup } from '../shared/FailurePopup'
 import { GenSetInput } from '@/lib/api/finance/genSet'
 import { useGenSet } from '@/hooks/finance/useGenSets'
 import { AuthError } from '@/lib/api/client'
+import { scrollToFirstError } from '@/lib/scrollToFirstError'
 
 // Add and Edit share this form — differ in prefill and which mutation runs.
 interface GenSetFormModalProps extends ModalProps {
@@ -55,6 +56,7 @@ export function GenSetFormModal({ isOpen, onClose, showToast, mode, genSetGuid, 
     if (!type.trim()) e.type = 'Type is required'
     if (!condition.trim()) e.condition = 'Condition is required'
     setErrors(e)
+    scrollToFirstError(e)
     return Object.keys(e).length === 0
   }
 
@@ -147,7 +149,7 @@ export function GenSetFormModal({ isOpen, onClose, showToast, mode, genSetGuid, 
               onChange={e => { setType(e.target.value.toUpperCase()); clearError('type') }}
               style={errors.type ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.type && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.type}</p>}
+            {errors.type && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.type}</p>}
           </div>
           <div className="fg">
             <div className="lbl">Condition <span className="req">*</span></div>
@@ -160,7 +162,7 @@ export function GenSetFormModal({ isOpen, onClose, showToast, mode, genSetGuid, 
               onChange={e => { setCondition(e.target.value); clearError('condition') }}
               style={errors.condition ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.condition && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.condition}</p>}
+            {errors.condition && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.condition}</p>}
           </div>
         </div>
         <div className="modal-footer">

@@ -64,7 +64,7 @@ export default function Page() {
   const { page, setPage, totalPages, totalCount, pageItems } = usePagination(filteredRows, PAGE_SIZE)
 
   function confirmDeleteBank() {
-    if (!deleteTarget) return
+    if (!permissions.delete || !deleteTarget) return
     deleteBank.mutate(deleteTarget.bankGuid, {
       onSuccess: () => { setDeleteTarget(null); showToast('Bank deleted successfully') },
       onError: (error: Error) => showToast(error.message || 'Failed to delete bank', 'error'),

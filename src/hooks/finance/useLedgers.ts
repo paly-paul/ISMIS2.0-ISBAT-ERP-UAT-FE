@@ -35,6 +35,8 @@ export function useLedger(guid: string | null, enabled: boolean) {
     queryKey: [...LEDGERS_KEY, guid],
     queryFn: () => getLedgerById(guid as string),
     enabled: enabled && !!guid,
+    staleTime: 5 * 60 * 1000,
+    gcTime: Infinity,
   })
 }
 

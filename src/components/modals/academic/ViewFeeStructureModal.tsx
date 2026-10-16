@@ -1,10 +1,10 @@
 'use client'
-import { useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { ModalProps } from '../types'
 import { useProgramFeeLines, ProgramFeeStructureHeader } from '@/hooks/academic/useProgramFeeStructure'
 import { useProgramMasters } from '@/hooks/academic/useProgramMaster'
 import { useProgramApprovals } from '@/hooks/academic/useProgramApproval'
-import { useIntakes } from '@/hooks/academic/useIntakes'
+import { useIntakesByGuids } from '@/hooks/academic/useIntakes'
 import { useSemestersForProgram } from '@/hooks/academic/useSemesters'
 import { FailurePopup } from '../shared/FailurePopup'
 import { AuthError } from '@/lib/api/client'
@@ -14,10 +14,45 @@ interface ViewFeeStructureModalProps extends ModalProps {
   onEdit?: (feeStructure: ProgramFeeStructureHeader) => void
 }
 
+type Tab = 'details' | 'discounts' | 'semesters'
+
+const TABS: { id: Tab; label: string; icon: string }[] = [
+  { id: 'details', label: 'Basic Details', icon: 'lni-information' },
+  { id: 'discounts', label: 'Fees & Discounts', icon: 'lni-tag' },
+  { id: 'semesters', label: 'Semester Fees', icon: 'lni-coin' },
+]
+
+// Layout, tabs, fields and empty states mirror ViewProgrammeModal /
+// ViewCourseUnitModal so the View modals read as one family.
+function Field({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div>
+      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--g500)', marginBottom: 4 }}>{label}</div>
+      <div style={{ fontSize: 14, color: 'var(--g900)', fontWeight: 500 }}>{value}</div>
+    </div>
+  )
+}
+
+function SectionTitle({ children }: { children: React.ReactNode }) {
+  return <div className="sec-divider" style={{ gridColumn: '1 / -1', marginTop: 6, marginBottom: 0 }}>{children}</div>
+}
+
+function EmptyPanel({ icon, children }: { icon: string; children: React.ReactNode }) {
+  return (
+    <div style={{ textAlign: 'center', padding: '32px 16px', border: '1.5px dashed var(--g200)', borderRadius: 'var(--rsm)', color: 'var(--g500)', fontSize: 13 }}>
+      <i className={`lni ${icon}`} style={{ fontSize: 28, color: 'var(--g300)', display: 'block', marginBottom: 8 }} aria-hidden="true" />
+      {children}
+    </div>
+  )
+}
+
+const plural = (n: number, word: string) => `${n} ${word}${n !== 1 ? 's' : ''}`
+const PANEL_PADDING = '20px clamp(14px, 4vw, 24px)'
+
 export function ViewFeeStructureModal({ isOpen, onClose, feeStructure, onEdit }: ViewFeeStructureModalProps) {
   const { data: feeLines = [], isLoading: feeLinesLoading, isError: feeLinesError, error: feeLinesErrorObj } = useProgramFeeLines(feeStructure?.feeHdGuid ?? null, isOpen && !!feeStructure)
 
-  const { data: programs = [] } = useProgramMasters()
+  const { data: programs = [] } = useProgramMasters(isOpen)
   // GET /api/v1/academic/program-master only ever lists approved programmes
   // (see programme-approval/page.tsx — a programme sits under the separate
   // not-approved list until someone approves it). A fee structure can
@@ -27,13 +62,28 @@ export function ViewFeeStructureModal({ isOpen, onClose, feeStructure, onEdit }:
   // giving up, same guid shape either way.
   const { data: notApprovedData } = useProgramApprovals(1, 1000)
   const notApprovedPrograms = notApprovedData?.items ?? []
-  const { data: intakes = [] } = useIntakes()
+  // Resolves just this one record's own intakeGuid (2026-09-10) instead of
+  // useIntakes(isOpen)'s full 1000-row snapshot fetched just to look up a
+  // single guid — same batched-by-guid convention as ViewProgrammeModal.
+  const intakesByGuid = useIntakesByGuids(feeStructure?.intakeGuid ? [feeStructure.intakeGuid] : [])
   const { data: semesters = [] } = useSemestersForProgram(feeStructure?.programGuid ?? '', isOpen && !!feeStructure?.programGuid)
 
-  const [activeSection, setActiveSection] = useState<'details' | 'discounts' | 'semesters'>('details')
-  const [feeAccordion, setFeeAccordion] = useState(0)
+  const [activeTab, setActiveTab] = useState<Tab>('details')
+
+  // Same sliding underline as ViewProgrammeModal.
+  const tabRefs = useRef<Partial<Record<Tab, HTMLButtonElement>>>({})
+  const [indicator, setIndicator] = useState({ left: 0, width: 0 })
+  useLayoutEffect(() => {
+    const el = tabRefs.current[activeTab]
+    if (el) setIndicator({ left: el.offsetLeft, width: el.offsetWidth })
+  }, [activeTab, isOpen, feeLinesLoading])
 
   if (!isOpen || !feeStructure) return null
+
+  function handleClose() {
+    setActiveTab('details')
+    onClose()
+  }
 
   if (feeLinesError) {
     return (
@@ -42,8 +92,28 @@ export function ViewFeeStructureModal({ isOpen, onClose, feeStructure, onEdit }:
           <FailurePopup
             title="Couldn't Load Fee Lines"
             subtitle={feeLinesErrorObj instanceof AuthError ? (feeLinesErrorObj.message || 'Failed to load details.') : 'Failed to load details.'}
-            onClose={onClose}
+            onClose={handleClose}
           />
+        </div>
+      </div>
+    )
+  }
+
+  const header = (
+    <div className="modal-hdr modal-hdr-blue">
+      <div className="modal-title"><i className="lni lni-eye"></i> View Fee Structure &mdash; <span className="font-mono">{feeStructure.feeCode}</span></div>
+      <button className="modal-close" onClick={handleClose} aria-label="Close"><i className="lni lni-close"></i></button>
+    </div>
+  )
+
+  if (feeLinesLoading) {
+    return (
+      <div className="modal-overlay open" id="view-feestruct-modal">
+        <div className="modal modal-80 modal-flex" onClick={e => e.stopPropagation()}>
+          {header}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1 }}>
+            <span style={{ color: 'var(--g400)' }}>Loading fee structure details…</span>
+          </div>
         </div>
       </div>
     )
@@ -52,250 +122,129 @@ export function ViewFeeStructureModal({ isOpen, onClose, feeStructure, onEdit }:
   const matchedProgram = programs.find(p => p.programGuid === feeStructure.programGuid)
     ?? notApprovedPrograms.find(p => p.programGuid === feeStructure.programGuid)
   const programName = matchedProgram?.programName || '—'
-  const programCode = matchedProgram?.programCode || '—'
-  const intakeName = intakes.find(i => i.intakeGuid === feeStructure.intakeGuid)?.description || '—'
+  const programCode = matchedProgram?.programCode
+  const intakeName = (feeStructure.intakeGuid ? intakesByGuid.get(feeStructure.intakeGuid) : undefined)?.description || '—'
+  const isPercentage = feeStructure.calcType === 2
 
   return (
     <div className="modal-overlay open" id="view-feestruct-modal">
-      {/* height: auto (capped by maxHeight, overriding modal-flex's fixed
-          height: 85vh) so a short tab — Basic Details / Fees & Discounts,
-          nowhere near 85vh of content — doesn't leave a big empty gap above
-          the footer; a genuinely tall tab (Semester Fees with many items)
-          still caps out and scrolls inside .modal-scroll same as before.
-          Same fix as ViewProgrammeModal, which has the identical tabbed
-          structure. */}
-      <div className="modal modal-80 modal-flex" style={{ height: 'auto', maxHeight: '85vh' }} onClick={e => e.stopPropagation()}>
-        <div className="modal-hdr modal-hdr-blue">
-          <div className="modal-title"><i className="lni lni-eye"></i> View Fee Structure — <span className="font-mono">{feeStructure.feeCode}</span></div>
-          <button className="modal-close" onClick={onClose}><i className="lni lni-close"></i></button>
+      {/* modal-flex's fixed 85vh (no height: auto override) so switching tabs
+          doesn't resize the modal — each panel scrolls its own content. */}
+      <div className="modal modal-80 modal-flex" onClick={e => e.stopPropagation()}>
+        {header}
+
+        <div className="tab-bar" role="tablist" aria-label="Fee structure details" style={{ flexShrink: 0, padding: 0, background: 'var(--surface)' }}>
+          {TABS.map(t => {
+            const active = activeTab === t.id
+            const count = t.id === 'semesters' ? semesters.length : 0
+            return (
+              <button
+                key={t.id}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                ref={el => { if (el) tabRefs.current[t.id] = el }}
+                className={`tab-btn${active ? ' active' : ''}`}
+                style={{ flex: 1, justifyContent: 'center' }}
+                onClick={() => setActiveTab(t.id)}
+              >
+                <i className={`lni ${t.icon}`} aria-hidden="true" /> {t.label}
+                {count > 0 && <span className={`badge ${active ? 'badge-blue' : 'badge-grey'}`}>{count}</span>}
+              </button>
+            )
+          })}
+          <span className="tab-indicator" style={{ left: indicator.left, width: indicator.width }} />
         </div>
 
-        {feeLinesLoading ? (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 240, flex: 1 }}>
-            <span style={{ color: 'var(--g400)' }}>Loading fee structure details…</span>
-          </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-            {/* Horizontal Tabs */}
-            <div style={{ 
-              display: 'flex', 
-              borderBottom: '1px solid var(--g200)', 
-              padding: '0 24px', 
-              gap: 0,
-              background: '#fafafa',
-              flexShrink: 0
-            }}>
-              <div
-                onClick={() => setActiveSection('details')}
-                style={{
-                  flex: 1, justifyContent: 'center',
-                  display: 'flex', alignItems: 'center', gap: 8,
-                  padding: '16px 0',
-                  background: activeSection === 'details' ? 'var(--b50)' : 'transparent',
-                  borderBottom: activeSection === 'details' ? '2px solid var(--b500)' : '2px solid transparent',
-                  color: activeSection === 'details' ? 'var(--b700)' : 'var(--g600)',
-                  fontWeight: 600,
-                  fontSize: 13,
-                  cursor: 'pointer', transition: 'all .15s'
-                }}
-              >
-                <i className="lni lni-information" style={{ fontSize: 16 }}></i>
-                Basic Details
-              </div>
-              
-              <div
-                onClick={() => setActiveSection('discounts')}
-                style={{
-                  flex: 1, justifyContent: 'center',
-                  display: 'flex', alignItems: 'center', gap: 8,
-                  padding: '16px 0',
-                  background: activeSection === 'discounts' ? 'var(--b50)' : 'transparent',
-                  borderBottom: activeSection === 'discounts' ? '2px solid var(--b500)' : '2px solid transparent',
-                  color: activeSection === 'discounts' ? 'var(--b700)' : 'var(--g600)',
-                  fontWeight: 600,
-                  fontSize: 13,
-                  cursor: 'pointer', transition: 'all .15s'
-                }}
-              >
-                <i className="lni lni-tag" style={{ fontSize: 16 }}></i>
-                Fees &amp; Discounts
-              </div>
-
-              <div
-                onClick={() => setActiveSection('semesters')}
-                style={{
-                  flex: 1, justifyContent: 'center',
-                  display: 'flex', alignItems: 'center', gap: 8,
-                  padding: '16px 0',
-                  background: activeSection === 'semesters' ? 'var(--b50)' : 'transparent',
-                  borderBottom: activeSection === 'semesters' ? '2px solid var(--b500)' : '2px solid transparent',
-                  color: activeSection === 'semesters' ? 'var(--b700)' : 'var(--g600)',
-                  fontWeight: 600,
-                  fontSize: 13,
-                  cursor: 'pointer', transition: 'all .15s'
-                }}
-              >
-                <i className="lni lni-coin" style={{ fontSize: 16 }}></i>
-                Semester Fees
-              </div>
-            </div>
-
-            <div className="modal-scroll" style={{ padding: '24px', flex: 1, overflowY: 'auto', background: '#fff' }}>
-              {activeSection === 'details' && (
-                <>
-                  <div className="view-detail-grid">
-                    <div>
-                      <div style={{ fontSize: '11.5px', fontWeight: 600, color: 'var(--g500)', letterSpacing: '0.04em', marginBottom: '4px' }}>Programme</div>
-                      <div style={{ fontSize: '14px', color: 'var(--g900)', fontWeight: 500 }}>
-                        {programName} ({programCode})
-                      </div>
-                    </div>
-                    <div>
-                      <div style={{ fontSize: '11.5px', fontWeight: 600, color: 'var(--g500)', letterSpacing: '0.04em', marginBottom: '4px' }}>Intake</div>
-                      <div style={{ fontSize: '14px', color: 'var(--g900)', fontWeight: 500 }}>
-                        {intakeName}
-                      </div>
-                    </div>
-                    <div>
-                      <div style={{ fontSize: '11.5px', fontWeight: 600, color: 'var(--g500)', letterSpacing: '0.04em', marginBottom: '4px' }}>Fee Code</div>
-                      <div style={{ fontSize: '14px', color: 'var(--g900)', fontWeight: 500, fontFamily: 'var(--font-mono)' }}>
-                        {feeStructure.feeCode}
-                      </div>
-                    </div>
-                    <div>
-                      <div style={{ fontSize: '11.5px', fontWeight: 600, color: 'var(--g500)', letterSpacing: '0.04em', marginBottom: '4px' }}>Fee Description</div>
-                      <div style={{ fontSize: '14px', color: 'var(--g900)', fontWeight: 500 }}>
-                        {feeStructure.feeDesc || '—'}
-                      </div>
-                    </div>
-                    <div>
-                      <div style={{ fontSize: '11.5px', fontWeight: 600, color: 'var(--g500)', letterSpacing: '0.04em', marginBottom: '4px' }}>Base Currency</div>
-                      <div style={{ fontSize: '14px', color: 'var(--g900)', fontWeight: 500 }}>
-                        {feeStructure.localOrForeign ? 'Foreign' : 'Local'}
-                      </div>
-                    </div>
-                    <div>
-                      <div style={{ fontSize: '11.5px', fontWeight: 600, color: 'var(--g500)', letterSpacing: '0.04em', marginBottom: '4px' }}>Status</div>
-                      <div>
-                        {feeStructure.status ? <span className="badge badge-green"><span className="bdot"></span>Active</span> : <span className="badge badge-grey">Inactive</span>}
-                      </div>
-                    </div>
-                  </div>
-                </>
-              )}
-
-              {activeSection === 'discounts' && (
-                <>
-                  <div className="view-detail-grid">
-                    <div>
-                      <div style={{ fontSize: '11.5px', fontWeight: 600, color: 'var(--g500)', letterSpacing: '0.04em', marginBottom: '4px' }}>Lumpsum Discount Type</div>
-                      <div style={{ fontSize: '14px', color: 'var(--g900)', fontWeight: 500 }}>
-                        {feeStructure.calcType === 2 ? 'Percentage' : 'Amount'}
-                      </div>
-                    </div>
-                    <div>
-                      <div style={{ fontSize: '11.5px', fontWeight: 600, color: 'var(--g500)', letterSpacing: '0.04em', marginBottom: '4px' }}>Lumpsum Discount Value</div>
-                      <div style={{ fontSize: '14px', color: 'var(--g900)', fontWeight: 500 }}>
-                        {feeStructure.amtPer ?? '0'} {feeStructure.calcType === 2 ? '%' : ''}
-                      </div>
-                    </div>
-                    <div>
-                      <div style={{ fontSize: '11.5px', fontWeight: 600, color: 'var(--g500)', letterSpacing: '0.04em', marginBottom: '4px' }}>Lateral Entry Fee</div>
-                      <div style={{ fontSize: '14px', color: 'var(--g900)', fontWeight: 500 }}>
-                        {feeStructure.lef ?? '0'}
-                      </div>
-                    </div>
-                    <div>
-                      <div style={{ fontSize: '11.5px', fontWeight: 600, color: 'var(--g500)', letterSpacing: '0.04em', marginBottom: '4px' }}>Credit Exemption Fee</div>
-                      <div style={{ fontSize: '14px', color: 'var(--g900)', fontWeight: 500 }}>
-                        {feeStructure.cef ?? '0'}
-                      </div>
-                    </div>
-                    <div>
-                      <div style={{ fontSize: '11.5px', fontWeight: 600, color: 'var(--g500)', letterSpacing: '0.04em', marginBottom: '4px' }}>Aptech Credit Exemption Fee</div>
-                      <div style={{ fontSize: '14px', color: 'var(--g900)', fontWeight: 500 }}>
-                        {feeStructure.ace ?? '0'}
-                      </div>
-                    </div>
-                  </div>
-                </>
-              )}
-
-              {activeSection === 'semesters' && (
-                <>
-                  {semesters.length === 0 && (
-                    <div className="text-g400 italic text-sm mt-4">No semesters found for this programme.</div>
-                  )}
-                  <div className="flex flex-col gap-2">
-                    {semesters.map((sem, si) => {
-                      const isOpen = feeAccordion === si
-                      const items = feeLines.filter(f => f.semesterGuid === sem.semesterGuid) || []
-                      const total = items.reduce((s, f) => s + (f.amount || 0), 0)
-                      const totalCurrencyCode = items[0]?.currencyName ?? ''
-
-                      return (
-                        <div key={sem.semesterGuid} style={{ border: '1.5px solid var(--b100)', borderRadius: 'var(--rsm)', overflow: 'hidden' }}>
-                          <button
-                            type="button"
-                            onClick={() => setFeeAccordion(isOpen ? -1 : si)}
-                            style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', width: '100%', background: isOpen ? 'var(--b50)' : 'var(--white)', border: 'none', borderBottom: isOpen ? '1px solid var(--b100)' : 'none', cursor: 'pointer', textAlign: 'left', transition: 'background 0.2s' }}
-                          >
-                            <span className="badge badge-blue" style={{ flexShrink: 0 }}>Sem {si + 1}</span>
-                            <span style={{ fontWeight: 700, fontSize: 13, color: 'var(--b700)' }}>{sem.semName}</span>
-                            {items.length > 0
-                              ? <span style={{ marginLeft: 'auto', fontSize: 11.5, color: 'var(--g400)', marginRight: 8 }}>{items.length} item{items.length !== 1 ? 's' : ''} · {total.toLocaleString()} {totalCurrencyCode}</span>
-                              : <span style={{ marginLeft: 'auto', fontSize: 11.5, color: 'var(--g400)', fontStyle: 'italic', marginRight: 8 }}>No items</span>
-                            }
-                            <i className="lni lni-chevron-down" style={{ fontSize: 11, color: 'var(--g400)', flexShrink: 0, transform: isOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.25s ease' }} />
-                          </button>
-
-                          <div style={{ overflow: 'hidden', maxHeight: isOpen ? 800 : 0, transition: 'max-height 0.3s ease' }}>
-                            <div style={{ padding: '10px 14px' }}>
-                              {items.length > 0 && (
-                                <div style={{ display: 'grid', gridTemplateColumns: '40px 1fr 90px 130px', gap: 6, padding: '0 0 4px', fontSize: 10.5, fontWeight: 700, color: 'var(--g400)', letterSpacing: '0.05em' }}>
-                                  <span style={{ textAlign: 'center' }}>Pri.</span><span>Ledger</span><span>Amount</span><span>Currency</span>
-                                </div>
-                              )}
-                              <div className="flex flex-col gap-1">
-                                {items.length === 0 && (
-                                  <div className="text-g400 italic" style={{ fontSize: 12.5, marginBottom: 8 }}>No fee items for this semester.</div>
-                                )}
-                                {items.map((f, idx) => (
-                                  <div key={idx} style={{ display: 'grid', gridTemplateColumns: '40px 1fr 90px 130px', gap: 6, alignItems: 'center', background: 'var(--white)', border: '1px solid var(--g200)', borderRadius: 'var(--rxs)', padding: '6px 8px', fontSize: 12.5 }}>
-                                    <div style={{ textAlign: 'center', fontWeight: 600, color: 'var(--g500)' }}>{f.ledgerNum}</div>
-                                    {/* ledgerName/currencyName come straight off the fee-line response
-                                        itself (confirmed field, see ProgramFeeLineDetail) — no need to
-                                        cross-reference the separate ledgers/financeCurrencies lists,
-                                        which don't necessarily contain every ledger/currency this
-                                        programme's fee lines reference. */}
-                                    <div style={{ fontWeight: 500, color: 'var(--g900)' }}>{f.ledgerName || '—'}</div>
-                                    <div style={{ fontFamily: 'var(--font-mono)' }}>{f.amount}</div>
-                                    <div>{f.currencyName || '—'}</div>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </>
-              )}
+        {/* ── Basic Details ── */}
+        {activeTab === 'details' && (
+          <div key="details" className="modal-scroll tab-panel-in" style={{ padding: PANEL_PADDING }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', rowGap: 20, columnGap: 24 }}>
+              <Field label="Programme" value={<>{programName}{programCode && <> <span className="font-mono" style={{ color: 'var(--g500)' }}>({programCode})</span></>}</>} />
+              <Field label="Intake" value={intakeName} />
+              <Field label="Fee Code" value={<span className="font-mono">{feeStructure.feeCode}</span>} />
+              <Field label="Fee Description" value={feeStructure.feeDesc || '—'} />
+              <Field label="Base Currency" value={feeStructure.localOrForeign ? 'Foreign' : 'Local'} />
+              <Field
+                label="Status"
+                value={feeStructure.status ? <span className="badge badge-green"><span className="bdot"></span>Active</span> : <span className="badge badge-grey">Inactive</span>}
+              />
             </div>
           </div>
         )}
 
-        <div className="modal-footer" style={{ borderTop: '1px solid var(--g200)' }}>
+        {/* ── Fees & Discounts ── */}
+        {activeTab === 'discounts' && (
+          <div key="discounts" className="modal-scroll tab-panel-in" style={{ padding: PANEL_PADDING }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', rowGap: 20, columnGap: 24 }}>
+              <SectionTitle>Lumpsum Discount</SectionTitle>
+              <Field label="Discount Type" value={isPercentage ? 'Percentage' : 'Amount'} />
+              <Field label="Discount Value" value={`${feeStructure.amtPer ?? 0}${isPercentage ? '%' : ''}`} />
+
+              <SectionTitle>Programme-level Fees</SectionTitle>
+              <Field label="Lateral Entry Fee" value={feeStructure.lef ?? 0} />
+              <Field label="Credit Exemption Fee" value={feeStructure.cef ?? 0} />
+              <Field label="Aptech Credit Exemption Fee" value={feeStructure.ace ?? 0} />
+            </div>
+          </div>
+        )}
+
+        {/* ── Semester Fees: each semester's ledger lines, in priority order ── */}
+        {activeTab === 'semesters' && (
+          <div key="semesters" className="modal-scroll tab-panel-in" style={{ padding: PANEL_PADDING }}>
+            {semesters.length === 0 ? (
+              <EmptyPanel icon="lni-coin">No semesters have been set up for this programme.</EmptyPanel>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                {semesters.map((sem, si) => {
+                  const items = feeLines.filter(f => f.semesterGuid === sem.semesterGuid)
+                  const total = items.reduce((sum, f) => sum + (f.amount || 0), 0)
+                  return (
+                    <div key={sem.semesterGuid}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                        <span className="badge badge-blue">Sem {si + 1}</span>
+                        <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--g800)' }}>{sem.semName}</span>
+                        <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--g500)', fontVariantNumeric: 'tabular-nums' }}>
+                          {items.length > 0 ? `${plural(items.length, 'item')} · ${total.toLocaleString()} ${items[0]?.currencyName ?? ''}` : 'No items'}
+                        </span>
+                      </div>
+                      {items.length > 0 && (
+                        <ol style={{ listStyle: 'none', margin: 0, padding: 0, border: '1px solid var(--g200)', borderRadius: 'var(--rsm)' }}>
+                          {items.map((f, idx) => (
+                            <li key={idx} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 12px', borderBottom: idx < items.length - 1 ? '1px solid var(--g100)' : 'none', fontSize: 13 }}>
+                              <span className="font-mono" style={{ minWidth: 22, textAlign: 'right', color: 'var(--g400)' }} title="Ledger priority">{f.ledgerNum}.</span>
+                              {/* ledgerName/currencyName come straight off the fee-line response
+                                  itself (confirmed field, see ProgramFeeLineDetail) — no need to
+                                  cross-reference the separate ledgers/financeCurrencies lists,
+                                  which don't necessarily contain every ledger/currency this
+                                  programme's fee lines reference. */}
+                              <span style={{ flex: 1, minWidth: 0, color: 'var(--g800)' }}>{f.ledgerName || '—'}</span>
+                              <span style={{ fontWeight: 600, color: 'var(--g900)', fontVariantNumeric: 'tabular-nums' }}>
+                                {(f.amount || 0).toLocaleString()} <span style={{ color: 'var(--g500)', fontWeight: 500 }}>{f.currencyName || ''}</span>
+                              </span>
+                            </li>
+                          ))}
+                        </ol>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="modal-footer">
+          <span className="text-sm" style={{ color: 'var(--g500)' }}>
+            {plural(semesters.length, 'semester')} · {plural(feeLines.length, 'fee line')}
+          </span>
           <span className="flex-1"></span>
-          {onEdit && feeStructure && (
-            <button className="btn btn-neu" style={{ marginRight: 8 }} onClick={() => onEdit(feeStructure)}>
-              <i className="lni lni-pencil"></i> Edit
+          {onEdit && (
+            <button className="btn btn-neu" onClick={() => onEdit(feeStructure)}>
+              <i className="lni lni-pencil"></i> Edit Details
             </button>
           )}
-          <button className="btn btn-primary" onClick={onClose}>
-            Close
-          </button>
+          <button className="btn btn-primary" onClick={handleClose}>Close</button>
         </div>
       </div>
     </div>

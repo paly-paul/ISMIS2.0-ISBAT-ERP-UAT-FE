@@ -50,7 +50,7 @@ export function AssessmentTypeViewModal({ isOpen, onClose, onEdit, viewingGuid }
               </div>
 
               <div className="fg">
-                <label className="text-[var(--fs-xs)] text-g500 block mb-1">Display Fee Clearance</label>
+                <label className="text-[var(--fs-xs)] text-g500 block mb-1">Actual Fee Clearance</label>
                 <div className="text-g900 font-mono">
                   {record.displayFeeClearance !== null ? record.displayFeeClearance.toFixed(2) : <span className="text-g400">—</span>}
                 </div>

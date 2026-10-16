@@ -18,7 +18,7 @@ export function PaymentHistoryModal({ isOpen, onClose, entries, isLoading, isErr
   if (!isOpen) return null
 
   return (
-    <div className="modal-overlay open" onClick={onClose}>
+    <div className="modal-overlay open">
       <div className="modal modal-lg" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', maxHeight: '85vh' }} onClick={e => e.stopPropagation()}>
         <div className="modal-hdr modal-hdr-blue" style={{ flexShrink: 0 }}>
           <div className="modal-title"><i className="lni lni-folder"></i> Payment History</div>

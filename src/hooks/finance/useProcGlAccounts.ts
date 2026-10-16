@@ -30,6 +30,7 @@ export function useProcGlAccount(guid: string | null, enabled: boolean) {
   return useQuery({
     queryKey: [...PROC_GL_ACCOUNTS_KEY, guid],
     queryFn: () => getProcGlAccountById(guid as string),
+    staleTime: 5 * 60 * 1000,
     enabled: enabled && !!guid,
   })
 }

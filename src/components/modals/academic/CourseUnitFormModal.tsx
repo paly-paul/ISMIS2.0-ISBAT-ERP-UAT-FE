@@ -1,15 +1,19 @@
 'use client'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ModalProps } from '../types'
 import { SuccessPopup } from '../shared/SuccessPopup'
 import { FailurePopup } from '../shared/FailurePopup'
 import { SearchSelect } from '@/components/SearchSelect'
 import { CourseUnit, CourseUnitInput, getCourseUnitById } from '@/lib/api/academic/courseUnit'
 import { UpsertCourseUnitOutlineInput } from '@/lib/api/academic/courseUnitOutlines'
-import { openDocumentForViewing, downloadDocument } from '@/lib/documentViewer'
+import { downloadDocument } from '@/lib/documentViewer'
+import { DocumentPreviewModal } from '../shared/DocumentPreviewModal'
 import { useCourseUnit, useUpsertCourseUnitOutlines } from '@/hooks/academic/useCourseUnits'
-import { useRepetitionTags } from '@/hooks/academic/useRepetitionTags'
+import { useSearchRepetitionTagsInfinite } from '@/hooks/academic/useRepetitionTags'
 import { AuthError } from '@/lib/api/client'
+import { checkCourseUnitAvailability } from '@/lib/api/academic/courseUnit'
+import { flattenUniquePages } from '@/lib/pagination'
+import { scrollToFirstError } from '@/lib/scrollToFirstError'
 
 // Add and Edit share this form — differ in prefill, whether Step 1 POSTs or
 // PUTs the unit details, and whether there's an existing-syllabus panel to show.
@@ -69,8 +73,13 @@ export function CourseUnitFormModal({ isOpen, onClose, showToast, mode, courseUn
   const [numChapters, setNumChapters]   = useState('')
   const [credits, setCredits]           = useState('')
   const [repetitionTagGuid, setRepetitionTagGuid] = useState('')
+  const [repetitionTagSearch, setRepetitionTagSearch] = useState('')
+  const [committedRepetitionTagSearch, setCommittedRepetitionTagSearch] = useState('')
+  const [repetitionTagPickerOpen, setRepetitionTagPickerOpen] = useState(false)
   const [syllabusFile, setSyllabusFile] = useState<File | null>(null)
   const [syllabusLinkLoading, setSyllabusLinkLoading] = useState(false)
+  // View shows the syllabus in an in-page preview, not a bare new tab.
+  const [syllabusPreview, setSyllabusPreview] = useState<string | null>(null)
   const [errors, setErrors]               = useState<Record<string, string>>({})
   const [chapterErrors, setChapterErrors] = useState<string[]>([])
   // Keyed by "chapterIdx-topicIdx" — the backend's taughtBy field (labeled
@@ -89,8 +98,20 @@ export function CourseUnitFormModal({ isOpen, onClose, showToast, mode, courseUn
   const [cbtFinal, setCbtFinal]         = useState('15')
   const [ueFinal, setUeFinal]           = useState('70')
 
-  const { data: repetitionTags = [] } = useRepetitionTags(isOpen)
-  const repetitionTagOptions = repetitionTags.map(t => ({ value: t.courseUnitRepetitionGuid, label: `${t.tagCode} — ${t.tagName}` }))
+  const repetitionTagQuery = useSearchRepetitionTagsInfinite(
+    committedRepetitionTagSearch,
+    20,
+    isOpen && repetitionTagPickerOpen,
+  )
+  const repetitionTags = useMemo(
+    () => flattenUniquePages(repetitionTagQuery.data?.pages ?? [], tag => tag.courseUnitRepetitionGuid),
+    [repetitionTagQuery.data],
+  )
+
+  useEffect(() => {
+    const timer = setTimeout(() => setCommittedRepetitionTagSearch(repetitionTagSearch.trim()), 300)
+    return () => clearTimeout(timer)
+  }, [repetitionTagSearch])
 
   const finalTotal = (includeCW ? (+cwFinal || 0) : 0) + (includeCBT ? (+cbtFinal || 0) : 0) + (+ueFinal || 0)
   const totalOk    = finalTotal === 100
@@ -220,6 +241,7 @@ export function CourseUnitFormModal({ isOpen, onClose, showToast, mode, courseUn
           : [blankChapter()]
       )
       setSyllabusFile(null)
+      setCodeTaken(null); setNameWarning(null)
       setStep(1)
       setActiveChapterIdx(0)
       setErrors({})
@@ -234,17 +256,83 @@ export function CourseUnitFormModal({ isOpen, onClose, showToast, mode, courseUn
       setCwAssessed('25'); setCbtAssessed('50'); setUeAssessed('100')
       setCwFinal('15'); setCbtFinal('15'); setUeFinal('70')
       setCreatedCourseUnitGuid(null)
+      setCodeTaken(null); setNameWarning(null)
       step1SnapshotRef.current = null
     }
   }, [isOpen, isEdit, courseUnit])
 
+  // post-courseunit.md / put-courseunit.md: the code/name length caps differ
+  // between create (20 / 100) and update (50 / 200) — deliberate in the API.
+  const codeMax = isEdit ? 50 : 20
+  const nameMax = isEdit ? 200 : 100
+
   function validateStep1() {
     const e: Record<string, string> = {}
-    if (!unitCode.trim())  e.unitCode     = 'Unit Code is required'
-    if (!unitName.trim())  e.unitName     = 'Unit Name is required'
-    if (!credits)          e.credits      = 'Credits is required'
+    const code = unitCode.trim(), name = unitName.trim()
+    if (!code)                       e.unitCode = 'Unit Code is required'
+    else if (code.length > codeMax)  e.unitCode = `Unit Code must not exceed ${codeMax} characters`
+    if (!name)                       e.unitName = 'Unit Name is required'
+    else if (name.length > nameMax)  e.unitName = `Unit Name must not exceed ${nameMax} characters`
+    // ChapterCount is optional, but must be > 0 when given (PUT validator).
+    if (numChapters.trim() && !(Number.isInteger(+numChapters) && +numChapters > 0)) e.numChapters = 'No. of Chapters must be at least 1'
+    // MaxCredits > 0.
+    if (!credits.trim())                                     e.credits = 'Credits is required'
+    else if (!(Number.isInteger(+credits) && +credits > 0))  e.credits = 'Credits must be at least 1'
+    // Weightages ≥ 0 per the API (inputs are digits-only, so that holds);
+    // the total rule is this form's own — it already warned "Must equal 100"
+    // but still let Save & Continue through.
+    if (!totalOk) e.weightage = `Final weights must add up to 100 (currently ${finalTotal})`
+    // A code already reported as taken by the availability check.
+    if (!e.unitCode && codeTaken) e.unitCode = codeTaken
     setErrors(e)
+    scrollToFirstError(e)
     return Object.keys(e).length === 0
+  }
+
+  // ---- Availability (get-courseunit-check-availability.md) ----
+  // Checked when the code/name field loses focus. A taken code blocks Save
+  // (codes are unique); a taken name is an amber, non-blocking heads-up.
+  const [codeTaken, setCodeTaken] = useState<string | null>(null)
+  const [nameWarning, setNameWarning] = useState<string | null>(null)
+  async function checkAvailability(field: 'code' | 'name') {
+    const value = field === 'code' ? unitCode.trim() : unitName.trim()
+    if (!value) return
+    try {
+      const r = await checkCourseUnitAvailability(field === 'code' ? value : '', field === 'name' ? value : '', isEdit ? courseUnitGuid : createdCourseUnitGuid)
+      if (field === 'code') {
+        const msg = r.codeExists ? (r.codeMessage || 'This Unit Code is already in use. Please choose a different code.') : null
+        setCodeTaken(msg)
+        if (msg) setErrors(p => ({ ...p, unitCode: msg }))
+      } else {
+        setNameWarning(r.nameExists ? (r.nameMessage || 'A course unit with this name already exists. You can still continue.') : null)
+      }
+    } catch {
+      // Advisory only — the server still enforces code uniqueness on save.
+    }
+  }
+
+  // Server-side Step 1 failures that belong to a field go under it instead
+  // of the failure popup (duplicate code is a 400 bad_request on create and
+  // a 400 conflict on update; a missing repetition tag is a 400 bad_request).
+  function handleStep1Error(error: Error) {
+    const code = error instanceof AuthError ? error.code : undefined
+    const msg = error.message || ''
+    let fieldErr: Record<string, string> | null = null
+    if (/already exists/i.test(msg) && /code/i.test(msg)) fieldErr = { unitCode: 'A course unit with this code already exists.' }
+    else if (/repetition not found/i.test(msg)) fieldErr = { repetitionTag: 'This repetition tag no longer exists. Pick another one or clear it.' }
+    else if (code === 'validation_error') {
+      if (/code/i.test(msg)) fieldErr = { unitCode: msg }
+      else if (/name/i.test(msg)) fieldErr = { unitName: msg }
+      else if (/credit/i.test(msg)) fieldErr = { credits: msg }
+      else if (/chapter/i.test(msg)) fieldErr = { numChapters: msg }
+      else if (/weight/i.test(msg)) fieldErr = { weightage: msg }
+    }
+    if (fieldErr) {
+      setErrors(p => ({ ...p, ...fieldErr }))
+      scrollToFirstError(fieldErr)
+      return
+    }
+    setFailure(msg || `Failed to save unit details${code ? ` (${code})` : ''}. Please try again.`)
   }
 
   function validateStep2() {
@@ -259,14 +347,16 @@ export function CourseUnitFormModal({ isOpen, onClose, showToast, mode, courseUn
     })
     setTopicTaughtByErrors(missingTaughtBy)
 
+    // Jump to the first chapter with a missing title or No of Classes value
+    // so the error is actually visible — it could otherwise be sitting in a
+    // chapter the user isn't currently looking at — then scroll to it.
+    const firstBadChapter = chapters.findIndex((_, ci) =>
+      !!chapErrs[ci] || Array.from(missingTaughtBy).some(key => key.startsWith(`${ci}-`))
+    )
+    if (firstBadChapter !== -1) setActiveChapterIdx(firstBadChapter)
+    scrollToFirstError([...chapErrs, ...Array.from(missingTaughtBy)])
+
     if (missingTaughtBy.size > 0) {
-      // Jump to the first chapter with a missing No of Classes value so the
-      // error is actually visible — it could otherwise be sitting in a
-      // chapter the user isn't currently looking at.
-      const firstBadChapter = chapters.findIndex((_, ci) =>
-        Array.from(missingTaughtBy).some(key => key.startsWith(`${ci}-`))
-      )
-      if (firstBadChapter !== -1) setActiveChapterIdx(firstBadChapter)
       showToast('Enter No of Classes for every topic before saving', 'error')
     }
 
@@ -285,8 +375,8 @@ export function CourseUnitFormModal({ isOpen, onClose, showToast, mode, courseUn
     try {
       const fresh = await getCourseUnitById(courseUnitGuid)
       if (!fresh.syllabus) { showToast('Syllabus is no longer attached to this unit', 'error'); return }
-      if (mode === 'view') await openDocumentForViewing(fresh.syllabus)
-      else downloadDocument(fresh.syllabus)
+      if (mode === 'view') setSyllabusPreview(fresh.syllabus)
+      else await downloadDocument(fresh.syllabus)
     } catch {
       showToast('Failed to load the syllabus document. Please try again.', 'error')
     } finally {
@@ -295,6 +385,11 @@ export function CourseUnitFormModal({ isOpen, onClose, showToast, mode, courseUn
   }
 
   if (!isOpen) return null
+
+  const repetitionTagOptions = repetitionTags.map(t => ({ value: t.courseUnitRepetitionGuid, label: `${t.tagCode} — ${t.tagName}` }))
+  if (isEdit && repetitionTagGuid && !repetitionTagOptions.some(option => option.value === repetitionTagGuid)) {
+    repetitionTagOptions.unshift({ value: repetitionTagGuid, label: courseUnit?.courseUnitRepetitionName || 'Selected repetition tag' })
+  }
 
   function handleClose() {
     prefilledForRef.current = null
@@ -306,6 +401,7 @@ export function CourseUnitFormModal({ isOpen, onClose, showToast, mode, courseUn
     setCwAssessed('25'); setCbtAssessed('50'); setUeAssessed('100')
     setCwFinal('15'); setCbtFinal('15'); setUeFinal('70')
     setCreatedCourseUnitGuid(null)
+    setCodeTaken(null); setNameWarning(null)
     onClose()
   }
 
@@ -361,12 +457,32 @@ export function CourseUnitFormModal({ isOpen, onClose, showToast, mode, courseUn
   // trim the excess from the end, then advance — shared by both the "PUT
   // succeeded" path and the "nothing changed, skip the PUT" path below.
   function advanceToStep2() {
-    if (chapterCap > 0 && chapters.length > chapterCap) {
+    syncChaptersToCount()
+    setStep(2)
+  }
+
+  // Make Step 2's outline match Step 1's "No. of Chapters": trim extras from
+  // the end if it was lowered, and add blank chapters up to it if it's
+  // higher (it used to only cap, so Step 2 always opened with one chapter).
+  // Existing chapters — typed or loaded on Edit — are never touched. Blank
+  // count = no change, so the outline can still be built freely.
+  function syncChaptersToCount() {
+    if (chapterCap <= 0) return
+    if (chapters.length > chapterCap) {
       setChapters(p => p.slice(0, chapterCap))
       setChapterErrors(p => p.slice(0, chapterCap))
       setActiveChapterIdx(i => Math.min(i, chapterCap - 1))
+    } else if (chapters.length < chapterCap) {
+      setChapters(p => {
+        // Study sequence continues across chapters, same as addChapter().
+        const next = [...p]
+        while (next.length < chapterCap) {
+          next.push(blankChapter(next.reduce((sum, c) => sum + c.topics.length, 0) + 1))
+        }
+        return next
+      })
+      setChapterErrors(p => [...p, ...Array(Math.max(0, chapterCap - p.length)).fill('')])
     }
-    setStep(2)
   }
 
   // Step 1's Save & Continue. On Create, POSTs /courseunits right away (Unit
@@ -405,8 +521,8 @@ export function CourseUnitFormModal({ isOpen, onClose, showToast, mode, courseUn
         {
           guid: courseUnitGuid,
           input: {
-            courseUnitCode: unitCode,
-            courseUnitName: unitName,
+            courseUnitCode: unitCode.trim(),
+            courseUnitName: unitName.trim(),
             maxCredits: +credits || 0,
             chapterCount: +numChapters || 0,
             courseUnitRepetitionGuid: repetitionTagGuid || null,
@@ -423,30 +539,19 @@ export function CourseUnitFormModal({ isOpen, onClose, showToast, mode, courseUn
             syllabus: syllabusFile,
           },
         },
-        {
-          onSuccess: advanceToStep2,
-          onError: (error: Error) => {
-            const code = error instanceof AuthError ? error.code : undefined
-            setFailure(error.message || `Failed to save unit details${code ? ` (${code})` : ''}. Please try again.`)
-          },
-        },
+        { onSuccess: advanceToStep2, onError: handleStep1Error },
       )
       return
     }
 
-    // Create path.
-    // If the user lowered No. of Chapters after already building some out, trim the excess from the end.
-    if (chapterCap > 0 && chapters.length > chapterCap) {
-      setChapters(p => p.slice(0, chapterCap))
-      setChapterErrors(p => p.slice(0, chapterCap))
-      setActiveChapterIdx(i => Math.min(i, chapterCap - 1))
-    }
+    // Create path — fit the outline to No. of Chapters first.
+    syncChaptersToCount()
     if (createdCourseUnitGuid) { setStep(2); return }
 
     createCourseUnit.mutate(
       {
-        courseUnitCode: unitCode,
-        courseUnitName: unitName,
+        courseUnitCode: unitCode.trim(),
+        courseUnitName: unitName.trim(),
         maxCredits: +credits || 0,
         // The real final chapter count isn't known yet at this point (Step
         // 2 hasn't been built out) — this is Step 1's own "No. of Chapters"
@@ -456,8 +561,9 @@ export function CourseUnitFormModal({ isOpen, onClose, showToast, mode, courseUn
         mid: includeMid ? 1 : 0,
         cw: includeCW ? 1 : 0,
         ca: includeCBT ? 1 : 0,
-        // No UI control yet — defaults new units to approved.
-        approved: 1,
+        // No UI control yet — leave the backend's approval/default handling
+        // untouched rather than forcing a hardcoded status on create.
+        approved: null,
         cbtWeightage: +cbtFinal || 0,
         cwWeightage: +cwFinal || 0,
         ueWeightage: +ueFinal || 0,
@@ -465,10 +571,7 @@ export function CourseUnitFormModal({ isOpen, onClose, showToast, mode, courseUn
       },
       {
         onSuccess: (unit: CourseUnit) => { setCreatedCourseUnitGuid(unit.courseUnitGuid); showToast('Unit details saved'); setStep(2) },
-        onError: (error: Error) => {
-          const code = error instanceof AuthError ? error.code : undefined
-          setFailure(error.message || `Failed to save unit details${code ? ` (${code})` : ''}. Please try again.`)
-        },
+        onError: handleStep1Error,
       },
     )
   }
@@ -628,10 +731,13 @@ export function CourseUnitFormModal({ isOpen, onClose, showToast, mode, courseUn
                 className="ctrl font-mono uppercase"
                 style={errors.unitCode ? { borderColor: 'var(--red)' } : undefined}
                 placeholder={isEdit ? undefined : 'e.g. IT201'}
+                maxLength={codeMax}
                 value={unitCode}
-                onChange={e => { setUnitCode(e.target.value); if (errors.unitCode) setErrors(p => ({ ...p, unitCode: '' })) }}
+                // Uppercase (the API uppercases on save) and no spaces.
+                onChange={e => { setUnitCode(e.target.value.toUpperCase().replace(/\s+/g, '')); setCodeTaken(null); if (errors.unitCode) setErrors(p => ({ ...p, unitCode: '' })) }}
+                onBlur={() => checkAvailability('code')}
               />
-              {errors.unitCode && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.unitCode}</p>}
+              {errors.unitCode && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.unitCode}</p>}
             </div>
             <div className="fg">
               <div className="lbl">Unit Name <span className="req">*</span></div>
@@ -639,45 +745,55 @@ export function CourseUnitFormModal({ isOpen, onClose, showToast, mode, courseUn
                 className="ctrl"
                 style={errors.unitName ? { borderColor: 'var(--red)' } : undefined}
                 placeholder={isEdit ? undefined : 'e.g. Data Structures and Algorithms'}
+                maxLength={nameMax}
                 value={unitName}
-                onChange={e => { setUnitName(e.target.value); if (errors.unitName) setErrors(p => ({ ...p, unitName: '' })) }}
+                onChange={e => { setUnitName(e.target.value); setNameWarning(null); if (errors.unitName) setErrors(p => ({ ...p, unitName: '' })) }}
+                onBlur={() => checkAvailability('name')}
               />
-              {errors.unitName && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.unitName}</p>}
+              {errors.unitName && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.unitName}</p>}
+              {!errors.unitName && nameWarning && <p style={{ color: 'var(--amber)', fontSize: 12, marginTop: 4 }}><i className="lni lni-warning" aria-hidden="true" /> {nameWarning}</p>}
             </div>
             <div className="fg">
               <div className="lbl">No. of Chapters</div>
               <input
                 className="ctrl"
                 style={errors.numChapters ? { borderColor: 'var(--red)' } : undefined}
-                type="number"
-                min={1}
+                inputMode="numeric"
+                maxLength={3}
                 placeholder={isEdit ? undefined : 'e.g. 6'}
                 value={numChapters}
-                onChange={e => { setNumChapters(e.target.value); if (errors.numChapters) setErrors(p => ({ ...p, numChapters: '' })) }}
+                onChange={e => { setNumChapters(e.target.value.replace(/\D/g, '')); if (errors.numChapters) setErrors(p => ({ ...p, numChapters: '' })) }}
               />
-              {errors.numChapters && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.numChapters}</p>}
+              {errors.numChapters && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.numChapters}</p>}
             </div>
             <div className="fg">
               <div className="lbl">Credits <span className="req">*</span></div>
               <input
                 className="ctrl"
                 style={errors.credits ? { borderColor: 'var(--red)' } : undefined}
-                type="number"
-                min={1}
+                inputMode="numeric"
+                maxLength={3}
                 placeholder={isEdit ? undefined : 'e.g. 3'}
                 value={credits}
-                onChange={e => { setCredits(e.target.value); if (errors.credits) setErrors(p => ({ ...p, credits: '' })) }}
+                onChange={e => { setCredits(e.target.value.replace(/\D/g, '')); if (errors.credits) setErrors(p => ({ ...p, credits: '' })) }}
               />
-              {errors.credits && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.credits}</p>}
+              {errors.credits && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.credits}</p>}
             </div>
             <div className="fg span2">
               <div className="lbl">Repetition Tag</div>
               <SearchSelect
                 placeholder="— Select repetition tag —"
                 value={repetitionTagGuid}
-                onChange={setRepetitionTagGuid}
+                onSearch={setRepetitionTagSearch}
+                onOpenChange={setRepetitionTagPickerOpen}
+                isLoading={repetitionTagQuery.isLoading}
+                hasNextPage={repetitionTagQuery.hasNextPage}
+                isFetchingNextPage={repetitionTagQuery.isFetchingNextPage}
+                onLoadMore={() => repetitionTagQuery.fetchNextPage()}
+                onChange={v => { setRepetitionTagGuid(v); if (errors.repetitionTag) setErrors(p => ({ ...p, repetitionTag: '' })) }}
                 options={repetitionTagOptions}
               />
+              {errors.repetitionTag && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.repetitionTag}</p>}
             </div>
             <div className="fg span3">
               <div className="lbl">Include In</div>
@@ -772,9 +888,9 @@ export function CourseUnitFormModal({ isOpen, onClose, showToast, mode, courseUn
                   </div>
                   {!includeCW && <span style={{ fontSize: 'var(--fs-xs)', fontWeight: 700, padding: '1px 6px', borderRadius: 4, background: 'var(--g200)', color: 'var(--g500)', textTransform: 'uppercase', marginLeft: 4 }}>Off</span>}
                 </div>
-                <input className="ctrl wt-input" type="number" value={cwAssessed} min={0} onChange={e => setCwAssessed(e.target.value)} style={{ textAlign: 'center' }} />
+                <input className="ctrl wt-input" inputMode="numeric" maxLength={3} value={cwAssessed} onChange={e => setCwAssessed(e.target.value.replace(/\D/g, ''))} style={{ textAlign: 'center' }} />
                 <span style={{ textAlign: 'center', fontWeight: 800, color: 'var(--b500)', fontSize: 18, lineHeight: 1 }}>→</span>
-                <input className="ctrl wt-input" type="number" value={cwFinal} min={0} onChange={e => setCwFinal(e.target.value)} style={{ textAlign: 'center' }} />
+                <input className="ctrl wt-input" inputMode="numeric" maxLength={3} value={cwFinal} onChange={e => { setCwFinal(e.target.value.replace(/\D/g, '')); if (errors.weightage) setErrors(p => ({ ...p, weightage: '' })) }} style={{ textAlign: 'center' }} />
                 <span style={{ fontSize: 'var(--fs-xs)', color: 'var(--g500)', paddingLeft: 4, lineHeight: 1.5 }}>{weightDesc(cwAssessed, cwFinal)}</span>
               </div>
 
@@ -794,9 +910,9 @@ export function CourseUnitFormModal({ isOpen, onClose, showToast, mode, courseUn
                   </div>
                   {!includeCBT && <span style={{ fontSize: 'var(--fs-xs)', fontWeight: 700, padding: '1px 6px', borderRadius: 4, background: 'var(--g200)', color: 'var(--g500)', textTransform: 'uppercase', marginLeft: 4 }}>Off</span>}
                 </div>
-                <input className="ctrl wt-input" type="number" value={cbtAssessed} min={0} onChange={e => setCbtAssessed(e.target.value)} style={{ textAlign: 'center' }} />
+                <input className="ctrl wt-input" inputMode="numeric" maxLength={3} value={cbtAssessed} onChange={e => setCbtAssessed(e.target.value.replace(/\D/g, ''))} style={{ textAlign: 'center' }} />
                 <span style={{ textAlign: 'center', fontWeight: 800, color: 'var(--amber)', fontSize: 18, lineHeight: 1 }}>→</span>
-                <input className="ctrl wt-input" type="number" value={cbtFinal} min={0} onChange={e => setCbtFinal(e.target.value)} style={{ textAlign: 'center' }} />
+                <input className="ctrl wt-input" inputMode="numeric" maxLength={3} value={cbtFinal} onChange={e => { setCbtFinal(e.target.value.replace(/\D/g, '')); if (errors.weightage) setErrors(p => ({ ...p, weightage: '' })) }} style={{ textAlign: 'center' }} />
                 <span style={{ fontSize: 'var(--fs-xs)', color: 'var(--g500)', paddingLeft: 4, lineHeight: 1.5 }}>{weightDesc(cbtAssessed, cbtFinal)}</span>
               </div>
 
@@ -812,9 +928,9 @@ export function CourseUnitFormModal({ isOpen, onClose, showToast, mode, courseUn
                     <div style={{ fontSize: 'var(--fs-xs)', fontWeight: 600, color: 'var(--g400)', letterSpacing: '0.03em' }}>UE · Final Examination</div>
                   </div>
                 </div>
-                <input className="ctrl wt-input" type="number" value={ueAssessed} min={0} onChange={e => setUeAssessed(e.target.value)} style={{ textAlign: 'center' }} />
+                <input className="ctrl wt-input" inputMode="numeric" maxLength={3} value={ueAssessed} onChange={e => setUeAssessed(e.target.value.replace(/\D/g, ''))} style={{ textAlign: 'center' }} />
                 <span style={{ textAlign: 'center', fontWeight: 800, color: 'var(--green)', fontSize: 18, lineHeight: 1 }}>→</span>
-                <input className="ctrl wt-input" type="number" value={ueFinal} min={0} onChange={e => setUeFinal(e.target.value)} style={{ textAlign: 'center' }} />
+                <input className="ctrl wt-input" inputMode="numeric" maxLength={3} value={ueFinal} onChange={e => { setUeFinal(e.target.value.replace(/\D/g, '')); if (errors.weightage) setErrors(p => ({ ...p, weightage: '' })) }} style={{ textAlign: 'center' }} />
                 <span style={{ fontSize: 'var(--fs-xs)', color: 'var(--g500)', paddingLeft: 4, lineHeight: 1.5 }}>{weightDesc(ueAssessed, ueFinal)}</span>
               </div>
             </div>
@@ -838,6 +954,7 @@ export function CourseUnitFormModal({ isOpen, onClose, showToast, mode, courseUn
                   {!totalOk && <span style={{ marginLeft: 8, fontSize: 'var(--fs-xs)', color: 'var(--red)' }}>⚠ Must equal 100</span>}
                 </div>
               </div>
+              <div className="fg" style={{ margin: 0 }}>{errors.weightage && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.weightage}</p>}</div>
             </div>
           </div>
 
@@ -976,7 +1093,7 @@ export function CourseUnitFormModal({ isOpen, onClose, showToast, mode, courseUn
                         onChange={e => setChapterTitle(activeChapterIdx, e.target.value)}
                         placeholder={`Chapter ${activeChapterIdx + 1} title`}
                       />
-                      {chapterErrors[activeChapterIdx] && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{chapterErrors[activeChapterIdx]}</p>}
+                      {chapterErrors[activeChapterIdx] && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{chapterErrors[activeChapterIdx]}</p>}
                     </div>
 
                     <div style={{ display: 'grid', gridTemplateColumns: '20px 1fr 150px 130px 30px', gap: 6, padding: '0 0 6px', fontSize: 10.5, fontWeight: 700, color: 'var(--g400)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
@@ -1031,7 +1148,7 @@ export function CourseUnitFormModal({ isOpen, onClose, showToast, mode, courseUn
                         )
                       })}
                       {activeChapter.topics.some((_, ti) => topicTaughtByErrors.has(`${activeChapterIdx}-${ti}`)) && (
-                        <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 2 }}>No of Classes is required for every topic</p>
+                        <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 2 }}>No of Classes is required for every topic</p>
                       )}
                       <button className="btn btn-neu btn-sm mt-1" style={{ alignSelf: 'flex-start', fontSize: 11 }} onClick={() => addTopic(activeChapterIdx)}>
                         <i className="lni lni-plus"></i> Add Topic
@@ -1064,6 +1181,12 @@ export function CourseUnitFormModal({ isOpen, onClose, showToast, mode, courseUn
           )}
         </div>
       </div>
+      <DocumentPreviewModal
+        isOpen={!!syllabusPreview}
+        onClose={() => setSyllabusPreview(null)}
+        url={syllabusPreview}
+        title={`Syllabus — ${courseUnit?.courseUnitCode ?? ''}`}
+      />
     </div>
   )
 }

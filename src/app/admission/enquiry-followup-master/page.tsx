@@ -8,10 +8,9 @@ import { TableSearch } from '@/components/TableSearch'
 import { EmptyState } from '@/components/EmptyState'
 import { TableLoadingState } from '@/components/TableLoadingState'
 import { EnquiryAssignModal } from '@/components/modals/admission/EnquiryAssignModal'
-import { NewFollowUpLogModal } from '@/components/modals/admission/NewFollowUpLogModal'
-import { useEnquiryFollowUps, useEnquiryFollowUpsCount, useCreateEnquiryFollowUp } from '@/hooks/admission/useEnquiryFollowUps'
+import { NewFollowUpLogModal, InitialFollowUpData } from '@/components/modals/admission/NewFollowUpLogModal'
+import { useEnquiryFollowUps, useCreateEnquiryFollowUp } from '@/hooks/admission/useEnquiryFollowUps'
 import { useUpdateEnquiry } from '@/hooks/admission/useEnquiries'
-import { useProgramMasters } from '@/hooks/academic/useProgramMaster'
 import { usePagePermissions } from '@/hooks/users/usePagePermissions'
 
 const PAGE_SIZE = 10
@@ -33,6 +32,7 @@ export default function EnquiryFollowupMasterPage() {
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
   const [viewingGuid, setViewingGuid] = useState<string | null>(null)
+  const [selectedFollowUp, setSelectedFollowUp] = useState<InitialFollowUpData | null>(null)
 
   function showToast(msg: string, type = '') { setToast({ msg, type }); setTimeout(() => setToast(null), 3500) }
   function openModal(id: string) { setOpenModals(prev => new Set(prev).add(id)) }
@@ -72,21 +72,11 @@ export default function EnquiryFollowupMasterPage() {
     setPage(1)
   }, [debouncedSearch])
 
-  // Decoupled from the table's own (now paginated) rows and the search box
-  // above — pageSize=1 so it doesn't pull real row data, just totalCount for
-  // the stat tile.
-  const { data: countData } = useEnquiryFollowUpsCount()
-
   const updateEnquiry = useUpdateEnquiry()
   const createFollowUp = useCreateEnquiryFollowUp()
 
-  // programName comes back null on every row from the real API — resolve it
-  // client-side, same fallback pattern as enquiry-list/page.tsx.
-  const { data: programs = [] } = useProgramMasters()
   function resolveProgramName(row: { programGuid: string | null; programName: string | null }) {
-    if (row.programName) return row.programName
-    if (!row.programGuid) return '—'
-    return programs.find(p => p.programGuid === row.programGuid)?.programName ?? '—'
+    return row.programName ?? '—'
   }
 
   const pageItems = rows
@@ -109,6 +99,18 @@ export default function EnquiryFollowupMasterPage() {
     setSearch('')
   }
 
+  function handleCreateFollowUp(r: typeof rows[number]) {
+    setSelectedFollowUp({
+      enquiryGuid: r.enquiryGuid,
+      enquiryCode: r.enquiryCode,
+      studentName: r.studentName,
+      enquiryStatusName: r.enquiryStatusName,
+      followUpStatusName: r.followUpStatusName,
+      nextFollowDate: r.nextFollowDate,
+    })
+    openModal('new-followup-log-modal')
+  }
+
   return (
     <div id="page-enquiry-followup-master">
       <div className="pg-hdr">
@@ -118,7 +120,17 @@ export default function EnquiryFollowupMasterPage() {
         </div>
         <div className="flex gap-2">
           <button className="btn btn-ghost" onClick={() => router.push('/admission/enquiry-list')}><i className="lni lni-arrow-left" /> Back</button>
-          {permissions.add && <button className="btn btn-primary" onClick={() => openModal('new-followup-log-modal')}><i className="lni lni-plus" /> Add Follow-up</button>}
+          {permissions.add && (
+            <button
+              className="btn btn-primary"
+              onClick={() => {
+                setSelectedFollowUp(null)
+                openModal('new-followup-log-modal')
+              }}
+            >
+              <i className="lni lni-plus" /> Add Follow-up
+            </button>
+          )}
         </div>
       </div>
 
@@ -128,8 +140,10 @@ export default function EnquiryFollowupMasterPage() {
           EnquiryFollowUpListDto, so they're dropped rather than faked. */}
       <div className="stats-row">
         <div className="stat-card">
-          <div className="flex items-center gap-2 mb-1"><i className="lni lni-users text-b500" /><span className="text-sm text-g500">Total Follow-ups</span></div>
-          <p className="text-2xl font-semibold text-g900">{(countData?.totalCount ?? 0).toLocaleString()}</p>
+          {/* Counts enquiries still in follow-up (one row per enquiry), not
+              follow-up logs — it drops when a follow-up closes an enquiry. */}
+          <div className="flex items-center gap-2 mb-1"><i className="lni lni-users text-b500" /><span className="text-sm text-g500">Enquiries in Follow-up</span></div>
+          <p className="text-2xl font-semibold text-g900">{totalCount.toLocaleString()}</p>
         </div>
       </div>
 
@@ -161,6 +175,9 @@ export default function EnquiryFollowupMasterPage() {
                   <td>
                     <ActionMenu>
                       <button className="btn btn-neu btn-sm" onClick={() => router.push(`/admission/payment?enquiryGuid=${r.enquiryGuid}`)}><i className="lni lni-arrow-right" /> Convert</button>
+                      <button className="btn btn-neu btn-sm" onClick={() => handleCreateFollowUp(r)}>
+                        <i className="lni lni-phone" /> Create Follow-up Status
+                      </button>
                       {permissions.edit && <button className="btn btn-neu btn-sm" onClick={() => openViewModal(r.enquiryGuid)}><i className="lni lni-eye" /> View</button>}
                     </ActionMenu>
                   </td>
@@ -199,14 +216,15 @@ export default function EnquiryFollowupMasterPage() {
         enquiryGuid={viewingGuid}
         updateEnquiry={updateEnquiry}
       />
-      {/* intEnquiry/followUpStatus/followUpMode/enquiryStatus/interestLevel
-          are sent as list position, not a confirmed backend id — see the
-          note on EnquiryFollowUpInput in lib/api/admission/enquiryFollowUp.ts. */}
       <NewFollowUpLogModal
         isOpen={openModals.has('new-followup-log-modal')}
-        onClose={() => closeModal('new-followup-log-modal')}
+        onClose={() => {
+          closeModal('new-followup-log-modal')
+          setSelectedFollowUp(null)
+        }}
         showToast={showToast}
         createFollowUp={createFollowUp}
+        initialData={selectedFollowUp}
       />
       <Toast toast={toast} />
     </div>

@@ -23,9 +23,16 @@ const mockCooperates: Cooperate[] = [
   { cooperateGuid: '73153235-907c-4ec9-a35a-2a167d86bfb5', cooperateCode: 'CO-001', cooperateName: 'SYBYL' },
 ]
 
+// GET /cooperates is paged (get-cooperates.md: ?page default 1, ?pageSize
+// default 10, no upper bound) and has no search param. Callers want the
+// whole list — the Cooperates page pages and searches it client-side, and
+// Discount Allocation's Corporate dropdown lists every one — so ask for it
+// in one page; without an explicit pageSize only the first 10 come back.
+const ALL_COOPERATES_PAGE_SIZE = 1000
+
 export function getCooperates(): Promise<Cooperate[]> {
   if (MOCK_AUTH) return Promise.resolve(mockCooperates)
-  return apiGet<CooperateListResponse | null>('/api/v1/finance/cooperates').then(data => data?.items ?? [])
+  return apiGet<CooperateListResponse | null>(`/api/v1/finance/cooperates?page=1&pageSize=${ALL_COOPERATES_PAGE_SIZE}`).then(data => data?.items ?? [])
 }
 
 export function createCooperate(input: CooperateInput): Promise<Cooperate> {

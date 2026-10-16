@@ -58,8 +58,13 @@ export function getTotalPaid(applicationGuid: string, ledgerGuid: string): Promi
 }
 
 // ─── POST /refund/applications/{applicationGuid} ─────────────────────────
+// Exactly one of ledgerGuid/ledgerOthersGuid per the endpoint's own
+// validator — main-ledger refunds (Rejected/Fake-Cert tabs, and Passout's
+// mainLedgerLines) pass ledgerGuid; Other-Payments refunds (Passout's
+// otherLedgerLines) pass ledgerOthersGuid. Never both, never neither.
 export interface CreateRefundInput {
-  ledgerGuid: string
+  ledgerGuid?: string | null
+  ledgerOthersGuid?: string | null
   currencyGuid: string
   amount: number
   refundDate: string
@@ -106,6 +111,98 @@ export function getRefundsByApplication(applicationGuid: string): Promise<Refund
       if (err instanceof AuthError && err.code === 'not_found') return []
       throw err
     })
+}
+
+// ─── POST /refund/ledger-details-batch ───────────────────────────────────
+// Unrefunded main-ledger (T_PAYMENT_LEDGER) payment lines for a batch of
+// applications — backs the Refund-Eligibility Search categories (Rejected by
+// Registrar, Fake-Certificate Termination, and the main-ledger half of
+// Passout/Library Deposit): 2026-09-15, per the refund-search API set.
+export interface RefundLedgerLineDto {
+  ledgerGuid: string
+  ledgerName: string
+  currencyGuid: string
+  currencyCode: string
+  amount: number
+  convertedAmount: number | null
+  exchangeRateMissing: boolean
+  payDate: string
+  receipt: string
+  receiptBookCode: string
+}
+
+export function getLedgerDetailsBatch(applicationGuids: string[], ledgerName?: string): Promise<Record<string, RefundLedgerLineDto[]>> {
+  if (MOCK_AUTH || applicationGuids.length === 0) return Promise.resolve({})
+  return apiPost<Record<string, RefundLedgerLineDto[]> | null>('/api/v1/finance/refund/ledger-details-batch', {
+    applicationGuids,
+    ...(ledgerName ? { ledgerName } : {}),
+  }).then(data => data ?? {})
+}
+
+// ─── POST /refund/other-ledger-details-batch ─────────────────────────────
+// Other-Payments ledger (T_PAYMENT_OTHER_LEDGER) lines for a batch of
+// students — e.g. "Library Deposit" paid outside the main tuition ledger.
+// Unlike the main-ledger batch above, already-refunded lines are NOT
+// excluded server-side yet (per the doc) — callers filter client-side
+// against getRefundsByApplication where that matters.
+export function getOtherLedgerDetailsBatch(studentGuids: string[], ledgerName: string): Promise<Record<string, RefundLedgerLineDto[]>> {
+  if (MOCK_AUTH || studentGuids.length === 0) return Promise.resolve({})
+  return apiPost<Record<string, RefundLedgerLineDto[]> | null>('/api/v1/finance/refund/other-ledger-details-batch', {
+    studentGuids,
+    ledgerName,
+  })
+    .then(data => data ?? {})
+    .catch(err => {
+      // 404 "No Other-Payments ledger named '…' found." — treat as no lines
+      // rather than a hard error, same genuinely-empty-as-404 pattern used
+      // throughout this file.
+      if (err instanceof AuthError && err.code === 'not_found') return {}
+      throw err
+    })
+}
+
+// ─── POST /refund/passout-library-deposit/bulk ───────────────────────────
+// Bulk-refunds multiple confirmed Passout/Library Deposit lines (possibly
+// across several students) in one call. Each line is processed
+// independently server-side — no shared transaction, so a failure on one
+// line never rolls back the others; every line's outcome is reported back
+// individually.
+//
+// Per the 2026-09-23 fix: a line's source (mainLedgerLines vs
+// otherLedgerLines, see refundSearch.ts) determines which of
+// ledgerGuid/ledgerOthersGuid to populate — exactly one, never both. This
+// replaces the old always-ledgerOthersGuid shape that caused every line to
+// fail with "Ledger not found." once the search endpoint stopped returning
+// a shared ledger-type guid and started returning proper source-specific
+// ledger guids.
+export interface BulkRefundLineInput {
+  applicationGuid: string
+  studentGuid: string | null
+  ledgerGuid: string | null
+  ledgerOthersGuid: string | null
+  currencyGuid: string
+  amount: number
+  refundDate: string
+  remarks: string | null
+}
+
+export interface BulkRefundLineResultDto {
+  applicationGuid: string
+  ledgerGuid: string | null
+  ledgerOthersGuid: string | null
+  success: boolean
+  refundGuid: string | null
+  error: string | null
+}
+
+export function bulkRefundPassoutLibraryDeposit(lines: BulkRefundLineInput[]): Promise<BulkRefundLineResultDto[]> {
+  if (MOCK_AUTH) {
+    return Promise.resolve(lines.map(l => ({
+      applicationGuid: l.applicationGuid, ledgerGuid: l.ledgerGuid, ledgerOthersGuid: l.ledgerOthersGuid,
+      success: true, refundGuid: `mock-refund-${Date.now()}`, error: null,
+    })))
+  }
+  return apiPost<BulkRefundLineResultDto[]>('/api/v1/finance/refund/passout-library-deposit/bulk', lines)
 }
 
 // ─── GET /refund/payments ─────────────────────────────────────────────────

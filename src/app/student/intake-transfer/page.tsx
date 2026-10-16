@@ -4,14 +4,18 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { Toast } from '@/components/Toast'
 import { SearchSelect } from '@/components/SearchSelect'
 import { ScrollTable } from '@/components/ScrollTable'
+import { TableSearch } from '@/components/TableSearch'
+import { TableLoadingState } from '@/components/TableLoadingState'
 import { EmptyState } from '@/components/EmptyState'
 import { Pagination } from '@/components/Pagination'
 import { StudentLookup } from '@/components/student/StudentLookup'
 import { BaselinePanel } from '@/components/student/BaselinePanel'
+import { StudentFinancialRecord } from '@/components/student/StudentFinancialRecord'
+import { StudentAcademicRecord } from '@/components/student/StudentAcademicRecord'
 import { StudentDto } from '@/lib/api/student/student'
 import { useDropoutStudents, useRejoinCandidate, useRejoinBatches, useRejoinStudent } from '@/hooks/student/useDropoutRejoin'
 import { useBatchTimes } from '@/hooks/config/useBatchTimes'
-import { usePagePermissions } from '@/hooks/users/usePagePermissions'
+// import { usePagePermissions } from '@/hooks/users/usePagePermissions'
 
 // Ported from isbat_student_module.html's Intake Transfer page. Only the
 // "Dropout Rejoin" reason has a real backend contract — students/dropout-
@@ -74,8 +78,18 @@ export default function Page() {
 // ---------------------------------------------------------------------------
 // Dropout Rejoin — real flow against students/dropout-rejoin/*.md.
 // ---------------------------------------------------------------------------
+type RejoinTab = 'academic' | 'financial' | 'rejoin'
+const REJOIN_TABS: { id: RejoinTab; label: string; icon: string }[] = [
+  { id: 'academic', label: 'Academic Record', icon: 'graduation' },
+  { id: 'financial', label: 'Financial Record', icon: 'wallet' },
+  { id: 'rejoin', label: 'Rejoin', icon: 'reload' },
+]
+
 function DropoutRejoinPanel({ showToast }: { showToast: (msg: string, type?: string) => void }) {
-  const permissions = usePagePermissions()
+  // Permission checks disabled for now — every action is allowed. Restore the
+  // line below (and the import above) to gate actions by the menu permissions again.
+  // const permissions = usePagePermissions()
+  const permissions = { add: true, edit: true, delete: true }
   const router = useRouter()
   const searchParams = useSearchParams()
   // Student Profile's action menu links here as
@@ -88,18 +102,30 @@ function DropoutRejoinPanel({ showToast }: { showToast: (msg: string, type?: str
   // isn't actually a dropout, this resolves to the existing
   // "Couldn't Load Candidate" state below rather than a silent no-op.
   const [selectedGuid, setSelectedGuid] = useState<string | null>(() => searchParams.get('studentGuid'))
-  const { data: dropouts = [], isLoading: listLoading, isError: listError } = useDropoutStudents(true)
-  const { data: candidate, isLoading: candidateLoading, isError: candidateError } = useRejoinCandidate(selectedGuid, !!selectedGuid)
-
+  const [searchInput, setSearchInput] = useState('')
+  const [searchTerm, setSearchTerm] = useState('')
   const [page, setPage] = useState(1)
   const itemsPerPage = 10
-  const totalCount = dropouts.length
-  const totalPages = Math.max(1, Math.ceil(totalCount / itemsPerPage))
-  const paginatedDropouts = dropouts.slice((page - 1) * itemsPerPage, page * itemsPerPage)
 
+  // Debounce typing, and start each new search from page 1.
   useEffect(() => {
-    setPage(1)
-  }, [dropouts.length])
+    const timer = setTimeout(() => { setSearchTerm(searchInput.trim()); setPage(1) }, 400)
+    return () => clearTimeout(timer)
+  }, [searchInput])
+
+  // isPlaceholderData: the rows on screen are the previous page/search's,
+  // kept by keepPreviousData while the new one loads.
+  const { data: dropoutPage, isLoading: listLoading, isPlaceholderData: listRefetching, isError: listError } = useDropoutStudents({ searchTerm, page, pageSize: itemsPerPage }, true)
+  const { data: candidate, isLoading: candidateLoading, isError: candidateError } = useRejoinCandidate(selectedGuid, !!selectedGuid)
+
+  const paginatedDropouts = dropoutPage?.items ?? []
+  const totalCount = dropoutPage?.totalCount ?? 0
+  const totalPages = Math.max(1, Math.ceil(totalCount / itemsPerPage))
+  // Dropdown matches come from the same server search as the table. Until the
+  // debounce settles and the request lands, the rows on screen belong to the
+  // previous term, so the dropdown shows "Searching…" instead.
+  const searchPending = searchInput.trim() !== searchTerm || listRefetching
+  const searchMatches = searchPending ? [] : paginatedDropouts.slice(0, 8)
   const rejoin = useRejoinStudent()
 
   const [targetSemester, setTargetSemester] = useState('')
@@ -108,12 +134,13 @@ function DropoutRejoinPanel({ showToast }: { showToast: (msg: string, type?: str
   const [targetFeeHead, setTargetFeeHead] = useState('')
   const [remarks, setRemarks] = useState('')
   const [confirmOpen, setConfirmOpen] = useState(false)
+  const [activeTab, setActiveTab] = useState<RejoinTab>('academic')
 
   // Batch Time — a plain global list (Morning/Evening/etc.), same source
   // Admission's own filing form uses, not something the candidate response
   // carries. Sits ahead of Target Batch in the form since get-rejoin-batches.md
   // needs both the semester and this before it can return anything.
-  const { data: batchTimes = [] } = useBatchTimes()
+  const { data: batchTimes = [] } = useBatchTimes(!!selectedGuid)
   // The real batch dropdown for this form (get-rejoin-batches.md) — replaces
   // candidate.availableBatches entirely rather than falling back to it, since
   // that list isn't scoped to a batch time at all. Only fires once both
@@ -138,7 +165,7 @@ function DropoutRejoinPanel({ showToast }: { showToast: (msg: string, type?: str
   // Transfer's own semester→batch chain uses.
   useEffect(() => { setTargetBatch('') }, [targetSemester, targetBatchTime])
 
-  function handlePick(studentGuid: string) { setSelectedGuid(studentGuid); setRemarks('') }
+  function handlePick(studentGuid: string) { setSelectedGuid(studentGuid); setRemarks(''); setActiveTab('academic') }
   function handleClear() {
     setSelectedGuid(null); setRemarks(''); setConfirmOpen(false)
     // Drop ?studentGuid= so a page revisit doesn't reseed the same guid.
@@ -151,7 +178,7 @@ function DropoutRejoinPanel({ showToast }: { showToast: (msg: string, type?: str
   const canExecute = !!(targetSemester && targetBatch && targetFeeHead)
 
   function executeRejoin() {
-    if (!candidate || !canExecute) return
+    if (!permissions.edit || !candidate || !canExecute) return
     rejoin.mutate(
       { studentGuid: candidate.studentGuid, payload: { newSemesterGuid: targetSemester, newBatchGuid: targetBatch, newFeeGuid: targetFeeHead } },
       {
@@ -164,22 +191,43 @@ function DropoutRejoinPanel({ showToast }: { showToast: (msg: string, type?: str
   if (!selectedGuid) {
     return (
       <div className="card">
-        <div className="card-hdr"><div className="card-title"><i className="lni lni-reload"></i> Dropout Students</div></div>
+        <div className="card-hdr flex justify-between items-center">
+          <div className="card-title"><i className="lni lni-reload"></i> Dropout Students</div>
+          <TableSearch
+            value={searchInput}
+            onChange={setSearchInput}
+            placeholder="Search by name, reg no. or student no."
+            className="w-80"
+            results={searchMatches.map(d => ({ id: d.studentGuid, primary: d.studentName, secondary: [d.studentRegNo, d.programName].filter(Boolean).join(' · ') }))}
+            loading={searchPending}
+            minChars={2}
+            emptyLabel="No matching dropout students"
+            onSelect={r => handlePick(r.id)}
+          />
+        </div>
         {listError ? (
           <div className="text-clr-red text-center" style={{ padding: 16, fontSize: 12.5 }}><i className="lni lni-warning"></i> Couldn&apos;t load the dropout list. Please try again.</div>
         ) : (
           <>
+            <div className={`tbl-refetch-wrap${listRefetching ? ' is-refetching' : ''}`} aria-busy={listRefetching}>
+            {listRefetching && (
+              <div className="tbl-refetch-pill" role="status">
+                <i className="lni lni-reload" /> {searchTerm ? 'Searching…' : `Loading page ${page}…`}
+              </div>
+            )}
             <ScrollTable>
               <table>
-                <thead><tr><th>Student</th><th>Reg No.</th><th>Programme</th><th>Semester</th><th>Batch</th><th>Eligibility</th><th></th></tr></thead>
+                <thead><tr><th style={{ textAlign: 'left' }}>Student</th><th>Reg No.</th><th>Programme</th><th>Semester</th><th>Batch</th><th>Eligibility</th><th></th></tr></thead>
                 <tbody>
                   {listLoading ? (
-                    <tr><td colSpan={7} style={{ textAlign: 'center', padding: 16, fontSize: 12.5, color: 'var(--g400)' }}>Loading dropout students…</td></tr>
+                    <TableLoadingState colSpan={7} title={searchTerm ? 'Searching dropout students…' : 'Loading dropout students…'} />
                   ) : paginatedDropouts.length === 0 ? (
-                    <EmptyState colSpan={7} title="No dropout students" subtitle="There are no students currently marked as dropped out." />
+                    searchTerm
+                      ? <EmptyState colSpan={7} title="No matching students" subtitle={`No dropout students match "${searchTerm}". Reg no. and student no. must match exactly.`} />
+                      : <EmptyState colSpan={7} title="No dropout students" subtitle="There are no students currently marked as dropped out." />
                   ) : paginatedDropouts.map(d => (
                     <tr key={d.studentGuid}>
-                      <td className="font-bold">{d.studentName}</td>
+                      <td className="font-bold" style={{ textAlign: 'left' }}>{d.studentName}</td>
                       <td className="font-mono">{d.studentRegNo}</td>
                       <td>{d.programName || '—'}</td>
                       <td>{d.semesterName || '—'}</td>
@@ -195,7 +243,8 @@ function DropoutRejoinPanel({ showToast }: { showToast: (msg: string, type?: str
                 </tbody>
               </table>
             </ScrollTable>
-            {dropouts.length > 0 && (
+            </div>
+            {totalCount > 0 && (
               <Pagination page={page} totalPages={totalPages} totalCount={totalCount} itemLabel="dropout students" onPageChange={setPage} />
             )}
           </>
@@ -230,6 +279,36 @@ function DropoutRejoinPanel({ showToast }: { showToast: (msg: string, type?: str
               { label: 'Status', value: <span style={{ color: 'var(--red)' }}>Dropped Out</span> },
             ]}
           />
+
+          {/* Tabs — same horizontal tab strip as Programme Master's View
+              modal: review the student's academic and financial record
+              before running the rejoin itself. */}
+          <div className="card" style={{ padding: 0, marginBottom: 16, overflow: 'hidden' }}>
+            <div style={{ display: 'flex', background: '#fafafa' }}>
+              {REJOIN_TABS.map(t => (
+                <div
+                  key={t.id}
+                  onClick={() => setActiveTab(t.id)}
+                  style={{
+                    flex: 1, justifyContent: 'center', display: 'flex', alignItems: 'center', gap: 8, padding: '14px 0',
+                    background: activeTab === t.id ? 'var(--b50)' : 'transparent',
+                    borderBottom: activeTab === t.id ? '2px solid var(--b500)' : '2px solid transparent',
+                    color: activeTab === t.id ? 'var(--b700)' : 'var(--g600)',
+                    fontWeight: 600, fontSize: 13, cursor: 'pointer', transition: 'all .15s',
+                  }}
+                >
+                  <i className={`lni lni-${t.icon}`} style={{ fontSize: 16 }}></i>
+                  {t.label}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {activeTab === 'academic' && <StudentAcademicRecord studentGuid={candidate.studentGuid} />}
+
+          {activeTab === 'financial' && <StudentFinancialRecord studentGuid={candidate.studentGuid} />}
+
+          {activeTab === 'rejoin' && (
           <div className="g2">
             <div className="card">
               <div className="card-hdr"><div className="card-title"><i className="lni lni-reload"></i> Rejoin Parameters</div></div>
@@ -267,7 +346,7 @@ function DropoutRejoinPanel({ showToast }: { showToast: (msg: string, type?: str
                 <label className="lbl">Fee Head <span className="req">*</span></label>
                 <SearchSelect
                   placeholder="— Select fee head —"
-                  options={(candidate.availableFeeHeads ?? []).map(f => ({ value: f.feeHdGuid, label: `${f.feeCode} — ${f.feeDesc}` }))}
+                  options={(candidate.availableFeeHeads ?? []).map(f => ({ value: f.feeHdGuid, label: f.feeCode }))}
                   value={targetFeeHead}
                   onChange={setTargetFeeHead}
                 />
@@ -287,11 +366,12 @@ function DropoutRejoinPanel({ showToast }: { showToast: (msg: string, type?: str
               </div>
             </div>
           </div>
+          )}
         </>
       )}
 
       {confirmOpen && candidate && targetSemesterOpt && targetBatchOpt && targetFeeHeadOpt && (
-        <div className="modal-overlay open" onClick={() => setConfirmOpen(false)}>
+        <div className="modal-overlay open">
           <div className="modal modal-md" onClick={e => e.stopPropagation()}>
             <div className="modal-hdr"><div className="modal-title"><i className="lni lni-warning" style={{ color: 'var(--red)' }}></i> Confirm Rejoin</div><button className="modal-close" onClick={() => setConfirmOpen(false)}>✕</button></div>
             <div>
@@ -305,7 +385,7 @@ function DropoutRejoinPanel({ showToast }: { showToast: (msg: string, type?: str
             </div>
             <div className="modal-footer">
               <button className="btn btn-neu" onClick={() => setConfirmOpen(false)} disabled={rejoin.isPending}>Cancel</button>
-              <button className="btn btn-danger" onClick={executeRejoin} disabled={rejoin.isPending}><i className="lni lni-checkmark"></i> {rejoin.isPending ? 'Rejoining…' : 'Confirm & Rejoin'}</button>
+              <button className="btn btn-danger" onClick={executeRejoin} disabled={rejoin.isPending || !permissions.edit}><i className="lni lni-checkmark"></i> {rejoin.isPending ? 'Rejoining…' : 'Confirm & Rejoin'}</button>
             </div>
           </div>
         </div>
@@ -320,7 +400,10 @@ function DropoutRejoinPanel({ showToast }: { showToast: (msg: string, type?: str
 // page-local mock data, same as before this page grew a Dropout Rejoin mode.
 // ---------------------------------------------------------------------------
 function DefermentPanel({ showToast }: { showToast: (msg: string, type?: string) => void }) {
-  const permissions = usePagePermissions()
+  // Permission checks disabled for now — every action is allowed. Restore the
+  // line below (and the import above) to gate actions by the menu permissions again.
+  // const permissions = usePagePermissions()
+  const permissions = { add: true, edit: true, delete: true }
   const [student, setStudent] = useState<StudentDto | null>(null)
   const [targetIntake, setTargetIntake] = useState(TARGET_INTAKES[0].value)
   const [targetBatch, setTargetBatch] = useState('BSc.IT-2025A · Day')
@@ -430,7 +513,7 @@ function DefermentPanel({ showToast }: { showToast: (msg: string, type?: string)
       )}
 
       {confirmOpen && student && target && (
-        <div className="modal-overlay open" onClick={() => setConfirmOpen(false)}>
+        <div className="modal-overlay open">
           <div className="modal modal-md" onClick={e => e.stopPropagation()}>
             <div className="modal-hdr"><div className="modal-title"><i className="lni lni-warning" style={{ color: 'var(--red)' }}></i> Confirm Intake Transfer</div><button className="modal-close" onClick={() => setConfirmOpen(false)}>✕</button></div>
             <div>

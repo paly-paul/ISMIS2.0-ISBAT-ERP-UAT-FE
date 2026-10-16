@@ -7,6 +7,7 @@ import { SearchSelect } from '@/components/SearchSelect'
 import { CALC_TYPE_LABELS, CALC_TYPE_VALUES, DiscountCalcType, DiscountInput } from '@/lib/api/finance/discount'
 import { useDiscount } from '@/hooks/finance/useDiscounts'
 import { AuthError } from '@/lib/api/client'
+import { scrollToFirstError } from '@/lib/scrollToFirstError'
 
 // Add and Edit share this form — differ in prefill and which mutation runs.
 interface DiscountFormModalProps extends ModalProps {
@@ -65,6 +66,7 @@ export function DiscountFormModal({ isOpen, onClose, showToast, mode, discountGu
     if (!discountName.trim()) e.discountName = 'Discount Name is required'
     if (calcType === 'Percentage' && amtPer && (+amtPer < 0 || +amtPer > 100)) e.amtPer = 'Percentage must be between 0 and 100'
     setErrors(e)
+    scrollToFirstError(e)
     return Object.keys(e).length === 0
   }
 
@@ -163,7 +165,7 @@ export function DiscountFormModal({ isOpen, onClose, showToast, mode, discountGu
               onChange={e => { setDiscountCode(e.target.value.toUpperCase()); clearError('discountCode') }}
               style={errors.discountCode ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.discountCode && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.discountCode}</p>}
+            {errors.discountCode && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.discountCode}</p>}
           </div>
           <div className="fg">
             <div className="lbl">Discount Name <span className="req">*</span></div>
@@ -175,7 +177,7 @@ export function DiscountFormModal({ isOpen, onClose, showToast, mode, discountGu
               onChange={e => { setDiscountName(e.target.value); clearError('discountName') }}
               style={errors.discountName ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.discountName && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.discountName}</p>}
+            {errors.discountName && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.discountName}</p>}
           </div>
           <div className="fg">
             <div className="lbl">Calculation Type</div>
@@ -201,7 +203,7 @@ export function DiscountFormModal({ isOpen, onClose, showToast, mode, discountGu
                 onChange={e => { setAmtPer(e.target.value); clearError('amtPer') }}
               />
             </div>
-            {errors.amtPer && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.amtPer}</p>}
+            {errors.amtPer && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.amtPer}</p>}
           </div>
           <div className="fg">
             <div className="lbl">Carry Forward</div>

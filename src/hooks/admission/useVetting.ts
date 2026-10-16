@@ -1,14 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   VetApplicationInput,
+  VettingRejectionFilters,
   getVettingApplicationDetail,
   getVettingQueue,
+  getVettingRejections,
   vetApplication,
   waitApplication,
 } from '@/lib/api/admission/vetting'
 
 const VETTING_QUEUE_KEY = ['vetting-queue']
 const VETTING_DETAIL_KEY = ['vetting-detail']
+const VETTING_REJECTIONS_KEY = ['vetting-rejections']
 
 export function useVettingQueue(page: number, pageSize: number, filters?: { appRefNo?: string; studentName?: string }) {
   return useQuery({
@@ -16,6 +19,15 @@ export function useVettingQueue(page: number, pageSize: number, filters?: { appR
     queryFn: () => getVettingQueue(page, pageSize, filters),
     staleTime: Infinity,
     gcTime: Infinity,
+  })
+}
+
+// Rejections tab — each filter combination is cached separately.
+export function useVettingRejections(page: number, pageSize: number, filters: VettingRejectionFilters, enabled = true) {
+  return useQuery({
+    queryKey: [...VETTING_REJECTIONS_KEY, page, pageSize, filters.search ?? '', filters.intakeGuid ?? '', filters.campusGuid ?? '', filters.programGuid ?? ''],
+    queryFn: () => getVettingRejections(page, pageSize, filters),
+    enabled,
   })
 }
 
@@ -45,7 +57,8 @@ export function useWaitApplication() {
   })
 }
 
-// Approve/Reject — also terminal, same invalidation as Wait.
+// Approve/Reject — also terminal, same invalidation as Wait, plus the
+// Rejections list (a reject adds a row to it).
 export function useVetApplication() {
   const queryClient = useQueryClient()
   return useMutation({
@@ -54,8 +67,9 @@ export function useVetApplication() {
     onSuccess: (_data, { applicationGuid }) => {
       queryClient.invalidateQueries({ queryKey: VETTING_QUEUE_KEY })
       queryClient.invalidateQueries({ queryKey: [...VETTING_DETAIL_KEY, applicationGuid] })
+      queryClient.invalidateQueries({ queryKey: VETTING_REJECTIONS_KEY })
     },
   })
 }
 
-export type { VettingApplicationDetail, VettingDocument, VettingQualification, VettingQueueItem, VetApplicationInput } from '@/lib/api/admission/vetting'
+export type { VettingApplicationDetail, VettingDocument, VettingQualification, VettingQueueItem, VetApplicationInput, VettingRejectionItem, VettingRejectionFilters } from '@/lib/api/admission/vetting'

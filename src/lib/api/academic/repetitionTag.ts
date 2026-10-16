@@ -7,6 +7,9 @@ export interface RepetitionTag {
   courseUnitRepetitionGuid: string
   tagCode: string
   tagName: string
+  // Returned by GET /course-unit-repetitions(/{guid}) per the API docs —
+  // lets Edit prefill the level directly. Optional for older mocks.
+  programLevelGuid?: string
   intLevel: number
   levelCode: string
   levelName: string
@@ -50,6 +53,48 @@ export function getRepetitionTags(search = ''): Promise<RepetitionTag[]> {
       : Array.isArray(data?.courseUnitRepetitions) ? data.courseUnitRepetitions
       : []
   )
+}
+
+export interface RepetitionTagListResult {
+  items: RepetitionTag[]
+  totalCount: number
+  pageNumber: number
+  pageSize: number
+}
+
+// Real server-side pagination variant (2026-09-09) — for the Repetition Tag
+// master page's own table, which used to call getRepetitionTags() above at
+// REPETITION_TAGS_LOAD_SIZE and paginate/search client-side. That plain-
+// array function stays as-is for CourseUnitFormModal's dropdown, which
+// genuinely needs the full unpaginated list. This one keeps the real
+// totalCount/pageNumber/pageSize the endpoint already returns (per the
+// confirmed-live-sample note above) instead of discarding it.
+export function getRepetitionTagsPaged(page = 1, pageSize = 10, search = ''): Promise<RepetitionTagListResult> {
+  const q = search.trim()
+  if (MOCK_AUTH) {
+    const filtered = q
+      ? mockRepetitionTags.filter(t => t.tagCode.toLowerCase().includes(q.toLowerCase()) || t.tagName.toLowerCase().includes(q.toLowerCase()))
+      : mockRepetitionTags
+    const start = (page - 1) * pageSize
+    return Promise.resolve({ items: filtered.slice(start, start + pageSize), totalCount: filtered.length, pageNumber: page, pageSize })
+  }
+  // Keep both pagination parameter conventions synchronized. Some deployed
+  // builds read pageNumber while others read page; sending both prevents the
+  // infinite dropdown from receiving page 1 again on every scroll.
+  const params = new URLSearchParams({ page: String(page), pageNumber: String(page), pageSize: String(pageSize) })
+  if (q) params.set('search', q)
+  return apiGet<any>(`/api/v1/academic/course-unit-repetitions?${params.toString()}`).then(data => {
+    const items: RepetitionTag[] = Array.isArray(data) ? data
+      : Array.isArray(data?.items) ? data.items
+      : Array.isArray(data?.courseUnitRepetitions) ? data.courseUnitRepetitions
+      : []
+    return {
+      items,
+      totalCount: typeof data?.totalCount === 'number' ? data.totalCount : items.length,
+      pageNumber: data?.pageNumber ?? page,
+      pageSize: data?.pageSize ?? pageSize,
+    }
+  })
 }
 
 // Payload used when creating or updating a repetition tag.

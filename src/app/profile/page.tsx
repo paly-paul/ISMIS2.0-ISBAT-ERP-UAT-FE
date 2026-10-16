@@ -26,13 +26,13 @@ interface SignIn { id: number; device: string; location: string; when: string; c
 
 function initials(name: string) {
   const parts = name.trim().split(/\s+/)
-  return ((parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? '')).toUpperCase() || 'U'
+  return ((parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? '')).toUpperCase()
 }
 
 export default function ProfilePage() {
   const router = useRouter()
   const [toast, setToast] = useState<{ msg: string; type: string } | null>(null)
-  const [displayName, setDisplayName] = useState('Administrator')
+  const [displayName, setDisplayName] = useState('')
   const [tab, setTab] = useState<TabId>('info')
 
   const [photo, setPhoto] = useState<string | null>(null)
@@ -57,9 +57,11 @@ export default function ProfilePage() {
 
   useEffect(() => {
     const identity = getSessionIdentity()
-    const name = identity?.displayName || 'Administrator'
+    // No session name → leave the fields blank rather than inventing one.
+    const name = identity?.displayName?.trim() ?? ''
+    if (!name) return
     setDisplayName(name)
-    const parts = name.trim().split(/\s+/)
+    const parts = name.split(/\s+/)
     setFirstName(parts[0] ?? '')
     setLastName(parts.slice(1).join(' '))
     setEmail(`${name.toLowerCase().replace(/[^a-z0-9]+/g, '.')}@isbat.ac.ug`)
@@ -105,7 +107,7 @@ export default function ProfilePage() {
               <input type="file" accept="image/*" onChange={handlePhoto} />
               {photo
                 ? <img className="prof-photo-preview" src={photo} alt="Profile" style={{ display: 'block', borderRadius: 10 }} />
-                : <span style={{ color: '#fff', fontWeight: 800, fontSize: 17 }}>{initials(displayName)}</span>}
+                : <span style={{ color: '#fff', fontWeight: 800, fontSize: 17 }}>{initials(displayName) || <i className="lni lni-user"></i>}</span>}
             </label>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div className="stu-banner-name">{displayName}</div>

@@ -1,16 +1,30 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Country, CountryInput, createCountry, deleteCountry, getCountries, updateCountry } from '@/lib/api/academic/country'
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Country, CountryInput, createCountry, deleteCountry, getCountries, getCountriesPaged, updateCountry } from '@/lib/api/academic/country'
+import { getNextPageParam } from '@/lib/pagination'
 
 const COUNTRIES_KEY = ['countries']
 
 // Load enough rows to cover the full country list in one request.
 const COUNTRIES_PAGE_SIZE = 1000
 
-export function useCountries() {
+export function useCountries(enabled = true) {
   return useQuery({
     queryKey: COUNTRIES_KEY,
     queryFn: () => getCountries(1, COUNTRIES_PAGE_SIZE),
     // Keep the list cached until a mutation invalidates it.
+    staleTime: Infinity,
+    gcTime: Infinity,
+    enabled,
+  })
+}
+
+export function useSearchCountriesInfinite(search: string, pageSize: number, enabled: boolean) {
+  return useInfiniteQuery({
+    queryKey: [...COUNTRIES_KEY, 'search-infinite', search, pageSize],
+    queryFn: ({ pageParam }) => getCountriesPaged(pageParam, pageSize, search),
+    initialPageParam: 1,
+    getNextPageParam,
+    enabled,
     staleTime: Infinity,
     gcTime: Infinity,
   })

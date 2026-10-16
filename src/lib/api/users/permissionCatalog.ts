@@ -744,6 +744,15 @@ const fullCatalog: CatalogModule[] = [
               { intPermission: 338, permissionName: 'Confirm Intake Transfer' },
             ],
           },
+          {
+            // POST /students/{studentGuid}/terminate (student-termination/
+            // post-terminate-student.md) — added 2026-09-15.
+            page: 'Terminate Student',
+            permissions: [
+              { intPermission: 496, permissionName: 'View Terminate Student' },
+              { intPermission: 497, permissionName: 'Terminate Student' },
+            ],
+          },
         ],
       },
       {
@@ -795,6 +804,17 @@ const fullCatalog: CatalogModule[] = [
               { intPermission: 354, permissionName: 'Update Specialization' },
               { intPermission: 355, permissionName: 'Create Specialization Discount' },
               { intPermission: 356, permissionName: 'Update Specialization Discount' },
+            ],
+          },
+          {
+            // M_TERMINATION_REASON master (termination-reasons/*.md) — added
+            // 2026-09-15 alongside the Refund-Eligibility Search work.
+            page: 'Termination Reason Master',
+            permissions: [
+              { intPermission: 492, permissionName: 'View Termination Reason' },
+              { intPermission: 493, permissionName: 'Create Termination Reason' },
+              { intPermission: 494, permissionName: 'Update Termination Reason' },
+              { intPermission: 495, permissionName: 'Delete Termination Reason' },
             ],
           },
         ],

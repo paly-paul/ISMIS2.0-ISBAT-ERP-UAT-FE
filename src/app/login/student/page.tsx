@@ -35,7 +35,7 @@ export default function StudentLoginPage() {
 
     try {
       const result = await studentLogin(studentId, password)
-      if (result.requiresOtp) {
+      if ('challengeId' in result) {
         setFlowState({
           challengeId: result.challengeId,
           otpChannel: result.otpChannel,

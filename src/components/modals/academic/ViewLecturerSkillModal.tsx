@@ -4,7 +4,7 @@ import { ModalProps } from '../types'
 import { SuccessPopup } from '../shared/SuccessPopup'
 import { FailurePopup } from '../shared/FailurePopup'
 import { SearchSelect } from '@/components/SearchSelect'
-import { useEmployees } from '@/hooks/employee/useEmployees'
+import { useEmployeeDropdown } from '@/hooks/employee/useEmployees'
 import { useLecturerSkill } from '@/hooks/academic/useLecturerSkills'
 import { CreateLecturerSkillInput } from '@/lib/api/users/skills'
 import { AuthError } from '@/lib/api/client'
@@ -21,6 +21,15 @@ interface ViewLecturerSkillModalProps extends ModalProps {
   canEdit?: boolean
 }
 
+// Same badges as the Skill Management list, so a status reads identically in
+// the table and here.
+function approvalBadge(status: string) {
+  if (status === 'Approved') return <span className="badge badge-green"><i className="lni lni-checkmark"></i> Approved</span>
+  if (status === 'Rejected') return <span className="badge badge-red"><i className="lni lni-close"></i> Rejected</span>
+  if (status === 'Pending') return <span className="badge badge-amber"><i className="lni lni-timer"></i> Pending</span>
+  return <span className="badge badge-grey">{status || '—'}</span>
+}
+
 function Field({ label, value, mono, wide }: { label: string; value: React.ReactNode; mono?: boolean; wide?: boolean }) {
   return (
     <div style={{ gridColumn: wide ? '1 / -1' : undefined }}>
@@ -32,23 +41,23 @@ function Field({ label, value, mono, wide }: { label: string; value: React.React
 
 export function ViewLecturerSkillModal({ isOpen, onClose, showToast, lecturerSkillGuid, onEdit, canEdit }: ViewLecturerSkillModalProps) {
   const { data: skill, isLoading, isError, error } = useLecturerSkill(lecturerSkillGuid, isOpen)
-  const { data: employees = [] } = useEmployees()
+  const { data: employees = [] } = useEmployeeDropdown(isOpen)
   const [employeeGuid, setEmployeeGuid] = useState('')
   const [skillName, setSkillName] = useState('')
   const [proficiency, setProficiency] = useState('1')
-  const [approved, setApproved] = useState(true)
+  const [approvalStatus, setApprovalStatus] = useState('')
 
   useEffect(() => {
     if (!isOpen || !skill) return
     setEmployeeGuid(skill.employeeGuid || '')
     setSkillName(skill.skillName)
     setProficiency(String(skill.proficiency || 1))
-    setApproved(skill.approvalStatus === 'Approved')
+    setApprovalStatus(skill.approvalStatus || '')
   }, [isOpen, skill])
 
   if (!isOpen) return null
 
-  const employeeOptions = employees.map(e => ({ value: e.employeeGuid, label: `${e.empName} (${e.shortCode})` }))
+  const employeeOptions = employees.map(e => ({ value: e.employeeGuid, label: e.displayName }))
 
   function handleClose() {
     onClose()
@@ -71,12 +80,12 @@ export function ViewLecturerSkillModal({ isOpen, onClose, showToast, lecturerSki
   if (isLoading || !skill) {
     return (
       <div className="modal-overlay open" id="view-lecturer-skill-modal">
-        <div className="modal modal-md modal-flex" onClick={e => e.stopPropagation()}>
+        <div className="modal modal-md" onClick={e => e.stopPropagation()}>
           <div className="modal-hdr modal-hdr-blue">
             <div className="modal-title"><i className="lni lni-eye"></i> View Skill</div>
             <button className="modal-close" onClick={handleClose}><i className="lni lni-close"></i></button>
           </div>
-          <div className="modal-scroll" style={{ flex: '1 1 auto', display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 180 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 140 }}>
             <span style={{ color: 'var(--g400)' }}>Loading skill details…</span>
           </div>
         </div>
@@ -86,18 +95,21 @@ export function ViewLecturerSkillModal({ isOpen, onClose, showToast, lecturerSki
 
   return (
     <div className="modal-overlay open" id="view-lecturer-skill-modal">
-      <div className="modal modal-lg modal-flex" onClick={e => e.stopPropagation()}>
+      <div className="modal modal-md" onClick={e => e.stopPropagation()}>
         <div className="modal-hdr modal-hdr-blue">
           <div className="modal-title"><i className="lni lni-eye"></i> View Skill</div>
           <button className="modal-close" onClick={handleClose}><i className="lni lni-close"></i></button>
         </div>
 
-        <div className="modal-scroll" style={{ padding: '20px clamp(14px, 4vw, 22px)' }}>
-          <div className="view-detail-grid">
+        <div style={{ padding: '20px clamp(14px, 4vw, 22px)' }}>
+          {/* Three short fields per row at modal-md width (Status wraps
+              below), stacking on phones instead of squeezing long faculty
+              names into a third of the screen. */}
+          <div className="view-detail-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))' }}>
             <Field label="Faculty Member" value={employeeOptions.find(o => o.value === employeeGuid)?.label ?? employeeGuid ?? '—'} />
             <Field label="Skill Name" value={skillName || '—'} />
             <Field label="Proficiency" value={PROFICIENCY_OPTIONS.find(p => p.value === proficiency)?.label || '—'} />
-            <Field label="Status" value={approved ? <span className="badge badge-green">Approved</span> : <span className="badge badge-neu">Not Approved</span>} />
+            <Field label="Status" value={approvalBadge(approvalStatus)} />
           </div>
         </div>
 

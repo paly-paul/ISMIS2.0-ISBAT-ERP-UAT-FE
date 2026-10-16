@@ -8,6 +8,7 @@ import { ProcBankInput, ProcBankStatus, STATUS_LABELS, STATUS_VALUES } from '@/l
 import { useProcBank } from '@/hooks/finance/useProcBanks'
 import { useFinanceCurrencies } from '@/hooks/finance/useFinanceCurrencies'
 import { AuthError } from '@/lib/api/client'
+import { scrollToFirstError } from '@/lib/scrollToFirstError'
 
 // Add and Edit share this form — differ in prefill and which mutation runs.
 interface ProcBankFormModalProps extends ModalProps {
@@ -76,6 +77,7 @@ export function ProcBankFormModal({ isOpen, onClose, showToast, mode, procBankGu
     if (!branchCode.trim()) e.branchCode = 'Branch Code is required'
     if (!accountCode.trim()) e.accountCode = 'Account Code is required'
     setErrors(e)
+    scrollToFirstError(e)
     return Object.keys(e).length === 0
   }
 
@@ -176,7 +178,7 @@ export function ProcBankFormModal({ isOpen, onClose, showToast, mode, procBankGu
               onChange={e => { setShortCode(e.target.value.toUpperCase()); clearError('shortCode') }}
               style={errors.shortCode ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.shortCode && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.shortCode}</p>}
+            {errors.shortCode && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.shortCode}</p>}
           </div>
           <div className="fg">
             <div className="lbl">Bank Name <span className="req">*</span></div>
@@ -188,7 +190,7 @@ export function ProcBankFormModal({ isOpen, onClose, showToast, mode, procBankGu
               onChange={e => { setBankName(e.target.value); clearError('bankName') }}
               style={errors.bankName ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.bankName && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.bankName}</p>}
+            {errors.bankName && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.bankName}</p>}
           </div>
           <div className="fg">
             <div className="lbl">Company Code <span className="req">*</span></div>
@@ -200,7 +202,7 @@ export function ProcBankFormModal({ isOpen, onClose, showToast, mode, procBankGu
               onChange={e => { setCompCode(e.target.value); clearError('compCode') }}
               style={errors.compCode ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.compCode && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.compCode}</p>}
+            {errors.compCode && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.compCode}</p>}
           </div>
           <div className="fg">
             <div className="lbl">Branch Code <span className="req">*</span></div>
@@ -212,7 +214,7 @@ export function ProcBankFormModal({ isOpen, onClose, showToast, mode, procBankGu
               onChange={e => { setBranchCode(e.target.value); clearError('branchCode') }}
               style={errors.branchCode ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.branchCode && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.branchCode}</p>}
+            {errors.branchCode && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.branchCode}</p>}
           </div>
           <div className="fg">
             <div className="lbl">Account Code <span className="req">*</span></div>
@@ -224,7 +226,7 @@ export function ProcBankFormModal({ isOpen, onClose, showToast, mode, procBankGu
               onChange={e => { setAccountCode(e.target.value); clearError('accountCode') }}
               style={errors.accountCode ? { borderColor: 'var(--red)' } : undefined}
             />
-            {errors.accountCode && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.accountCode}</p>}
+            {errors.accountCode && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.accountCode}</p>}
           </div>
           <div className="fg">
             <div className="lbl">Currency</div>

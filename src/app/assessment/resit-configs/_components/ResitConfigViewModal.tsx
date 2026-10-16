@@ -17,7 +17,7 @@ export function ResitConfigViewModal({ isOpen, onClose, onEdit, viewingGuid }: R
   const intakeDesc = intakes?.find(i => i.intakeGuid === data?.academicIntakeGuid)?.description || 'Unknown Intake'
 
   return (
-    <div className="modal-overlay open" onClick={onClose}>
+    <div className="modal-overlay open">
       <div className="modal modal-md modal-flex" onClick={e => e.stopPropagation()}>
         <div className="modal-hdr modal-hdr-blue" style={{ display: 'flex', alignItems: 'center', paddingRight: 16 }}>
           <div className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>

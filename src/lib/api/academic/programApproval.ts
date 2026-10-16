@@ -47,9 +47,13 @@ let mockApprovals: ProgramMasterListDto[] = [
   }
 ]
 
-export function getProgramApprovals(pageNumber = 1, pageSize = 20, search = ''): Promise<PaginatedProgramApprovals> {
+// programLevelGuid (2026-10-15): server-side level filter, combined with
+// search/paging; totalCount reflects it. Unknown guid → empty list.
+export function getProgramApprovals(pageNumber = 1, pageSize = 20, search = '', programLevelGuid = ''): Promise<PaginatedProgramApprovals> {
   if (MOCK_AUTH) {
-    const filtered = search ? mockApprovals.filter(m => `${m.programCode} ${m.programName}`.toLowerCase().includes(search.toLowerCase())) : mockApprovals
+    const filtered = mockApprovals
+      .filter(m => !search || `${m.programCode} ${m.programName}`.toLowerCase().includes(search.toLowerCase()))
+      .filter(m => !programLevelGuid || m.programLevelGuid === programLevelGuid)
     return Promise.resolve({
       items: filtered,
       totalCount: filtered.length,
@@ -62,6 +66,7 @@ export function getProgramApprovals(pageNumber = 1, pageSize = 20, search = ''):
   query.append('pageNumber', String(pageNumber))
   query.append('pageSize', String(pageSize))
   if (search) query.append('search', search)
+  if (programLevelGuid) query.append('programLevelGuid', programLevelGuid)
 
   return apiGet<PaginatedProgramApprovals>(`/api/v1/academic/program-master/not-approved?${query.toString()}`)
     .then(data => data ?? { items: [], totalCount: 0, pageNumber, pageSize })

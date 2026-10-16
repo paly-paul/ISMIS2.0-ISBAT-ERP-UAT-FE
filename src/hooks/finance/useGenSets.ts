@@ -30,6 +30,7 @@ export function useGenSet(guid: string | null, enabled: boolean) {
   return useQuery({
     queryKey: [...GEN_SETS_KEY, guid],
     queryFn: () => getGenSetById(guid as string),
+    staleTime: 5 * 60 * 1000,
     enabled: enabled && !!guid,
   })
 }

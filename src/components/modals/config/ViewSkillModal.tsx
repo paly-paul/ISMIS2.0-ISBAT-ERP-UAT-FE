@@ -25,7 +25,7 @@ export function ViewSkillModal({ isOpen, onClose, skill, onEdit }: ViewSkillModa
   function handleClose() { onClose() }
 
   return (
-    <div className="modal-overlay open" id="view-skill-modal" onClick={handleClose}>
+    <div className="modal-overlay open" id="view-skill-modal">
       <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
         <div className="modal-hdr modal-hdr-blue">
           <div className="modal-title"><i className="lni lni-eye"></i> View Skill</div>

@@ -6,6 +6,7 @@ import { FailurePopup } from '../shared/FailurePopup'
 import { InterestLevelInput } from '@/lib/api/admission/interestLevel'
 import { useInterestLevel } from '@/hooks/admission/useInterestLevels'
 import { AuthError } from '@/lib/api/client'
+import { scrollToFirstError } from '@/lib/scrollToFirstError'
 
 interface InterestLevelFormModalProps extends ModalProps {
   mode: 'new' | 'edit'
@@ -52,6 +53,7 @@ export function InterestLevelFormModal({ isOpen, onClose, showToast, mode, inter
     const e: Record<string, string> = {}
     if (!interestLevelName.trim()) e.interestLevelName = 'Interest Level Name is required'
     setErrors(e)
+    scrollToFirstError(e)
     return Object.keys(e).length === 0
   }
 
@@ -141,7 +143,7 @@ export function InterestLevelFormModal({ isOpen, onClose, showToast, mode, inter
             onChange={e => { setInterestLevelName(e.target.value); clearError('interestLevelName') }}
             style={errors.interestLevelName ? { borderColor: 'var(--red)' } : undefined}
           />
-          {errors.interestLevelName && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.interestLevelName}</p>}
+          {errors.interestLevelName && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.interestLevelName}</p>}
         </div>
         <div className="modal-footer">
           <button className="btn btn-neu" onClick={handleClose}>Cancel</button>

@@ -25,7 +25,7 @@ export function ViewRegulatoryPaymentModal({ isOpen, onClose, entry, category }:
   if (!isOpen || !entry) return null
 
   return (
-    <div className="modal-overlay open" onClick={onClose}>
+    <div className="modal-overlay open">
       <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
         <div className="modal-hdr modal-hdr-blue">
           <div className="modal-title"><i className="lni lni-eye"></i> {CATEGORY_LABEL[category]} Payment</div>

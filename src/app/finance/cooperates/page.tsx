@@ -63,7 +63,7 @@ export default function Page() {
   const { page, setPage, totalPages, totalCount, pageItems } = usePagination(filteredRows, PAGE_SIZE)
 
   function confirmDeleteCooperate() {
-    if (!deleteTarget) return
+    if (!permissions.delete || !deleteTarget) return
     deleteCooperate.mutate(deleteTarget.cooperateGuid, {
       onSuccess: () => { setDeleteTarget(null); showToast('Cooperate deleted successfully') },
       onError: (error: Error) => showToast(error.message || 'Failed to delete cooperate', 'error'),

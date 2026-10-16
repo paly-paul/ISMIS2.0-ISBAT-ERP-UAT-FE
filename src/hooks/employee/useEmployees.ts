@@ -1,6 +1,7 @@
-import { useMutation, useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
-import { approveEmployee, assignEmployeePermissionGroups, createEmployee, CreateEmployeeInput, Employee, EmployeeListItem, EmployeeListResponse, getEmployee, getEmployeePermissionGroups, getEmployees, getPendingEmployees, updateEmployee, getEmployeeDropdown, EmployeeDropdownItemDto } from '@/lib/api/employee/employee'
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
+import { approveEmployee, assignEmployeePermissionGroups, createEmployee, CreateEmployeeInput, Employee, EmployeeListItem, EmployeeListResponse, getEmployee, getEmployeePermissionGroups, getEmployees, getEmployeesPaged, getPendingEmployees, updateEmployee, getEmployeeDropdown, EmployeeDropdownItemDto } from '@/lib/api/employee/employee'
 import { MENU_KEY } from '@/hooks/users/useMenu'
+import { getNextPageParam } from '@/lib/pagination'
 
 const EMPLOYEES_KEY = ['employees']
 const EMPLOYEE_PERMISSION_GROUPS_KEY = ['employeePermissionGroups']
@@ -32,12 +33,13 @@ export function useEmployees(enabled = true) {
   })
 }
 
-export function useEmployeeDropdown() {
+export function useEmployeeDropdown(enabled = true) {
   return useQuery({
     queryKey: [...EMPLOYEES_KEY, 'dropdown'],
     queryFn: () => getEmployeeDropdown(),
     staleTime: Infinity,
     gcTime: Infinity,
+    enabled,
   })
 }
 
@@ -55,6 +57,18 @@ export function useEmployeeSearch(search: string) {
     queryKey: [...EMPLOYEES_KEY, 'search', q],
     queryFn: () => getEmployees(1, EMPLOYEES_PAGE_SIZE, q),
     enabled: q.length > 0,
+    staleTime: Infinity,
+    gcTime: Infinity,
+  })
+}
+
+export function useSearchEmployeesInfinite(search: string, pageSize: number, enabled: boolean) {
+  return useInfiniteQuery({
+    queryKey: [...EMPLOYEES_KEY, 'search-infinite', search, pageSize],
+    queryFn: ({ pageParam }) => getEmployeesPaged(pageParam, pageSize, search),
+    initialPageParam: 1,
+    getNextPageParam,
+    enabled,
     staleTime: Infinity,
     gcTime: Infinity,
   })

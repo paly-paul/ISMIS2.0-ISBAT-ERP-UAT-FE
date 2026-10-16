@@ -69,9 +69,32 @@ const mockDropouts: DropoutStudentDto[] = [
   { studentGuid: 'stu-mock-4', studentRegNo: '012240747', studentName: 'Brian Ssemanda', programGuid: 'mock-prog-2', programName: 'Diploma in Nursing', semesterGuid: 'mock-sem-4', semesterName: 'Semester 4', batchGuid: 'mock-batch-2', batchCode: 'NUR-2025-MAY-A', applicationGuid: 'mock-app-4', canRejoin: false },
 ]
 
-export function getDropoutStudents(): Promise<DropoutStudentDto[]> {
-  if (MOCK_AUTH) return Promise.resolve(mockDropouts)
-  return apiGet<DropoutStudentDto[] | null>('/api/v1/students/dropout-rejoin').then(data => data ?? [])
+export interface DropoutStudentsParams {
+  searchTerm?: string
+  page: number
+  pageSize: number
+}
+
+export interface DropoutStudentsPage {
+  items: DropoutStudentDto[]
+  totalCount: number
+}
+
+// Paged + searchable (get-dropout-students.md, 2026-09-29): searchTerm
+// matches name (LIKE), or reg no / student no (exact) — all server-side.
+export function getDropoutStudents({ searchTerm, page, pageSize }: DropoutStudentsParams): Promise<DropoutStudentsPage> {
+  if (MOCK_AUTH) {
+    const term = searchTerm?.toLowerCase() ?? ''
+    const matches = mockDropouts.filter(d => !term || d.studentName.toLowerCase().includes(term) || d.studentRegNo === searchTerm)
+    return Promise.resolve({ items: matches.slice((page - 1) * pageSize, page * pageSize), totalCount: matches.length })
+  }
+  // The doc names the page param `page`, but the live endpoint returned page
+  // 1 for every page (2026-10-16) and its response echoes `pageNumber`, so
+  // both names are sent; the backend binds whichever it uses, ignores the other.
+  const params = new URLSearchParams({ page: String(page), pageNumber: String(page), pageSize: String(pageSize) })
+  if (searchTerm) params.set('searchTerm', searchTerm)
+  return apiGet<{ items?: DropoutStudentDto[] | null; totalCount?: number } | null>(`/api/v1/students/dropout-rejoin?${params.toString()}`)
+    .then(data => ({ items: data?.items ?? [], totalCount: data?.totalCount ?? 0 }))
 }
 
 export function getRejoinCandidate(studentGuid: string): Promise<RejoinCandidateDto> {

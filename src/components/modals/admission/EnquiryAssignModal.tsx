@@ -1,16 +1,18 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { ModalProps } from '../types'
 import { SuccessPopup } from '../shared/SuccessPopup'
 import { FailurePopup } from '../shared/FailurePopup'
 import { SearchSelect } from '@/components/SearchSelect'
-import { EnquiryUpdateInput } from '@/lib/api/admission/enquiry'
+import { EnquiryUpdateInput, formatEnquiryPhone } from '@/lib/api/admission/enquiry'
 import { useEnquiry } from '@/hooks/admission/useEnquiries'
 import { useEmployees } from '@/hooks/employee/useEmployees'
-import { useProgramMasters } from '@/hooks/academic/useProgramMaster'
+import { useSearchProgramMastersInfinite } from '@/hooks/academic/useProgramMaster'
 import { useCampuses } from '@/hooks/config/useCampuses'
 import { useIntakes } from '@/hooks/academic/useIntakes'
 import { AuthError } from '@/lib/api/client'
+import { flattenUniquePages } from '@/lib/pagination'
+import { scrollToFirstError } from '@/lib/scrollToFirstError'
 
 interface EnquiryAssignModalProps extends ModalProps {
   enquiryGuid: string | null
@@ -20,20 +22,21 @@ interface EnquiryAssignModalProps extends ModalProps {
   }
 }
 
-// Update.bru's payload only carries advisorGuid/programGuid/campusGuid
-// (campusGuid required, the rest optional) — this is a staff assignment
+// put-enquiry.md: campusGuid required; enquiryStatusGuid, programGuid and
+// advisorGuid optional. advisorGuid reassigns the enquiry's own advisor (the
+// list's advisor filter and the follow-up worklists read it straight away);
+// it adds no follow-up history entry. This is a staff assignment
 // action, not a full edit of the enquiry's original details, which are
 // shown read-only above the editable fields. enquiryStatus is left out —
 // see the note on EnquiryUpdateInput in lib/api/admission/enquiry.ts.
 export function EnquiryAssignModal({ isOpen, onClose, showToast, enquiryGuid, updateEnquiry }: EnquiryAssignModalProps) {
   const { data: enquiry, isLoading, isError, error } = useEnquiry(enquiryGuid, isOpen)
-  const { data: employees = [] } = useEmployees()
-  const { data: programs = [] }  = useProgramMasters()
-  const { data: campuses = [] }  = useCampuses()
+  const { data: employees = [] } = useEmployees(isOpen)
+  const { data: campuses = [] }  = useCampuses(isOpen)
   // No intakeName/intakeCode field exists on the enquiry response itself —
   // resolve intakeGuid against the real Intake master, same client-side
   // resolution pattern as the enquiry-list page's own resolveProgramName.
-  const { data: intakes = [] }   = useIntakes()
+  const { data: intakes = [] }   = useIntakes(isOpen)
   function resolveIntakeLabel(guid: string | null) {
     if (!guid) return '—'
     const intake = intakes.find(i => i.intakeGuid === guid)
@@ -55,6 +58,23 @@ export function EnquiryAssignModal({ isOpen, onClose, showToast, enquiryGuid, up
   const [programGuid, setProgramGuid] = useState('')
   const [campusGuid, setCampusGuid]   = useState('')
   const [errors, setErrors]   = useState<Record<string, string>>({})
+  const [programSearch, setProgramSearch] = useState('')
+  const [committedProgramSearch, setCommittedProgramSearch] = useState('')
+  const [programPickerOpen, setProgramPickerOpen] = useState(false)
+
+  useEffect(() => {
+    const timer = setTimeout(() => setCommittedProgramSearch(programSearch.trim()), 300)
+    return () => clearTimeout(timer)
+  }, [programSearch])
+
+  const programQuery = useSearchProgramMastersInfinite(committedProgramSearch, 20, isOpen && programPickerOpen)
+  const programs = useMemo(() => {
+    const items = flattenUniquePages(programQuery.data?.pages ?? [], p => p.programGuid)
+    if (enquiry?.programGuid && enquiry.programName && !items.some(p => p.programGuid === enquiry.programGuid)) {
+      items.unshift({ programGuid: enquiry.programGuid, programName: enquiry.programName, programCode: enquiry.programCode ?? '' } as typeof items[number])
+    }
+    return items
+  }, [enquiry?.programCode, enquiry?.programGuid, enquiry?.programName, programQuery.data])
 
   const advisorOptions = employees.map(e => ({ value: e.employeeGuid, label: e.empName }))
   const programOptions = programs.map(p => ({ value: p.programGuid, label: `${p.programName} (${p.programCode})` }))
@@ -79,6 +99,7 @@ export function EnquiryAssignModal({ isOpen, onClose, showToast, enquiryGuid, up
     const e: Record<string, string> = {}
     if (!campusGuid) e.campusGuid = 'Please select a Campus'
     setErrors(e)
+    scrollToFirstError(e)
     return Object.keys(e).length === 0
   }
 
@@ -88,7 +109,22 @@ export function EnquiryAssignModal({ isOpen, onClose, showToast, enquiryGuid, up
       { guid: enquiryGuid, input: { advisorGuid: advisorGuid || null, programGuid: programGuid || null, campusGuid } },
       {
         onSuccess: () => { setSaved(true); showToast('Enquiry updated successfully') },
-        onError: (error: Error) => setFailure(error.message || 'Failed to update enquiry. Please try again.'),
+        onError: (error: Error) => {
+          // Campus (validation_error) and advisor (validation_error or 404
+          // "Advisor not found.") have fields to point at; the rest go to the popup.
+          const code = error instanceof AuthError ? error.code : undefined
+          const field =
+            code === 'validation_error' && /campus/i.test(error.message) ? 'campusGuid'
+            : (code === 'validation_error' || code === 'not_found') && /advisor/i.test(error.message) ? 'advisorGuid'
+            : null
+          if (field) {
+            const e = { [field]: error.message }
+            setErrors(prev => ({ ...prev, ...e }))
+            scrollToFirstError(e)
+            return
+          }
+          setFailure(error.message || 'Failed to update enquiry. Please try again.')
+        },
       },
     )
   }
@@ -170,10 +206,11 @@ export function EnquiryAssignModal({ isOpen, onClose, showToast, enquiryGuid, up
           {/* Read-only — the update endpoint doesn't accept these fields at all */}
           <div className="g2" style={{ marginBottom: 18 }}>
             <div className="fg m-0"><div className="lbl">Name</div><div style={{ fontSize: 13.5, color: 'var(--g700)' }}>{enquiry.studentName}</div></div>
-            <div className="fg m-0"><div className="lbl">Phone</div><div style={{ fontSize: 13.5, color: 'var(--g700)' }}>{enquiry.mobile}</div></div>
+            <div className="fg m-0"><div className="lbl">Phone</div><div style={{ fontSize: 13.5, color: 'var(--g700)' }}>{formatEnquiryPhone(enquiry)}</div></div>
             <div className="fg m-0"><div className="lbl">Email</div><div style={{ fontSize: 13.5, color: 'var(--g700)' }}>{enquiry.email || '—'}</div></div>
             <div className="fg m-0"><div className="lbl">Enquiry Date</div><div style={{ fontSize: 13.5, color: 'var(--g700)' }}>{enquiry.enquiryDate.slice(0, 10)}</div></div>
-            <div className="fg m-0"><div className="lbl">Source</div><div style={{ fontSize: 13.5, color: 'var(--g700)' }}>{enquiry.sourceName || '—'}</div></div>
+            <div className="fg m-0"><div className="lbl">Source</div><div style={{ fontSize: 13.5, color: 'var(--g700)' }}>{enquiry.enquirySourceName || enquiry.sourceName || '—'}</div></div>
+            {enquiry.isbatSourceName && <div className="fg m-0"><div className="lbl">Isbat Source</div><div style={{ fontSize: 13.5, color: 'var(--g700)' }}>{enquiry.isbatSourceName}</div></div>}
             <div className="fg m-0"><div className="lbl">Intake</div><div style={{ fontSize: 13.5, color: 'var(--g700)' }}>{resolveIntakeLabel(enquiry.intakeGuid)}</div></div>
             <div className="fg m-0"><div className="lbl">Campus</div><div style={{ fontSize: 13.5, color: 'var(--g700)' }}>{resolveCampusName(enquiry.campusGuid)}</div></div>
             <div className="fg m-0"><div className="lbl">Status</div><div style={{ fontSize: 13.5, color: 'var(--g700)' }}>{enquiry.enquiryStatusName || '—'}</div></div>
@@ -184,11 +221,26 @@ export function EnquiryAssignModal({ isOpen, onClose, showToast, enquiryGuid, up
           <div className="g2">
             <div className="fg">
               <div className="lbl">Advisor</div>
-              <SearchSelect placeholder="— unassigned —" options={advisorOptions} value={advisorGuid} onChange={setAdvisorGuid} />
+              {/* PUT can reassign the advisor but never clear it (null/omitted
+                  = keep), so once one is set the picker has no placeholder —
+                  and with it no ✕ — to clear back to. */}
+              <SearchSelect placeholder={enquiry.advisorGuid ? undefined : '— unassigned —'} options={advisorOptions} value={advisorGuid} onChange={v => { setAdvisorGuid(v); setErrors(prev => ({ ...prev, advisorGuid: '' })) }} />
+              {errors.advisorGuid && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.advisorGuid}</p>}
             </div>
             <div className="fg">
               <div className="lbl">Programme</div>
-              <SearchSelect placeholder="— select —" options={programOptions} value={programGuid} onChange={setProgramGuid} />
+              <SearchSelect
+                placeholder="— select —"
+                options={programOptions}
+                value={programGuid}
+                onChange={setProgramGuid}
+                onSearch={setProgramSearch}
+                onOpenChange={setProgramPickerOpen}
+                isLoading={programQuery.isLoading}
+                hasNextPage={programQuery.hasNextPage}
+                isFetchingNextPage={programQuery.isFetchingNextPage}
+                onLoadMore={() => programQuery.fetchNextPage()}
+              />
             </div>
             <div className="fg">
               <div className="lbl">Campus <span className="req">*</span></div>
@@ -198,7 +250,7 @@ export function EnquiryAssignModal({ isOpen, onClose, showToast, enquiryGuid, up
                 value={campusGuid}
                 onChange={val => { setCampusGuid(val); if (errors.campusGuid) setErrors(p => ({ ...p, campusGuid: '' })) }}
               />
-              {errors.campusGuid && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.campusGuid}</p>}
+              {errors.campusGuid && <p className="field-err" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{errors.campusGuid}</p>}
             </div>
           </div>
         </div>

@@ -30,9 +30,11 @@ const mockBankBranches: BankBranch[] = [
   { bankBranchGuid: 'ae497a87-9dcc-4557-b6cb-41cb5356b82f', shortCode: 'DTB-LG', branchName: 'DTB- Lugogo', bankGuid: '8edd4853-5e62-4f86-8d67-5e5d3c110d47', compCode: null, branchCode: null, status: 2, sortCode: 'LGO' },
 ]
 
+const BANK_BRANCHES_LOAD_SIZE = 1000
+
 export function getBankBranches(): Promise<BankBranch[]> {
   if (MOCK_AUTH) return Promise.resolve(mockBankBranches)
-  return apiGet<BankBranchListResponse | null>('/api/v1/finance/bank-branches').then(data => data?.items ?? [])
+  return apiGet<BankBranchListResponse | null>(`/api/v1/finance/bank-branches?page=1&pageSize=${BANK_BRANCHES_LOAD_SIZE}`).then(data => data?.items ?? [])
 }
 
 export function createBankBranch(input: BankBranchInput): Promise<BankBranch> {

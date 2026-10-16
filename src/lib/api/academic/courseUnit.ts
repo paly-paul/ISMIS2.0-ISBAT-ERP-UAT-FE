@@ -265,6 +265,37 @@ export function getCourseUnitById(guid: string): Promise<CourseUnit> {
   return apiGet<CourseUnit>(`/api/v1/academic/courseunits/${guid}`)
 }
 
+// --- Availability check (get-courseunit-check-availability.md) ------------
+// A taken code is a hard conflict (codes are unique); a taken name is only a
+// warning — names aren't unique, the user may continue. Pass excludeGuid on
+// Edit so the unit doesn't flag its own code/name.
+export interface CourseUnitAvailability {
+  codeExists: boolean
+  codeMessage: string | null
+  nameExists: boolean
+  nameMessage: string | null
+}
+
+export function checkCourseUnitAvailability(code: string, name: string, excludeGuid?: string | null): Promise<CourseUnitAvailability> {
+  const c = code.trim(), n = name.trim()
+  if (MOCK_AUTH) {
+    const others = mockCourseUnits.filter(u => u.courseUnitGuid !== excludeGuid)
+    const codeExists = !!c && others.some(u => u.courseUnitCode.toUpperCase() === c.toUpperCase())
+    const nameExists = !!n && others.some(u => u.courseUnitName.trim().toLowerCase() === n.toLowerCase())
+    return Promise.resolve({
+      codeExists,
+      codeMessage: codeExists ? `The course unit code "${c.toUpperCase()}" is already in use. Please choose a different code.` : null,
+      nameExists,
+      nameMessage: nameExists ? `A course unit named "${n}" already exists. You can still continue.` : null,
+    })
+  }
+  const params = new URLSearchParams()
+  if (c) params.set('code', c)
+  if (n) params.set('name', n)
+  if (excludeGuid) params.set('excludeGuid', excludeGuid)
+  return apiGet<CourseUnitAvailability>(`/api/v1/academic/courseunits/check-availability?${params.toString()}`)
+}
+
 // --- Full details (course unit + real outlines) ---------------------------
 // See get-courseunit-details-by-guid.md — composes GET /courseunits/{guid}
 // and GET /courseunit-outlines/by-courseunit/{guid} server-side into one

@@ -64,7 +64,7 @@ export default function Page() {
   const { page, setPage, totalPages, totalCount, pageItems } = usePagination(filteredRows, PAGE_SIZE)
 
   function confirmDeleteReceiptBook() {
-    if (!deleteTarget) return
+    if (!permissions.delete || !deleteTarget) return
     deleteReceiptBook.mutate(deleteTarget.receiptBookGuid, {
       onSuccess: () => { setDeleteTarget(null); showToast('Receipt book deleted successfully') },
       onError: (error: Error) => showToast(error.message || 'Failed to delete receipt book', 'error'),

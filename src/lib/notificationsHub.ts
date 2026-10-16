@@ -17,10 +17,41 @@ const MOCK_PUSH_INTERVAL_MS = 35_000
 type NotificationHandler = (n: NotificationItem) => void
 type ReconnectHandler = () => void
 
+// Live report-export status (ws-notifications-hub.md › Report status). Sent
+// only to the requester, never stored, never shown in the bell. Queued (1)
+// is never pushed; the export call's 202 already says Queued.
+export interface ReportStatusEvent {
+  reportJobGuid: string
+  reportName: string
+  status: number            // 2 Processing, 3 Completed, 4 Failed
+  statusName: string
+  fileName: string | null
+  downloadUrl: string | null
+  downloadUrlExpiresAtUtc: string | null
+  errorMessage: string | null
+  occurredAtUtc: string
+}
+type ReportStatusHandler = (s: ReportStatusEvent) => void
+
 let connection: signalR.HubConnection | null = null
 let mockTimer: ReturnType<typeof setInterval> | null = null
 const notificationHandlers = new Set<NotificationHandler>()
 const reconnectHandlers = new Set<ReconnectHandler>()
+const reportStatusHandlers = new Set<ReportStatusHandler>()
+
+// Subscribe to report-export status on the SAME app-wide connection the bell
+// uses (the doc rules out a second one). Returns an unsubscribe function.
+export function onReportStatus(handler: ReportStatusHandler): () => void {
+  reportStatusHandlers.add(handler)
+  return () => reportStatusHandlers.delete(handler)
+}
+
+// Mock-auth stand-in for the server's push, so the Downloads flow is
+// demoable without a backend. No-op for real sessions.
+export function simulateReportStatus(s: ReportStatusEvent): void {
+  if (!MOCK_AUTH) return
+  reportStatusHandlers.forEach(h => h(s))
+}
 
 // Guards the whole "fetch unread-count, then connect" sequence (see
 // startNotificationsSession below) so it runs exactly once per login, no
@@ -71,6 +102,7 @@ export function connectNotificationsHub(): void {
     .build()
 
   connection.on('notification', (n: NotificationItem) => emitNotification(n))
+  connection.on('reportStatus', (s: ReportStatusEvent) => reportStatusHandlers.forEach(h => h(s)))
   connection.onreconnected(() => reconnectHandlers.forEach(h => h()))
 
   connection.start().catch(err => {

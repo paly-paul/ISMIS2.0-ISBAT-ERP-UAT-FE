@@ -2,71 +2,42 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tansta
 import {
   ApplicationPaymentInput,
   createApplicationPayment,
-  getApplicationPaymentBanks,
-  getApplicationPaymentBatches,
   getApplicationPaymentExemptionTypes,
-  getApplicationPaymentFees,
   getApplicationPaymentTypes,
   getUnconvertedEnquiries,
 } from '@/lib/api/admission/applicationPayment'
 
 const APPLICATION_PAYMENTS_KEY = ['application-payments']
 
-export function useApplicationPaymentBanks() {
+// `search` is optional server-side filtering (part of the key, so each term
+// caches separately); omit it for the full list.
+export function useApplicationPaymentExemptionTypes(search = '') {
   return useQuery({
-    queryKey: [...APPLICATION_PAYMENTS_KEY, 'banks'],
-    queryFn: () => getApplicationPaymentBanks(),
+    queryKey: [...APPLICATION_PAYMENTS_KEY, 'exemption-types', search],
+    queryFn: () => getApplicationPaymentExemptionTypes(search),
     staleTime: Infinity,
     gcTime: Infinity,
-  })
-}
-
-// Scoped to a program/semester/batch time — only enabled once all three are
-// picked, same convention as useSemestersForProgram.
-export function useApplicationPaymentBatches(programGuid: string, semesterGuid: string, batchTimeGuid: string, enabled: boolean) {
-  return useQuery({
-    queryKey: [...APPLICATION_PAYMENTS_KEY, 'batches', programGuid, semesterGuid, batchTimeGuid],
-    queryFn: () => getApplicationPaymentBatches(programGuid, semesterGuid, batchTimeGuid),
-    enabled: enabled && !!programGuid && !!semesterGuid && !!batchTimeGuid,
-  })
-}
-
-export function useApplicationPaymentExemptionTypes() {
-  return useQuery({
-    queryKey: [...APPLICATION_PAYMENTS_KEY, 'exemption-types'],
-    queryFn: () => getApplicationPaymentExemptionTypes(),
-    staleTime: Infinity,
-    gcTime: Infinity,
-  })
-}
-
-// Scoped to a program — only enabled once one is picked.
-export function useApplicationPaymentFees(programGuid: string, enabled: boolean) {
-  return useQuery({
-    queryKey: [...APPLICATION_PAYMENTS_KEY, 'fees', programGuid],
-    queryFn: () => getApplicationPaymentFees(programGuid),
-    enabled: enabled && !!programGuid,
   })
 }
 
 // Per Application_Payment_Change_Requests_Final_Updated.md #1/#2 — only
 // enabled once an Intake has actually been picked, same "gate the dependent
 // dropdown" convention as useApplicationPaymentFees/useSemestersForProgram.
-export function useUnconvertedEnquiries(intakeGuid: string, page: number, pageSize: number, enabled: boolean) {
+export function useUnconvertedEnquiries(intakeGuid: string, page: number, pageSize: number, enabled: boolean, search = '') {
   return useQuery({
-    queryKey: [...APPLICATION_PAYMENTS_KEY, 'unconverted-enquiries', intakeGuid, page, pageSize],
-    queryFn: () => getUnconvertedEnquiries(intakeGuid, page, pageSize),
+    queryKey: [...APPLICATION_PAYMENTS_KEY, 'unconverted-enquiries', intakeGuid, page, pageSize, search],
+    queryFn: () => getUnconvertedEnquiries(intakeGuid, page, pageSize, search),
     enabled: enabled && !!intakeGuid,
   })
 }
 
 // Real server-paginated, scroll-to-load-more variant of the same endpoint —
-// backs the Payment page's Enquiry picker (EnquirySearchPicker), replacing
+// backs the Payment page's Enquiry dropdown, replacing
 // the old single pageSize=1000 "fetch nearly everything for this intake up
 // front" SearchSelect. Same useInfiniteQuery + fetch-next-on-scroll
-// mechanism as useSearchCourseUnitsInfinite (useCourseUnits.ts). searchTerm
-// is CONFIRMED real server-side (2026-09-08, see getUnconvertedEnquiries)
-// and part of the query key — each typed term's pages are cached
+// mechanism as useSearchCourseUnitsInfinite (useCourseUnits.ts). The typed
+// term goes out as ?search= (student name / enquiry code, see
+// getUnconvertedEnquiries) and is part of the query key — each typed term's pages are cached
 // separately, no client-side re-filtering.
 export function useUnconvertedEnquiriesInfinite(intakeGuid: string, searchTerm: string, pageSize: number, enabled: boolean) {
   return useInfiniteQuery({
@@ -83,20 +54,35 @@ export function useUnconvertedEnquiriesInfinite(intakeGuid: string, searchTerm: 
   })
 }
 
-export function useApplicationPaymentTypes() {
+export function useApplicationPaymentTypes(search = '') {
   return useQuery({
-    queryKey: [...APPLICATION_PAYMENTS_KEY, 'payment-types'],
-    queryFn: () => getApplicationPaymentTypes(),
+    queryKey: [...APPLICATION_PAYMENTS_KEY, 'payment-types', search],
+    queryFn: () => getApplicationPaymentTypes(search),
     staleTime: Infinity,
     gcTime: Infinity,
   })
 }
 
+// A successful payment converts its enquiry (status → Registered) in the same
+// transaction, and "already been converted" means our cached list is stale —
+// so after any attempt, refresh the unconverted-enquiry picker and the
+// enquiry list. Intake errors mean the current/admission intake flags
+// changed under us — refetch those (keys from useIntakes).
 export function useCreateApplicationPayment() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (input: ApplicationPaymentInput) => createApplicationPayment(input),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: APPLICATION_PAYMENTS_KEY }),
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: [...APPLICATION_PAYMENTS_KEY, 'unconverted-enquiries-infinite'] })
+      queryClient.invalidateQueries({ queryKey: ['enquiries'] })
+      queryClient.invalidateQueries({ queryKey: ['enquiry-counts'] })
+    },
+    onError: (error: Error) => {
+      if (/current intake only|no active admission intake/i.test(error.message)) {
+        queryClient.invalidateQueries({ queryKey: ['intakes', 'current-academic'] })
+        queryClient.invalidateQueries({ queryKey: ['intakes', 'current-admission'] })
+      }
+    },
   })
 }
 

@@ -31,7 +31,10 @@ export interface PaymentOtherDto {
   // (get-payment-advances.md) rather than fresh cash — such rows can't be
   // edited directly (PUT /api/v1/finance/other-payment/{guid} rejects them).
   advance: number
-  ledger: { ledgerGuid: string; ledgerCode: string; ledgerName: string } | null
+  // One entry per ledger the payment covers (2026-09-10: the single `ledger`
+  // ref was replaced by this array). Always at least one; `amount` above is
+  // the sum of these lines.
+  ledgers: { ledger: { ledgerGuid: string; ledgerCode: string; ledgerName: string } | null; amount: number }[]
   // Raw PaymentGroupCategory byte (1 Tuition/2 Other/3 Nche/4 Guild) — only
   // set when this row was created as part of a unified payment. Nullable;
   // every row from THIS endpoint is Other regardless of whether it's set.
@@ -61,4 +64,18 @@ export function getPaymentOthers(params: PaymentOtherListParams): Promise<Paymen
   if (params.applicationGuid) qs.set('applicationGuid', params.applicationGuid)
   return apiGet<PaymentOtherListResponse | null>(`/api/v1/finance/other-payment?${qs.toString()}`)
     .then(data => data ?? { items: [], totalCount: 0, pageNumber: page, pageSize })
+}
+
+// Confirmed via get-resit-fee.md (repo root) — previews the resit fee the
+// student owes so the Other Payment tab can auto-fill and lock the amount
+// once the resit ledger is picked (legacy txtAmount.Enabled = false). Always
+// in UGX; 0 when nothing is unpaid or there's no active resit config. The
+// POST re-verifies the amount server-side, so this is a preview only.
+// 404 (application not found) / 400 (no intake, or Assessment's fee call
+// failed) surface as thrown errors with the backend message.
+export function getResitFee(studentGuid: string, applicationGuid: string): Promise<number> {
+  if (MOCK_AUTH) return Promise.resolve(1130000)
+  const qs = new URLSearchParams({ studentGuid, applicationGuid })
+  return apiGet<{ amount: number } | null>(`/api/v1/finance/other-payment/resit-fee?${qs.toString()}`)
+    .then(data => data?.amount ?? 0)
 }

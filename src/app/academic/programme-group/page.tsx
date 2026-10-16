@@ -12,9 +12,7 @@ import { FilterTh } from '@/components/FilterTh'
 import { EmptyState } from '@/components/EmptyState'
 import { TableLoadingState } from '@/components/TableLoadingState'
 import { Pagination } from '@/components/Pagination'
-import { usePagination } from '@/hooks/usePagination'
-import { useCreateProgramGroup, useDeleteProgramGroup, useProgramGroups, useProgramGroupSearch, useUpdateProgramGroup, ProgramGroup } from '@/hooks/academic/useProgramGroups'
-import { useProgramLevels } from '@/hooks/academic/useProgramLevels'
+import { useCreateProgramGroup, useDeleteProgramGroup, useProgramGroupsPaged, useUpdateProgramGroup, ProgramGroup } from '@/hooks/academic/useProgramGroups'
 import { usePagePermissions } from '@/hooks/users/usePagePermissions'
 
 const PAGE_SIZE = 10
@@ -49,45 +47,34 @@ export default function Page() {
     return () => document.removeEventListener('click', closeFilter)
   }, [])
 
-  const { data: rows = [], isLoading } = useProgramGroups()
-  const { data: programLevels = [] } = useProgramLevels()
-
-  // Debounced so the backend's ?search= isn't hit on every keystroke, and
-  // held at '' (falling back to the unfiltered list) until MIN_SEARCH_CHARS
-  // is met — same convention as Intake/Skill/Repetition Tag's search boxes.
-  const [debouncedSearch, setDebouncedSearch] = useState('')
-  useEffect(() => {
-    const trimmed = search.trim()
-    if (trimmed.length < MIN_SEARCH_CHARS) { setDebouncedSearch(''); return }
-    const t = setTimeout(() => setDebouncedSearch(trimmed), 400)
-    return () => clearTimeout(t)
-  }, [search])
-
-  const { data: searchResults, isFetching: isSearching } = useProgramGroupSearch(debouncedSearch)
-  const baseRows = debouncedSearch ? (searchResults ?? []) : rows
+  // Real server-side pagination (2026-09-09) — only PAGE_SIZE rows are ever
+  // requested for the page on screen (see useProgramGroupsPaged), not the
+  // whole table in one 1000-row shot. Trade-off: the Programme Level column
+  // filter below can now only narrow the rows already on the current page.
+  const [page, setPage] = useState(1)
   const searchTrimmed = search.trim()
-  const searchPending = searchTrimmed.length >= MIN_SEARCH_CHARS && (debouncedSearch !== searchTrimmed || isSearching)
+  const activeSearch = searchTrimmed.length >= MIN_SEARCH_CHARS ? searchTrimmed : ''
+  const { data, isLoading, isFetching } = useProgramGroupsPaged(page, PAGE_SIZE, activeSearch)
+  const rows = data?.items ?? []
+  const totalCount = data?.totalCount ?? 0
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE))
+  const searchPending = searchTrimmed.length >= MIN_SEARCH_CHARS && isFetching
 
   const createProgramGroup = useCreateProgramGroup()
   const updateProgramGroup = useUpdateProgramGroup()
   const deleteProgramGroup = useDeleteProgramGroup()
 
-  // Live preview shown in the search dropdown as the user types — reads the
-  // same server-scoped baseRows, ignoring the column filters and capped to a
-  // handful of rows. Empty below MIN_SEARCH_CHARS, matching TableSearch's own
-  // minChars gate on when the dropdown is even allowed to open.
-  const searchMatches = searchTrimmed.length >= MIN_SEARCH_CHARS
-    ? baseRows.filter(r => `${r.groupCode} ${r.groupName}`.toLowerCase().includes(searchTrimmed.toLowerCase())).slice(0, 8)
-    : []
+  // Search already happened server-side (see useProgramGroupsPaged above) —
+  // this only applies the column filter on top of the current page's rows.
+  const filteredRows = rows.filter(r =>
+    Object.entries(filters).every(([k, v]) => !v.length || v.includes(String((r as unknown as Record<string, unknown>)[k])))
+  )
+  const pageItems = filteredRows
 
-  // Re-filter client-side on top of whatever the server sent back (see the
-  // note on getProgramGroups), then apply the column filter on top.
-  const filteredRows = baseRows.filter(r => {
-    if (searchTrimmed.length >= MIN_SEARCH_CHARS && !`${r.groupCode} ${r.groupName}`.toLowerCase().includes(searchTrimmed.toLowerCase())) return false
-    return Object.entries(filters).every(([k, v]) => !v.length || v.includes(String((r as unknown as Record<string, unknown>)[k])))
-  })
-
-  const { page, setPage, totalPages, totalCount, pageItems } = usePagination(filteredRows, PAGE_SIZE)
+  // Live preview shown in the search dropdown as the user types — rows are
+  // already server-filtered by activeSearch, so this just previews up to 8
+  // of what's already loaded.
+  const searchMatches = searchTrimmed.length >= MIN_SEARCH_CHARS ? filteredRows.slice(0, 8) : []
 
   function openEditModal(guid: string) {
     setEditingProgramGroupGuid(guid)
@@ -151,7 +138,7 @@ export default function Page() {
                 className="w-56"
                 placeholder="Search by group code or name…"
                 value={search}
-                onChange={setSearch}
+                onChange={v => { setSearch(v); setPage(1) }}
                 results={searchMatches.map(r => ({ id: r.programGroupGuid, primary: r.groupCode, secondary: r.groupName }))}
                 loading={searchPending}
                 minChars={MIN_SEARCH_CHARS}
@@ -167,7 +154,7 @@ export default function Page() {
                   <th style={{ width: 48 }}></th>
                   <th>Group Code</th>
                   <th>Group Name</th>
-                  {fth('Programme Level', 'programLevelName', programLevels.map(l => l.levelName))}
+                  {fth('Programme Level', 'programLevelName', Array.from(new Set(rows.map(r => r.programLevelName).filter(Boolean) as string[])))}
                   {/* Not part of the confirmed GET /api/v1/academic/program-groups
                   response — kept for reference until/unless the backend adds them.
                   <th>Active Versions</th>
@@ -246,7 +233,7 @@ export default function Page() {
             <div className="perm-delete-icon"><i className="lni lni-trash-can"></i></div>
             <div className="perm-delete-title">Delete {deleteTarget.groupName}?</div>
             <div className="perm-delete-sub">
-              This will permanently delete this programme group. This can&apos;t be undone.
+              This will delete this programme group. Programmes in this group are not checked first and will keep pointing to it, so reassign them before deleting.
             </div>
             <div className="perm-delete-actions">
               <button className="btn btn-neu" onClick={() => setDeleteTarget(null)}>Cancel</button>

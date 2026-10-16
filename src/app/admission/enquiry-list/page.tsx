@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Toast } from '@/components/Toast'
 import { ScrollTable } from '@/components/ScrollTable'
@@ -10,12 +10,15 @@ import { EmptyState } from '@/components/EmptyState'
 import { TableLoadingState } from '@/components/TableLoadingState'
 import { EnquiryFormModal } from '@/components/modals/admission/EnquiryFormModal'
 import { EnquiryAssignModal } from '@/components/modals/admission/EnquiryAssignModal'
+import type { Enquiry } from '@/hooks/admission/useEnquiries'
 import { useEnquiries, useEnquiryCounts, useUpdateEnquiry } from '@/hooks/admission/useEnquiries'
 import { useEnquirySourceMasters } from '@/hooks/admission/useEnquirySourceMasters'
-import { useProgramMasters } from '@/hooks/academic/useProgramMaster'
-import { useIntakes } from '@/hooks/academic/useIntakes'
+import { useProgramDropdown } from '@/hooks/academic/useProgramMaster'
+import { useSearchIntakesInfinite } from '@/hooks/academic/useIntakes'
 import { useEnquiryStatuses } from '@/hooks/config/useEnquiryStatuses'
 import { usePagePermissions } from '@/hooks/users/usePagePermissions'
+import { formatEnquiryPhone } from '@/lib/api/admission/enquiry'
+import { flattenUniquePages } from '@/lib/pagination'
 
 // Real server-side pagination — only DISPLAY_PAGE_SIZE rows are ever
 // requested for the page currently on screen (see useEnquiries), not the
@@ -39,11 +42,11 @@ function statusBadge(statusName: string | undefined) {
   return <span className="badge badge-blue">{statusName}</span>
 }
 
-// sourceName (from the Enquiry Source master, set via the create form's
-// "Enquiry Source" dropdown) is already a real resolved string — no need to
-// fall back to the raw enquirySourceGuid.
-function sourceBadge(sourceName: string | null) {
-  return <span className="badge badge-grey">{sourceName ?? '—'}</span>
+// Channel shows enquirySourceName (the Enquiry Source master, e.g.
+// "Instagram"). The list response no longer carries sourceName at all
+// (confirmed live 2026-10-16), so it's only a fallback now.
+function sourceBadge(r: Enquiry) {
+  return <span className="badge badge-grey">{r.enquirySourceName || r.sourceName || '—'}</span>
 }
 
 export default function EnquiryListPage() {
@@ -55,7 +58,19 @@ export default function EnquiryListPage() {
   const [search, setSearch] = useState('')
   const [channel, setChannel] = useState('')
   const [intakeGuid, setIntakeGuid] = useState('')
+  // Server-side filter (enquiryStatusGuid on GET /enquiries) — unlike
+  // Channel/Intake, it narrows the whole dataset and totalCount, not just
+  // the current page. '' = All (param left out).
+  const [statusGuid, setStatusGuid] = useState('')
   const [page, setPage] = useState(1)
+  const [intakeSearch, setIntakeSearch] = useState('')
+  const [committedIntakeSearch, setCommittedIntakeSearch] = useState('')
+  const [intakePickerOpen, setIntakePickerOpen] = useState(false)
+
+  useEffect(() => {
+    const timer = setTimeout(() => setCommittedIntakeSearch(intakeSearch.trim()), 300)
+    return () => clearTimeout(timer)
+  }, [intakeSearch])
 
   const searchTrimmed = search.trim()
   // Server-side search (see getEnquiries) — only actually queried once the
@@ -63,12 +78,12 @@ export default function EnquiryListPage() {
   // so a 1-character keystroke doesn't fire a request against the full ~11k
   // row table.
   const activeSearch = searchTrimmed.length >= MIN_SEARCH_CHARS ? searchTrimmed : ''
-  const { data, isLoading: loading } = useEnquiries(page, DISPLAY_PAGE_SIZE, activeSearch)
+  const { data, isLoading: loading } = useEnquiries(page, DISPLAY_PAGE_SIZE, activeSearch, statusGuid)
   const updateEnquiry = useUpdateEnquiry()
   const rows = data?.items ?? []
   const totalCount = data?.totalCount ?? 0
   const totalPages = Math.max(1, Math.ceil(totalCount / DISPLAY_PAGE_SIZE))
-  const hasActiveFilters = !!search.trim() || !!channel || !!intakeGuid
+  const hasActiveFilters = !!search.trim() || !!channel || !!intakeGuid || !!statusGuid
 
   // Stats-row summary — GET /api/v1/admissions/enquiries/counts, a separate
   // endpoint from the paginated list above (its own totalCount only ever
@@ -79,21 +94,20 @@ export default function EnquiryListPage() {
   // global totals.
   const { data: counts } = useEnquiryCounts({ intakeGuid: intakeGuid || undefined, sourceGuid: channel || undefined })
 
-  // programName comes back null on every row from the real API — resolve it
-  // client-side the same way faculty.ts's deanName fallback does.
-  const { data: programs = [] } = useProgramMasters()
+  // If programName is missing on any row, resolve it via lightweight dropdown lookup
+  const needsProgramLookup = rows.some(r => !r.programName && !!r.programGuid)
+  const { data: programs = [] } = useProgramDropdown(undefined, needsProgramLookup)
   function resolveProgramName(row: { programGuid: string | null; programName: string | null }) {
     if (row.programName) return row.programName
     if (!row.programGuid) return '—'
     return programs.find(p => p.programGuid === row.programGuid)?.programName ?? '—'
   }
 
-  // intakeGuid is a real field directly on the enquiry row (unlike
-  // programName/campusName), so this filters against the actual guid rather
-  // than a resolved display string — full Intake master list, not just
-  // what's on the current page, same "real master, not page-derived"
-  // treatment as resolveProgramName's own source list.
-  const { data: intakes = [] } = useIntakes()
+  const intakeQuery = useSearchIntakesInfinite(committedIntakeSearch, 20, intakePickerOpen)
+  const intakes = useMemo(
+    () => flattenUniquePages(intakeQuery.data?.pages ?? [], i => i.intakeGuid),
+    [intakeQuery.data],
+  )
   const intakeOptions = [
     { value: '', label: 'All Intakes' },
     ...intakes.map(i => ({ value: i.intakeGuid, label: `${i.intakeCode} — ${i.description}` })),
@@ -104,6 +118,10 @@ export default function EnquiryListPage() {
     if (!enquiryStatusGuid) return undefined
     return enquiryStatuses.find(s => s.enquiryStatusGuid === enquiryStatusGuid)?.enquiryStatusName
   }
+  const statusOptions = [
+    { value: '', label: 'All Statuses' },
+    ...enquiryStatuses.map(s => ({ value: s.enquiryStatusGuid, label: s.enquiryStatusName })),
+  ]
 
   // `channel` stores the real enquirySourceGuid (not sourceName) so it can
   // double as the counts endpoint's `sourceGuid` filter above. Sourced from
@@ -131,7 +149,7 @@ export default function EnquiryListPage() {
   // Empty below MIN_SEARCH_CHARS, matching TableSearch's own minChars gate on
   // when the dropdown is even allowed to open.
   const searchMatches = searchTrimmed.length >= MIN_SEARCH_CHARS ? filteredRows.slice(0, 8) : []
-  function clearFilters() { setSearch(''); setChannel(''); setIntakeGuid(''); setPage(1) }
+  function clearFilters() { setSearch(''); setChannel(''); setIntakeGuid(''); setStatusGuid(''); setPage(1) }
 
   function showToast(msg: string, type = '') { setToast({ msg, type }); setTimeout(() => setToast(null), 3500) }
   function openModal(id: string) { setOpenModals(prev => new Set(prev).add(id)) }
@@ -206,7 +224,19 @@ export default function EnquiryListPage() {
               onSelect={permissions.edit ? (r) => openViewModal(r.id) : undefined}
             />
             <SearchSelect className="w-36" options={channelOptions} value={channel} onChange={v => { setChannel(v); setPage(1) }} />
-            <SearchSelect className="w-40" options={intakeOptions} value={intakeGuid} onChange={v => { setIntakeGuid(v); setPage(1) }} />
+            <SearchSelect
+              className="w-40"
+              options={intakeOptions}
+              value={intakeGuid}
+              onChange={v => { setIntakeGuid(v); setPage(1) }}
+              onSearch={setIntakeSearch}
+              onOpenChange={setIntakePickerOpen}
+              isLoading={intakeQuery.isLoading}
+              hasNextPage={intakeQuery.hasNextPage}
+              isFetchingNextPage={intakeQuery.isFetchingNextPage}
+              onLoadMore={() => intakeQuery.fetchNextPage()}
+            />
+            <SearchSelect className="w-40" options={statusOptions} value={statusGuid} onChange={v => { setStatusGuid(v); setPage(1) }} />
           </div>
         </div>
         <ScrollTable>
@@ -224,14 +254,22 @@ export default function EnquiryListPage() {
                     <ActionMenu>
                       <button className="btn btn-neu btn-sm" onClick={() => router.push(`/admission/payment?enquiryGuid=${r.enquiryGuid}`)}><i className="lni lni-arrow-right" /> Convert</button>
                       {permissions.edit && <button className="btn btn-neu btn-sm" onClick={() => openViewModal(r.enquiryGuid)}><i className="lni lni-eye" /> View</button>}
+                      {/* No "Verify Email" here any more: email is verified before
+                          an enquiry can be created (2026-10), and the per-enquiry
+                          verify endpoints were removed. Older unverified rows keep
+                          their warning flag in the Email column. */}
                     </ActionMenu>
                   </td>
                   <td className="font-mono text-sm">{r.enquiryCode}</td>
                   <td>{r.studentName}</td>
-                  <td className="text-sm text-g600">{r.mobile}</td>
-                  <td className="text-sm text-g600">{r.email}</td>
+                  <td className="text-sm text-g600">{formatEnquiryPhone(r)}</td>
+                  <td className="text-sm text-g600">
+                    {r.email}
+                    {r.email && r.emailVerified === true && <span className="eq-email-flag ok" title="Email verified" aria-label="Email verified"><i className="lni lni-checkmark-circle" /></span>}
+                    {r.email && r.emailVerified === false && <span className="eq-email-flag no" title="Email not verified" aria-label="Email not verified"><i className="lni lni-warning" /></span>}
+                  </td>
                   <td>{resolveProgramName(r)}</td>
-                  <td>{sourceBadge(r.sourceName)}</td>
+                  <td>{sourceBadge(r)}</td>
                   <td className="text-sm text-g600">{r.enquiryDate.slice(0, 10)}</td>
                   <td>{statusBadge(resolveStatusName(r.enquiryStatusGuid))}</td>
                 </tr>
@@ -258,14 +296,18 @@ export default function EnquiryListPage() {
         )}
       </div>
 
-      <EnquiryFormModal isOpen={openModals.has('enquiry-form-modal')} onClose={() => closeModal('enquiry-form-modal')} showToast={showToast} />
-      <EnquiryAssignModal
-        isOpen={openModals.has('enquiry-assign-modal')}
-        onClose={() => closeModal('enquiry-assign-modal')}
-        showToast={showToast}
-        enquiryGuid={viewingGuid}
-        updateEnquiry={updateEnquiry}
-      />
+      {openModals.has('enquiry-form-modal') && (
+        <EnquiryFormModal isOpen onClose={() => closeModal('enquiry-form-modal')} showToast={showToast} />
+      )}
+      {openModals.has('enquiry-assign-modal') && (
+        <EnquiryAssignModal
+          isOpen
+          onClose={() => closeModal('enquiry-assign-modal')}
+          showToast={showToast}
+          enquiryGuid={viewingGuid}
+          updateEnquiry={updateEnquiry}
+        />
+      )}
       <Toast toast={toast} />
     </div>
   )

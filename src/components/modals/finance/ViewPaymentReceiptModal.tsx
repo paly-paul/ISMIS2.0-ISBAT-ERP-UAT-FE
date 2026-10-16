@@ -35,7 +35,7 @@ export function ViewPaymentReceiptModal({ isOpen, onClose, entry, autoPrint }: V
   const showConversion = entry.rate != null
 
   return (
-    <div className="modal-overlay open" onClick={onClose}>
+    <div className="modal-overlay open">
       {/* Sticky header + sticky footer, scrollable middle — same pattern
           .modal-flex uses elsewhere, but sized to content (up to 90vh)
           rather than a fixed 85vh, since a receipt is short. Without this,
